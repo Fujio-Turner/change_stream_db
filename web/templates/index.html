@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Changes Worker Admin</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <script src="/static/js/tailwind.js"></script>
+  <script src="/static/js/echarts.min.js"></script>
+  <script>
+    (function(){
+      var t = localStorage.getItem('cw_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <style>
+    .dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+    .dot-green  { background: #36d399; box-shadow: 0 0 6px #36d399; }
+    .dot-yellow { background: #fbbd23; box-shadow: 0 0 6px #fbbd23; }
+    .dot-red    { background: #f87272; box-shadow: 0 0 6px #f87272; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col bg-base-200">
+
+  <!-- Navbar -->
+  <nav class="navbar bg-base-100 shadow-sm px-4">
+    <div class="flex-1">
+      <a href="/" class="text-xl font-bold">Changes Worker Admin</a>
+    </div>
+    <div class="flex-none">
+      <ul class="menu menu-horizontal px-1 gap-1">
+        <li><a href="/" class="active">Dashboard</a></li>
+        <li><a href="/config">Config</a></li>
+        <li><a href="/schema">Schema Mappings</a></li>
+        <li><a href="/transforms">Transforms</a></li>
+        </ul>
+      <label class="label cursor-pointer gap-2 ml-4">
+        <span class="label-text text-sm">Dark</span>
+        <input type="checkbox" id="themeToggle" class="toggle toggle-sm" />
+        <span class="label-text text-sm">Light</span>
+      </label>
+    </div>
+  </nav>
+
+  <main class="flex-1 container mx-auto p-6 space-y-6">
+
+    <!-- Status Bar -->
+    <div class="card bg-base-100 shadow">
+      <div class="card-body py-3 px-6">
+        <div class="flex flex-wrap items-center gap-6">
+          <div class="flex items-center gap-2">
+            <span id="dotFeed" class="dot dot-yellow"></span>
+            <span class="text-sm font-medium">Changes Feed</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="dotProcess" class="dot dot-yellow"></span>
+            <span class="text-sm font-medium">Processing</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="dotCBL" class="dot dot-yellow"></span>
+            <span class="text-sm font-medium">Couchbase Lite</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="dotOutput" class="dot dot-yellow"></span>
+            <span class="text-sm font-medium">Output</span>
+          </div>
+          <div class="ml-auto text-sm opacity-60" id="uptimeLabel">Uptime: --</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts Row (top, right under status bar) -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="card bg-base-100 shadow rounded-2xl">
+        <div class="card-body p-4">
+          <h2 class="text-sm font-semibold opacity-70">Changes Feed</h2>
+          <div id="chartFeed" style="width:100%;height:180px"></div>
+        </div>
+      </div>
+      <div class="card bg-base-100 shadow rounded-2xl">
+        <div class="card-body p-4">
+          <h2 class="text-sm font-semibold opacity-70">Processing</h2>
+          <div id="chartProcess" style="width:100%;height:180px"></div>
+        </div>
+      </div>
+      <div class="card bg-base-100 shadow rounded-2xl">
+        <div class="card-body p-4">
+          <h2 class="text-sm font-semibold opacity-70">Output</h2>
+          <div id="chartOutput" style="width:100%;height:180px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats Three Columns -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- LEFT: Changes Feed -->
+      <div class="space-y-4">
+
+        <!-- Polling group -->
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-sm font-semibold">Polling</h3>
+              <div class="tooltip tooltip-right" data-tip="Poll cycle counts, errors, and retry attempts against the changes feed endpoint.">
+                <span class="badge badge-ghost badge-sm cursor-help">?</span>
+              </div>
+            </div>
+            <table class="table table-sm"><tbody>
+              <tr><td class="font-medium">Poll Cycles</td><td class="text-right" id="mPollCycles">--</td></tr>
+              <tr><td class="font-medium">Poll Errors</td><td class="text-right" id="mPollErrors">--</td></tr>
+              <tr><td class="font-medium">Retries</td><td class="text-right" id="mRetries">--</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+
+        <!-- Changes Received group -->
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-sm font-semibold">Changes Received</h3>
+              <div class="tooltip tooltip-right" data-tip="Documents received from the changes feed including batch size and total bytes.">
+                <span class="badge badge-ghost badge-sm cursor-help">?</span>
+              </div>
+            </div>
+            <table class="table table-sm"><tbody>
+              <tr><td class="font-medium">Changes Received</td><td class="text-right" id="mChangesReceived">--</td></tr>
+              <tr><td class="font-medium">Last Batch Size</td><td class="text-right" id="mLastBatch">--</td></tr>
+              <tr><td class="font-medium">Bytes Received</td><td class="text-right" id="mBytesIn">--</td></tr>
+              <tr><td class="font-medium">Deletes Seen</td><td class="text-right" id="mFeedDeletes">--</td></tr>
+              <tr><td class="font-medium">Removes Seen</td><td class="text-right" id="mFeedRemoves">--</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+
+        <!-- Checkpoint group -->
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-sm font-semibold">Checkpoint</h3>
+              <div class="tooltip tooltip-right" data-tip="Current checkpoint sequence and number of saves. The worker resumes from this sequence on restart.">
+                <span class="badge badge-ghost badge-sm cursor-help">?</span>
+              </div>
+            </div>
+            <table class="table table-sm"><tbody>
+              <tr><td class="font-medium">Checkpoint Seq</td><td class="text-right font-mono" id="mCheckpointSeq">--</td></tr>
+              <tr><td class="font-medium">Checkpoint Saves</td><td class="text-right" id="mCheckpointSaves">--</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- MIDDLE: Processing -->
+      <div class="space-y-4">
+
+        <!-- Docs Processed group -->
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-sm font-semibold">Document Processing</h3>
+              <div class="tooltip tooltip-right" data-tip="Total documents processed and fetched from the gateway.">
+                <span class="badge badge-ghost badge-sm cursor-help">?</span>
+              </div>
+            </div>
+            <table class="table table-sm"><tbody>
+              <tr><td class="font-medium">Docs Processed</td><td class="text-right" id="mProcessed">--</td></tr>
+              <tr><td class="font-medium">Docs Fetched</td><td class="text-right" id="mDocsFetched">--</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+
+        <!-- Filtered group -->
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-sm font-semibold">Filtered</h3>
+              <div class="tooltip tooltip-right" data-tip="Documents skipped by filter rules: total filtered, plus breakdowns for deletes and access removals.">
+                <span class="badge badge-ghost badge-sm cursor-help">?</span>
+              </div>
+            </div>
+            <table class="table table-sm"><tbody>
+              <tr><td class="font-medium">Filtered (total)</td><td class="text-right" id="mFiltered">--</td></tr>
+              <tr><td class="font-medium">Filtered (deletes)</td><td class="text-right" id="mFilteredDeletes">--</td></tr>
+              <tr><td class="font-medium">Filtered (removes)</td><td class="text-right" id="mFilteredRemoves">--</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+
+        <!-- Config Summary group -->
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-sm font-semibold">Config Summary</h3>
+              <div class="tooltip tooltip-right" data-tip="Key settings from the active worker configuration.">
+                <span class="badge badge-ghost badge-sm cursor-help">?</span>
+              </div>
+            </div>
+            <table class="table table-sm" id="configTable"><tbody>
+              <tr><td colspan="2" class="text-center opacity-50">Loading...</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- RIGHT: Output -->
+      <div class="space-y-4">
+
+        <!-- Request Counts group -->
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-sm font-semibold">Requests</h3>
+              <div class="tooltip tooltip-right" data-tip="Total HTTP requests sent to the output target, broken down by method and success/error.">
+                <span class="badge badge-ghost badge-sm cursor-help">?</span>
+              </div>
+            </div>
+            <table class="table table-sm"><tbody>
+              <tr><td class="font-medium">Requests Total</td><td class="text-right" id="mOutRequests">--</td></tr>
+              <tr><td class="font-medium">Success</td><td class="text-right text-success" id="mOutSuccess">--</td></tr>
+              <tr><td class="font-medium">Errors</td><td class="text-right text-error" id="mOutErrors">--</td></tr>
+              <tr><td class="font-medium">PUT Requests</td><td class="text-right" id="mOutPut">--</td></tr>
+              <tr><td class="font-medium">DELETE Requests</td><td class="text-right" id="mOutDelete">--</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+
+        <!-- Throughput group -->
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-sm font-semibold">Throughput</h3>
+              <div class="tooltip tooltip-right" data-tip="Bytes sent to the output target, dead-lettered documents, and endpoint availability.">
+                <span class="badge badge-ghost badge-sm cursor-help">?</span>
+              </div>
+            </div>
+            <table class="table table-sm"><tbody>
+              <tr><td class="font-medium">Bytes Sent</td><td class="text-right" id="mBytesOut">--</td></tr>
+              <tr><td class="font-medium">Dead Letters</td><td class="text-right text-warning" id="mDeadLetters">--</td></tr>
+              <tr><td class="font-medium">Endpoint</td><td class="text-right" id="mEndpointUp">--</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+
+        <!-- Response Times group -->
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-sm font-semibold">Response Times</h3>
+              <div class="tooltip tooltip-right" data-tip="Output endpoint response time percentiles (p50 = median, p99 = worst-case tail latency).">
+                <span class="badge badge-ghost badge-sm cursor-help">?</span>
+              </div>
+            </div>
+            <table class="table table-sm"><tbody>
+              <tr><td class="font-medium">Resp p50</td><td class="text-right" id="mRespP50">--</td></tr>
+              <tr><td class="font-medium">Resp p99</td><td class="text-right" id="mRespP99">--</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer footer-center p-4 bg-base-100 text-base-content">
+    <p>Changes Worker v1.1.0</p>
+  </footer>
+
+<script>
+// ── Debug flag: add ?debug=true to URL to enable console logging ─
+var DEBUG = new URLSearchParams(window.location.search).get('debug') === 'true';
+function dbg() { if (DEBUG) console.log.apply(console, ['[CW]'].concat(Array.prototype.slice.call(arguments))); }
+
+// ── Theme ────────────────────────────────────────────────────
+var themeToggle = document.getElementById('themeToggle');
+themeToggle.checked = (localStorage.getItem('cw_theme') || 'dark') === 'light';
+themeToggle.addEventListener('change', function() {
+  var theme = themeToggle.checked ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('cw_theme', theme);
+  rebuildCharts();
+});
+
+// ── Helpers ──────────────────────────────────────────────────
+function fmt(n) {
+  if (n == null) return '--';
+  if (typeof n !== 'number') return String(n);
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'G';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return n % 1 === 0 ? String(n) : n.toFixed(2);
+}
+function fmtBytes(b) {
+  if (b == null) return '--';
+  if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
+  if (b >= 1048576)    return (b / 1048576).toFixed(1) + ' MB';
+  if (b >= 1024)       return (b / 1024).toFixed(1) + ' KB';
+  return b + ' B';
+}
+function fmtUptime(s) {
+  if (!s) return '--';
+  var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d > 0) return d + 'd ' + h + 'h';
+  if (h > 0) return h + 'h ' + m + 'm';
+  return m + 'm ' + Math.floor(s % 60) + 's';
+}
+function fmtMs(sec) {
+  if (!sec) return '--';
+  return (sec * 1000).toFixed(1) + 'ms';
+}
+function setText(id, v) { document.getElementById(id).textContent = v; }
+function setDot(id, c) { document.getElementById(id).className = 'dot dot-' + c; }
+function timeLabel() {
+  var d = new Date();
+  return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
+}
+
+// ── Prometheus Parser ────────────────────────────────────────
+// Stores every line keyed by the full metric+labels string AND by base name.
+function parseProm(text) {
+  var m = {};
+  var lines = text.split('\n');
+  var parsed = 0, skipped = 0;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (line.charAt(0) === '#' || !line.trim()) { skipped++; continue; }
+    var sp = line.lastIndexOf(' ');
+    if (sp < 0) { skipped++; continue; }
+    var fullKey = line.substring(0, sp);
+    var val = parseFloat(line.substring(sp + 1));
+    if (isNaN(val)) { skipped++; continue; }
+    m[fullKey] = val;
+    // Also store by base name (first match wins — for simple scalars)
+    var brace = fullKey.indexOf('{');
+    var base = brace >= 0 ? fullKey.substring(0, brace) : fullKey;
+    if (!(base in m)) m[base] = val;
+    parsed++;
+  }
+  dbg('parseProm: parsed=' + parsed + ' skipped=' + skipped + ' totalLines=' + lines.length);
+  dbg('parseProm keys:', Object.keys(m).filter(function(k) { return k.indexOf('{') < 0; }));
+  return m;
+}
+function getLabeled(m, base, label) {
+  for (var k in m) {
+    if (k.indexOf(base + '{') === 0 && k.indexOf(label) >= 0) return m[k];
+  }
+  return 0;
+}
+function getCheckpointSeq(text) {
+  var match = text.match(/changes_worker_checkpoint_seq\{[^}]*seq="([^"]*)"/);
+  return match ? match[1] : '--';
+}
+
+// ── Chart History ────────────────────────────────────────────
+var MAX_POINTS = 30;
+var chartHistory = {
+  labels: [],
+  changesReceived: [],
+  pollErrors: [],
+  processed: [],
+  filtered: [],
+  outSuccess: [],
+  outErrors: [],
+  deadLetters: []
+};
+// Track previous totals so we can compute deltas
+var prev = {};
+
+function pushHistory(m) {
+  chartHistory.labels.push(timeLabel());
+  if (chartHistory.labels.length > MAX_POINTS) chartHistory.labels.shift();
+
+  var keys = [
+    ['changesReceived', 'changes_worker_changes_received_total'],
+    ['pollErrors',      'changes_worker_poll_errors_total'],
+    ['processed',       'changes_worker_changes_processed_total'],
+    ['filtered',        'changes_worker_changes_filtered_total'],
+    ['outSuccess',      'changes_worker_output_success_total'],
+    ['outErrors',       'changes_worker_output_errors_total'],
+    ['deadLetters',     'changes_worker_dead_letter_total']
+  ];
+  for (var i = 0; i < keys.length; i++) {
+    var hk = keys[i][0], mk = keys[i][1];
+    var cur = m[mk] || 0;
+    var delta = (prev[mk] != null) ? Math.max(0, cur - prev[mk]) : 0;
+    prev[mk] = cur;
+    chartHistory[hk].push(delta);
+    if (chartHistory[hk].length > MAX_POINTS) chartHistory[hk].shift();
+  }
+}
+
+// ── ECharts ──────────────────────────────────────────────────
+var cFeed, cProcess, cOutput;
+
+function chartColors() {
+  var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  return {
+    text: dark ? '#a6adba' : '#1f2937',
+    split: dark ? '#2a323c' : '#e5e7eb',
+    green: '#36d399', red: '#f87272', yellow: '#fbbd23', blue: '#3b82f6'
+  };
+}
+
+function makeChart(el) {
+  return echarts.init(el);
+}
+
+function rebuildCharts() {
+  if (cFeed) cFeed.dispose();
+  if (cProcess) cProcess.dispose();
+  if (cOutput) cOutput.dispose();
+  cFeed    = makeChart(document.getElementById('chartFeed'));
+  cProcess = makeChart(document.getElementById('chartProcess'));
+  cOutput  = makeChart(document.getElementById('chartOutput'));
+  renderCharts();
+}
+
+function lineOpt(title, series) {
+  var c = chartColors();
+  return {
+    backgroundColor: 'transparent',
+    textStyle: { color: c.text, fontSize: 10 },
+    tooltip: { trigger: 'axis', textStyle: { fontSize: 11 } },
+    legend: { bottom: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+    grid: { top: 8, left: 40, right: 12, bottom: 30 },
+    xAxis: {
+      type: 'category', data: chartHistory.labels, boundaryGap: false,
+      axisLabel: { show: false },
+      axisLine: { lineStyle: { color: c.split } },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value', minInterval: 1,
+      axisLine: { show: false },
+      axisLabel: { fontSize: 9, color: c.text },
+      splitLine: { lineStyle: { color: c.split } }
+    },
+    series: series
+  };
+}
+
+function lineSeries(name, data, color) {
+  return {
+    name: name, type: 'line', smooth: true, symbol: 'none',
+    data: data, itemStyle: { color: color },
+    areaStyle: { opacity: 0.10 }, lineStyle: { width: 1.5 }
+  };
+}
+
+function renderCharts() {
+  var c = chartColors();
+  if (cFeed) {
+    cFeed.setOption(lineOpt('Feed', [
+      lineSeries('Received', chartHistory.changesReceived, c.green),
+      lineSeries('Poll Errors', chartHistory.pollErrors, c.red)
+    ]), true);
+  }
+  if (cProcess) {
+    cProcess.setOption(lineOpt('Process', [
+      lineSeries('Processed', chartHistory.processed, c.blue),
+      lineSeries('Filtered', chartHistory.filtered, c.yellow)
+    ]), true);
+  }
+  if (cOutput) {
+    cOutput.setOption(lineOpt('Output', [
+      lineSeries('Success', chartHistory.outSuccess, c.green),
+      lineSeries('Errors', chartHistory.outErrors, c.red),
+      lineSeries('Dead Letters', chartHistory.deadLetters, c.yellow)
+    ]), true);
+  }
+}
+
+window.addEventListener('resize', function() {
+  if (cFeed) cFeed.resize();
+  if (cProcess) cProcess.resize();
+  if (cOutput) cOutput.resize();
+});
+
+// ── Status Dots (computed from metrics, not a separate endpoint) ─
+var metricsReachable = false;
+
+function computeStatus(m, cfg) {
+  var uptime     = m['changes_worker_uptime_seconds'] || 0;
+  var pollCycles = m['changes_worker_poll_cycles_total'] || 0;
+  var pollErrors = m['changes_worker_poll_errors_total'] || 0;
+
+  dbg('computeStatus: uptime=' + uptime + ' pollCycles=' + pollCycles + ' pollErrors=' + pollErrors);
+  dbg('computeStatus: cfg output.mode=' + ((cfg && cfg.output) ? cfg.output.mode : 'NO CFG'));
+
+  // Changes Feed
+  var feedColor = 'red';
+  if (uptime > 0) {
+    var errorRatio = pollCycles > 0 ? pollErrors / pollCycles : 0;
+    feedColor = errorRatio > 0.1 ? 'yellow' : 'green';
+  }
+  dbg('  feed -> ' + feedColor);
+  setDot('dotFeed', feedColor);
+
+  // Processing
+  var procColor = 'red';
+  if (uptime > 30) procColor = 'green';
+  else if (uptime > 0) procColor = 'yellow';
+  dbg('  process -> ' + procColor);
+  setDot('dotProcess', procColor);
+
+  // Output
+  var outMode  = (cfg && cfg.output) ? cfg.output.mode : 'stdout';
+  var epUp     = m['changes_worker_output_endpoint_up'];
+  var outErr   = m['changes_worker_output_errors_total'] || 0;
+  var outTotal = m['changes_worker_output_requests_total'] || 0;
+
+  dbg('  output: mode=' + outMode + ' epUp=' + epUp + ' outErr=' + outErr + ' outTotal=' + outTotal);
+
+  var outColor = 'red';
+  if (outMode === 'stdout') {
+    outColor = uptime > 0 ? 'green' : 'red';
+  } else if (epUp === 0) {
+    outColor = 'red';
+  } else if (outTotal > 0 && outErr > 0) {
+    outColor = (outErr / outTotal) > 0.1 ? 'yellow' : 'green';
+  } else if (uptime > 0) {
+    outColor = 'green';
+  }
+  dbg('  output -> ' + outColor);
+  setDot('dotOutput', outColor);
+}
+
+// ── CBL status from server ───────────────────────────────────
+function loadCBLStatus() {
+  dbg('loadCBLStatus: fetching /api/status');
+  fetch('/api/status')
+    .then(function(r) { return r.json(); })
+    .then(function(s) {
+      dbg('loadCBLStatus: response', s);
+      setDot('dotCBL', s.cbl || 'red');
+    })
+    .catch(function(e) {
+      dbg('loadCBLStatus: ERROR', e);
+      setDot('dotCBL', 'red');
+    });
+}
+
+// ── Config Summary ───────────────────────────────────────────
+var cachedCfg = null;
+function loadConfig() {
+  dbg('loadConfig: fetching /api/config');
+  fetch('/api/config')
+    .then(function(r) { return r.json(); })
+    .then(function(cfg) {
+      dbg('loadConfig: got config', cfg);
+      cachedCfg = cfg;
+      var rows = [
+        ['Source', cfg.gateway?.src ?? '--'],
+        ['Database', cfg.gateway?.database ?? '--'],
+        ['Keyspace', (cfg.gateway?.scope || '--') + '.' + (cfg.gateway?.collection || '--')],
+        ['Output', cfg.output?.mode ?? '--'],
+        ['Format', cfg.output?.output_format ?? 'json'],
+        ['Sequential', cfg.processing?.sequential ? 'Yes' : 'No'],
+        ['Halt on Fail', cfg.output?.halt_on_failure !== false ? 'Yes' : 'No']
+      ];
+      document.querySelector('#configTable tbody').innerHTML = rows
+        .map(function(r) { return '<tr><td class="font-medium">' + r[0] + '</td><td class="text-right">' + r[1] + '</td></tr>'; })
+        .join('');
+    })
+    .catch(function(e) {
+      dbg('loadConfig: ERROR', e);
+      document.querySelector('#configTable tbody').innerHTML =
+        '<tr><td colspan="2" class="text-center text-error">Failed to load</td></tr>';
+    });
+}
+
+// ── Fetch & Render Metrics ───────────────────────────────────
+function loadMetrics() {
+  dbg('loadMetrics: fetching /api/metrics');
+  fetch('/api/metrics')
+    .then(function(res) {
+      dbg('loadMetrics: status=' + res.status + ' content-type=' + (res.headers.get('content-type') || ''));
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var ct = res.headers.get('content-type') || '';
+      if (ct.indexOf('text/plain') >= 0) return res.text();
+      // JSON response = error from proxy (disabled or unreachable)
+      return res.text().then(function(body) {
+        dbg('loadMetrics: JSON response (not prom text):', body);
+        return null;
+      });
+    })
+    .then(function(text) {
+      if (!text) {
+        dbg('loadMetrics: no prometheus data — showing yellow (unknown)');
+        setUnknown();
+        return;
+      }
+      metricsReachable = true;
+      dbg('loadMetrics: got ' + text.length + ' chars of prometheus text');
+      var m = parseProm(text);
+
+      // Log key metric values
+      dbg('loadMetrics values:', {
+        uptime: m['changes_worker_uptime_seconds'],
+        poll_cycles: m['changes_worker_poll_cycles_total'],
+        poll_errors: m['changes_worker_poll_errors_total'],
+        received: m['changes_worker_changes_received_total'],
+        processed: m['changes_worker_changes_processed_total'],
+        output_requests: m['changes_worker_output_requests_total'],
+        output_success: m['changes_worker_output_success_total'],
+        output_errors: m['changes_worker_output_errors_total'],
+        endpoint_up: m['changes_worker_output_endpoint_up']
+      });
+
+      // Status dots
+      computeStatus(m, cachedCfg);
+
+      // History for charts
+      pushHistory(m);
+      renderCharts();
+
+      // LEFT
+      setText('mPollCycles',     fmt(m['changes_worker_poll_cycles_total']));
+      setText('mPollErrors',     fmt(m['changes_worker_poll_errors_total']));
+      setText('mChangesReceived',fmt(m['changes_worker_changes_received_total']));
+      setText('mLastBatch',      fmt(m['changes_worker_last_batch_size']));
+      setText('mBytesIn',        fmtBytes(m['changes_worker_bytes_received_total']));
+      setText('mFeedDeletes',    fmt(m['changes_worker_feed_deletes_seen_total']));
+      setText('mFeedRemoves',    fmt(m['changes_worker_feed_removes_seen_total']));
+      setText('mCheckpointSeq',  getCheckpointSeq(text));
+      setText('mCheckpointSaves',fmt(m['changes_worker_checkpoint_saves_total']));
+      setText('mRetries',        fmt(m['changes_worker_retries_total']));
+
+      // MIDDLE
+      setText('mProcessed',       fmt(m['changes_worker_changes_processed_total']));
+      setText('mDocsFetched',     fmt(m['changes_worker_docs_fetched_total']));
+      setText('mFiltered',        fmt(m['changes_worker_changes_filtered_total']));
+      setText('mFilteredDeletes', fmt(m['changes_worker_changes_deleted_total']));
+      setText('mFilteredRemoves', fmt(m['changes_worker_changes_removed_total']));
+
+      // RIGHT
+      setText('mOutRequests', fmt(m['changes_worker_output_requests_total']));
+      setText('mOutSuccess',  fmt(m['changes_worker_output_success_total']));
+      setText('mOutErrors',   fmt(m['changes_worker_output_errors_total']));
+      setText('mOutPut',      fmt(getLabeled(m, 'changes_worker_output_requests_by_method_total', 'method="PUT"')));
+      setText('mOutDelete',   fmt(getLabeled(m, 'changes_worker_output_requests_by_method_total', 'method="DELETE"')));
+      setText('mBytesOut',    fmtBytes(m['changes_worker_bytes_output_total']));
+      setText('mDeadLetters', fmt(m['changes_worker_dead_letter_total']));
+      var epUp = m['changes_worker_output_endpoint_up'];
+      setText('mEndpointUp',  epUp === 1 ? 'UP' : epUp === 0 ? 'DOWN' : '--');
+      setText('mRespP50', fmtMs(getLabeled(m, 'changes_worker_output_response_time_seconds', 'quantile="0.5"')));
+      setText('mRespP99', fmtMs(getLabeled(m, 'changes_worker_output_response_time_seconds', 'quantile="0.99"')));
+
+      // Uptime
+      setText('uptimeLabel', 'Uptime: ' + fmtUptime(m['changes_worker_uptime_seconds']));
+    })
+    .catch(function(e) {
+      dbg('loadMetrics: FETCH ERROR', e);
+      if (!metricsReachable) setUnknown();
+    });
+}
+
+function setUnknown() {
+  dbg('setUnknown: no metrics data — dots -> yellow (not monitored)');
+  setDot('dotFeed', 'yellow');
+  setDot('dotProcess', 'yellow');
+  setDot('dotOutput', 'yellow');
+  setText('uptimeLabel', 'Uptime: -- (enable metrics in config to monitor)');
+  // Push zero-value data points so charts still render with flat lines
+  chartHistory.labels.push(timeLabel());
+  if (chartHistory.labels.length > MAX_POINTS) chartHistory.labels.shift();
+  var hKeys = ['changesReceived','pollErrors','processed','filtered','outSuccess','outErrors','deadLetters'];
+  for (var i = 0; i < hKeys.length; i++) {
+    chartHistory[hKeys[i]].push(0);
+    if (chartHistory[hKeys[i]].length > MAX_POINTS) chartHistory[hKeys[i]].shift();
+  }
+  renderCharts();
+}
+
+// ── Init ─────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  dbg('=== Dashboard init === debug=true, add ?debug=true to URL to see logs');
+  dbg('Tip: check /api/metrics, /api/config, /api/status in browser to verify endpoints');
+  rebuildCharts();
+  loadCBLStatus();
+  loadConfig();
+  loadMetrics();
+  setInterval(loadMetrics, 5000);
+  setInterval(loadCBLStatus, 30000);
+});
+</script>
+
+</body>
+</html>

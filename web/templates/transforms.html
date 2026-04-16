@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Changes Worker -- Transform Functions Reference</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <script src="/static/js/tailwind.js"></script>
+  <script>
+    (function(){
+      var t = localStorage.getItem('cw_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+</head>
+<body class="min-h-screen flex flex-col bg-base-200">
+
+  <!-- Navbar -->
+  <nav class="navbar bg-base-100 shadow-sm px-4">
+    <div class="flex-1">
+      <a href="/" class="text-xl font-bold">Changes Worker Admin</a>
+    </div>
+    <div class="flex-none">
+      <ul class="menu menu-horizontal px-1 gap-1">
+        <li><a href="/">Dashboard</a></li>
+        <li><a href="/config">Config</a></li>
+        <li><a href="/schema">Schema Mappings</a></li>
+        <li><a href="/transforms" class="active">Transforms</a></li>
+      </ul>
+      <label class="label cursor-pointer gap-2 ml-4">
+        <span class="label-text text-sm">Dark</span>
+        <input type="checkbox" id="themeToggle" class="toggle toggle-sm" />
+        <span class="label-text text-sm">Light</span>
+      </label>
+    </div>
+  </nav>
+
+  <main class="flex-1 container mx-auto p-6 space-y-6">
+
+    <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h1 class="text-2xl font-bold mb-2">Transform Functions Reference</h1>
+        <p class="opacity-70 mb-4">These functions can be applied to field values during schema mapping. Select from the dropdown or type directly in the transform input. Functions can be chained: <code class="bg-base-200 px-1 rounded">trim().lowercase()</code></p>
+
+        <!-- Quick jump -->
+        <div class="flex flex-wrap gap-2 mb-4">
+          <a href="#string" class="badge badge-primary badge-outline">String</a>
+          <a href="#numeric" class="badge badge-info badge-outline">Numeric</a>
+          <a href="#datetime" class="badge badge-warning badge-outline">Date / Time</a>
+          <a href="#array" class="badge badge-secondary badge-outline">Array / Object</a>
+          <a href="#encoding" class="badge badge-accent badge-outline">Encoding / Hash</a>
+          <a href="#conditional" class="badge badge-ghost badge-outline">Conditional</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ STRING ═══ -->
+    <div id="string" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
+          <span class="badge badge-primary">String</span> String Functions
+        </h2>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr><th class="w-48">Function</th><th>Description</th><th class="w-72">Example</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="font-mono font-semibold">trim()</td>
+                <td>Remove leading and trailing whitespace from the value.</td>
+                <td><code>" hello " → "hello"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">ltrim()</td>
+                <td>Remove leading (left) whitespace only.</td>
+                <td><code>" hello " → "hello "</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">rtrim()</td>
+                <td>Remove trailing (right) whitespace only.</td>
+                <td><code>" hello " → " hello"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">uppercase()</td>
+                <td>Convert entire string to upper case.</td>
+                <td><code>"hello" → "HELLO"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">lowercase()</td>
+                <td>Convert entire string to lower case.</td>
+                <td><code>"HELLO" → "hello"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">camelcase()</td>
+                <td>Convert to camelCase. Splits on spaces, hyphens, and underscores.</td>
+                <td><code>"first_name" → "firstName"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">propercase()</td>
+                <td>Capitalize the first letter of each word.</td>
+                <td><code>"jane doe" → "Jane Doe"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">concat(,separator)</td>
+                <td>Concatenate the current value with additional values using a separator. Use with multiple source paths to combine fields.</td>
+                <td><code>concat(," ") on ["Jane","Doe"] → "Jane Doe"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">replace(,old,new)</td>
+                <td>Replace all occurrences of <em>old</em> substring with <em>new</em>.</td>
+                <td><code>replace(,"-"," ") on "foo-bar" → "foo bar"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">replace_regex(,pattern,repl)</td>
+                <td>Replace matches of a regex pattern. Supports capture groups with <code>$1</code>, <code>$2</code>.</td>
+                <td><code>replace_regex(,"[^0-9]","") on "+1-555-0123" → "15550123"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">strip_chars(,chars)</td>
+                <td>Remove specific characters from the start and end of the string.</td>
+                <td><code>strip_chars(,"#") on "##id##" → "id"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">pad_left(,length,char)</td>
+                <td>Pad the string on the left to reach the target length.</td>
+                <td><code>pad_left(,5,"0") on "42" → "00042"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">pad_right(,length,char)</td>
+                <td>Pad the string on the right to reach the target length.</td>
+                <td><code>pad_right(,8," ") on "hello" → "hello   "</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">substr(,start,length)</td>
+                <td>Extract a substring starting at <em>start</em> index for <em>length</em> characters.</td>
+                <td><code>substr(,0,4) on "2025-09-15" → "2025"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">split(,sep)[index]</td>
+                <td>Split the string by <em>sep</em> and return the element at <em>index</em>.</td>
+                <td><code>split(,",")[1] on "a,b,c" → "b"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">join(,separator)</td>
+                <td>Join an array of values into a single string using the separator.</td>
+                <td><code>join(,", ") on ["vip","beta"] → "vip, beta"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">length()</td>
+                <td>Return the length of the string (or array).</td>
+                <td><code>"hello" → 5</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">urlencode()</td>
+                <td>Percent-encode the string for use in URLs.</td>
+                <td><code>"hello world" → "hello%20world"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">urldecode()</td>
+                <td>Decode a percent-encoded URL string.</td>
+                <td><code>"hello%20world" → "hello world"</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ NUMERIC ═══ -->
+    <div id="numeric" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
+          <span class="badge badge-info">Numeric</span> Numeric / Type Conversion
+        </h2>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr><th class="w-48">Function</th><th>Description</th><th class="w-72">Example</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="font-mono font-semibold">to_int()</td>
+                <td>Convert the value to an integer. Truncates decimals, parses strings.</td>
+                <td><code>"42.7" → 42</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">to_float()</td>
+                <td>Convert the value to a floating-point number. Handles scientific notation and comma-separated numbers.</td>
+                <td><code>"1,234.56" → 1234.56</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">to_decimal(,places)</td>
+                <td>Convert to a decimal number with the specified number of decimal places.</td>
+                <td><code>to_decimal(,2) on 24.999 → 25.00</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">to_string()</td>
+                <td>Convert any value to its string representation.</td>
+                <td><code>42 → "42"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">round()</td>
+                <td>Round to the nearest integer.</td>
+                <td><code>24.6 → 25</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">ceil()</td>
+                <td>Round up to the nearest integer.</td>
+                <td><code>24.1 → 25</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">floor()</td>
+                <td>Round down to the nearest integer.</td>
+                <td><code>24.9 → 24</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">abs()</td>
+                <td>Return the absolute value.</td>
+                <td><code>-42.5 → 42.5</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">coalesce(,default)</td>
+                <td>If the value is null, undefined, or empty string, use the default value instead. Essential for handling missing data.</td>
+                <td><code>coalesce(,"N/A") on null → "N/A"</code><br/><code>coalesce(,0) on null → 0</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ DATE / TIME ═══ -->
+    <div id="datetime" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
+          <span class="badge badge-warning">Date / Time</span> Date & Time Functions
+        </h2>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr><th class="w-52">Function</th><th>Description</th><th class="w-72">Example</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="font-mono font-semibold">to_iso8601()</td>
+                <td>Convert a date value to ISO 8601 format (<code>yyyy-MM-ddTHH:mm:ssZ</code>).</td>
+                <td><code>"Sep 15, 2025" → "2025-09-15T00:00:00Z"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">to_epoch()</td>
+                <td>Convert a date to Unix epoch seconds.</td>
+                <td><code>"2025-09-15" → 1757894400</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">from_epoch()</td>
+                <td>Convert Unix epoch seconds to an ISO 8601 date string.</td>
+                <td><code>1757894400 → "2025-09-15T00:00:00Z"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">format_date(,format)</td>
+                <td>Format a date value using a custom pattern. Tokens: <code>yyyy</code>, <code>MM</code>, <code>dd</code>, <code>HH</code>, <code>mm</code>, <code>ss</code>, <code>MMM</code> (month name).</td>
+                <td><code>format_date(,"MMM dd, yyyy") → "Sep 15, 2025"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">parse_date(,format)</td>
+                <td>Parse a date string using the specified input format into a date object.</td>
+                <td><code>parse_date(,"MM/dd/yyyy") on "09/15/2025"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">date_add(,unit,amount)</td>
+                <td>Add (or subtract with negative) a time amount. Units: <code>days</code>, <code>months</code>, <code>years</code>, <code>hours</code>, <code>minutes</code>.</td>
+                <td><code>date_add(,"days",30) on "2025-09-15" → "2025-10-15"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">date_diff(,unit)</td>
+                <td>Calculate the difference between the field value and now. Returns a number in the specified unit.</td>
+                <td><code>date_diff(,"days") on "2025-09-01" → 14</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">truncate_date(,unit)</td>
+                <td>Truncate a date to the specified precision. Units: <code>year</code>, <code>month</code>, <code>day</code>, <code>hour</code>.</td>
+                <td><code>truncate_date(,"month") on "2025-09-15" → "2025-09-01"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">now()</td>
+                <td>Inject the current date/time (ISO 8601). Ignores the source field value.</td>
+                <td><code>→ "2026-04-16T12:30:00Z"</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ ARRAY / OBJECT ═══ -->
+    <div id="array" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
+          <span class="badge badge-secondary">Array / Object</span> Array & Object Functions
+        </h2>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr><th class="w-48">Function</th><th>Description</th><th class="w-72">Example</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="font-mono font-semibold">flatten()</td>
+                <td>Flatten a nested array into a single-level array.</td>
+                <td><code>[[1,2],[3,4]] → [1,2,3,4]</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">slice(,start,end)</td>
+                <td>Extract a sub-array from index <em>start</em> to <em>end</em> (exclusive).</td>
+                <td><code>slice(,0,2) on [a,b,c,d] → [a,b]</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">keys()</td>
+                <td>Extract the keys of an object as an array.</td>
+                <td><code>{"a":1,"b":2} → ["a","b"]</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">values()</td>
+                <td>Extract the values of an object as an array.</td>
+                <td><code>{"a":1,"b":2} → [1,2]</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ ENCODING / HASH ═══ -->
+    <div id="encoding" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
+          <span class="badge badge-accent">Encoding / Hash</span> Encoding, Hashing & ID Functions
+        </h2>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr><th class="w-48">Function</th><th>Description</th><th class="w-72">Example</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="font-mono font-semibold">json_safe()</td>
+                <td>Escape a value so it is safe to embed inside a JSON string. Escapes quotes, backslashes, and control characters.</td>
+                <td><code>"he said \"hi\"" → "he said \\\"hi\\\""</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">json_parse()</td>
+                <td>Parse a JSON-encoded string into an object or array.</td>
+                <td><code>"{\"a\":1}" → {a: 1}</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">json_stringify()</td>
+                <td>Serialize an object or array into a JSON string.</td>
+                <td><code>{a: 1} → "{\"a\":1}"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">base64_encode()</td>
+                <td>Encode the value as a Base64 string.</td>
+                <td><code>"hello" → "aGVsbG8="</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">base64_decode()</td>
+                <td>Decode a Base64 string back to its original value.</td>
+                <td><code>"aGVsbG8=" → "hello"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">md5()</td>
+                <td>Generate an MD5 hash of the value. Useful for deduplication or anonymization.</td>
+                <td><code>"hello" → "5d41402abc4b2a76…"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">sha256()</td>
+                <td>Generate a SHA-256 hash. More secure than MD5 for integrity checks.</td>
+                <td><code>"hello" → "2cf24dba5fb0a30e…"</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">uuid()</td>
+                <td>Generate a new random UUID (v4). Ignores the source field value — always produces a unique ID.</td>
+                <td><code>→ "f47ac10b-58cc-4372-a567-0e02b2c3d479"</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ CONDITIONAL ═══ -->
+    <div id="conditional" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
+          <span class="badge badge-ghost">Conditional</span> Conditional Functions
+        </h2>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr><th class="w-56">Function</th><th>Description</th><th class="w-72">Example</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="font-mono font-semibold">if(,op,then,else)</td>
+                <td>Conditional transform. If the source value matches the operator condition, use <em>then</em>; otherwise use <em>else</em>. Operators: <code>!= ""</code>, <code>== "val"</code>, <code>&gt; 0</code>, <code>&lt; 100</code>.</td>
+                <td><code>if(,!= "","active","inactive")</code><br/>If value is not empty → "active", else → "inactive"</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="divider"></div>
+        <h3 class="font-semibold mb-2">Chaining Transforms</h3>
+        <p class="opacity-70 mb-3">Transforms can be chained using dot notation. Each function receives the output of the previous one:</p>
+        <div class="mockup-code bg-base-200">
+          <pre><code>trim().lowercase()                      — trim whitespace, then lowercase
+trim().replace(,"-"," ").propercase()   — clean and title-case a name
+to_float().to_decimal(,2)               — parse number then format to 2 decimals
+split(,",")[0].trim()                   — take first CSV value and trim it</code></pre>
+        </div>
+
+        <div class="divider"></div>
+        <h3 class="font-semibold mb-2">Mapping Format</h3>
+        <p class="opacity-70 mb-3">In the generated mapping JSON, columns without transforms are stored as simple strings. Columns with transforms use an object:</p>
+        <div class="mockup-code bg-base-200">
+          <pre><code>{
+  "columns": {
+    "doc_id": "$._id",
+    "email": { "path": "$.email", "transform": "trim().lowercase()" },
+    "price": { "path": "$.price", "transform": "to_decimal(,2)" },
+    "state": { "path": "$.address.state", "transform": "uppercase()" }
+  }
+}</code></pre>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <footer class="footer footer-center p-4 bg-base-100 text-base-content">
+    <p>Changes Worker v1.1.0</p>
+  </footer>
+
+<script>
+  var themeToggle = document.getElementById('themeToggle');
+  themeToggle.checked = (localStorage.getItem('cw_theme') || 'dark') === 'light';
+  themeToggle.addEventListener('change', function() {
+    var theme = themeToggle.checked ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('cw_theme', theme);
+  });
+</script>
+
+</body>
+</html>

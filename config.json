@@ -1,0 +1,84 @@
+{
+  "gateway": {
+    "src": "sync_gateway",
+    "url": "http://host.docker.internal:4984",
+    "database": "db",
+    "scope": "us",
+    "collection": "prices",
+    "accept_self_signed_certs": false
+  },
+  "auth": {
+    "method": "basic",
+    "username": "bob",
+    "password": "password",
+    "session_cookie": "",
+    "bearer_token": ""
+  },
+  "changes_feed": {
+    "feed_type": "longpoll",
+    "poll_interval_seconds": 10,
+    "active_only": true,
+    "include_docs": true,
+    "since": "0",
+    "channels": [],
+    "limit": 0,
+    "heartbeat_ms": 30000,
+    "timeout_ms": 60000,
+    "http_timeout_seconds": 300,
+    "throttle_feed": 0,
+    "continuous_catchup_limit": 10000
+  },
+  "processing": {
+    "ignore_delete": false,
+    "ignore_remove": false,
+    "sequential": false,
+    "max_concurrent": 20,
+    "dry_run": false,
+    "get_batch_number": 100
+  },
+  "checkpoint": {
+    "enabled": true,
+    "client_id": "changes_worker",
+    "file": "checkpoint.json",
+    "every_n_docs": 0
+  },
+  "output": {
+    "mode": "stdout",
+    "target_url": "",
+    "target_auth": {
+      "method": "none",
+      "username": "",
+      "password": "",
+      "session_cookie": "",
+      "bearer_token": ""
+    },
+    "retry": {
+      "max_retries": 3,
+      "backoff_base_seconds": 1,
+      "backoff_max_seconds": 30,
+      "retry_on_status": [500, 502, 503, 504]
+    },
+    "halt_on_failure": true,
+    "log_response_times": true,
+    "output_format": "json",
+    "dead_letter_path": "failed_docs.jsonl",
+    "request_options": {
+      "params": {},
+      "headers": {}
+    }
+  },
+  "retry": {
+    "max_retries": 5,
+    "backoff_base_seconds": 1,
+    "backoff_max_seconds": 60,
+    "retry_on_status": [500, 502, 503, 504]
+  },
+  "metrics": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "port": 9090
+  },
+  "logging": {
+    "level": "DEBUG"
+  }
+}

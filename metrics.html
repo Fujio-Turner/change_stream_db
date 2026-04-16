@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Changes Worker — Prometheus Metrics Reference</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --orange: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --counter-bg: #1a2332;
+    --gauge-bg: #1a2a1a;
+    --summary-bg: #2a1a2a;
+    --info-bg: #2a2a1a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 0;
+  }
+
+  /* -- Header -- */
+  header {
+    background: linear-gradient(135deg, #1a2332 0%, #161b22 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 3rem 2rem 2rem;
+    text-align: center;
+  }
+  header h1 { font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem; }
+  header h1 span { color: var(--accent); }
+  header p { color: var(--text-muted); font-size: 1.05rem; max-width: 700px; margin: 0 auto; }
+
+  /* -- Layout -- */
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+
+  /* -- TOC -- */
+  nav.toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 2.5rem;
+  }
+  nav.toc h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 0.75rem; }
+  nav.toc ul { list-style: none; columns: 2; column-gap: 2rem; }
+  nav.toc li { margin-bottom: 0.35rem; }
+  nav.toc a { color: var(--accent); text-decoration: none; font-size: 0.95rem; }
+  nav.toc a:hover { text-decoration: underline; }
+
+  /* -- Section headers -- */
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 2.5rem 0 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-header h2 { font-size: 1.35rem; font-weight: 600; }
+  .section-icon {
+    width: 32px; height: 32px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1rem;
+  }
+  .section-icon.counter { background: var(--counter-bg); color: var(--accent); }
+  .section-icon.gauge { background: var(--gauge-bg); color: var(--green); }
+  .section-icon.summary { background: var(--summary-bg); color: var(--purple); }
+
+  /* -- Intro boxes -- */
+  .type-legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2.5rem;
+  }
+  .type-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+  }
+  .type-card h3 { font-size: 1rem; margin-bottom: 0.35rem; }
+  .type-card h3 .badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 8px;
+    border-radius: 4px;
+    vertical-align: middle;
+    margin-left: 0.5rem;
+    font-weight: 600;
+  }
+  .badge-counter { background: var(--counter-bg); color: var(--accent); border: 1px solid #264166; }
+  .badge-gauge { background: var(--gauge-bg); color: var(--green); border: 1px solid #1a4a1a; }
+  .badge-summary { background: var(--summary-bg); color: var(--purple); border: 1px solid #4a1a5a; }
+  .badge-info { background: var(--info-bg); color: var(--orange); border: 1px solid #4a4a1a; }
+  .type-card p { color: var(--text-muted); font-size: 0.9rem; }
+
+  /* -- Metric cards -- */
+  .metric {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+  }
+  .metric-name {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.95rem;
+    color: var(--accent);
+    word-break: break-all;
+  }
+  .metric-type {
+    display: inline-block;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-left: 0.75rem;
+    font-weight: 600;
+    vertical-align: middle;
+  }
+  .metric-desc { margin-top: 0.6rem; color: var(--text); font-size: 0.95rem; }
+  .metric-detail { margin-top: 0.75rem; }
+  .metric-detail dt {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-top: 0.65rem;
+    margin-bottom: 0.2rem;
+  }
+  .metric-detail dd { font-size: 0.9rem; color: var(--text); }
+  .metric-detail code {
+    background: #1a2332;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    color: var(--accent);
+  }
+  .metric-detail pre {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    margin-top: 0.35rem;
+    line-height: 1.5;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    color: var(--green);
+  }
+
+  /* -- Derived metrics section -- */
+  .derived {
+    background: linear-gradient(135deg, #1a2332 0%, #1a2a2a 100%);
+    border: 1px solid #264166;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+  }
+  .derived h4 {
+    font-size: 1rem;
+    color: var(--orange);
+    margin-bottom: 0.4rem;
+  }
+  .derived p { font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; }
+
+  /* -- Labels -- */
+  .labels-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.5rem;
+    font-size: 0.9rem;
+  }
+  .labels-table th {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    background: #1a2332;
+    color: var(--accent);
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+  }
+  .labels-table td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  .labels-table td code { background: transparent; padding: 0; color: var(--green); }
+
+  /* -- Footer -- */
+  footer {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--border);
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+
+  @media (max-width: 700px) {
+    nav.toc ul { columns: 1; }
+    header { padding: 2rem 1rem 1.5rem; }
+    header h1 { font-size: 1.5rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Changes Worker — <span>Prometheus Metrics Reference</span></h1>
+  <p>Complete reference for all metrics exposed at <code>/_metrics</code>. Includes Prometheus types, descriptions, PromQL queries, and Grafana charting suggestions.</p>
+</header>
+
+<div class="container">
+
+<!-- ================================================================ -->
+<!-- TOC -->
+<!-- ================================================================ -->
+<nav class="toc">
+  <h2>Contents</h2>
+  <ul>
+    <li><a href="#metric-types">Prometheus Metric Types</a></li>
+    <li><a href="#labels">Labels</a></li>
+    <li><a href="#process">Process Metrics</a></li>
+    <li><a href="#poll">Poll Loop Metrics</a></li>
+    <li><a href="#changes">Changes Metrics</a></li>
+    <li><a href="#docs">Doc Fetching Metrics</a></li>
+    <li><a href="#bytes">Bytes / Data Volume Metrics</a></li>
+    <li><a href="#output">Output Metrics</a></li>
+    <li><a href="#response-time">Response Time Summary</a></li>
+    <li><a href="#checkpoint">Checkpoint Metrics</a></li>
+    <li><a href="#retries">Retry Metrics</a></li>
+    <li><a href="#derived">Derived Metrics &amp; Formulas</a></li>
+    <li><a href="#alerts">Alerting Examples</a></li>
+  </ul>
+</nav>
+
+<!-- ================================================================ -->
+<!-- METRIC TYPES -->
+<!-- ================================================================ -->
+<div id="metric-types" class="section-header">
+  <h2>Prometheus Metric Types</h2>
+</div>
+
+<div class="type-legend">
+  <div class="type-card">
+    <h3>Counter <span class="badge badge-counter">counter</span></h3>
+    <p>A value that only goes <strong>up</strong> (or resets to zero on restart). Use <code>rate()</code> or <code>increase()</code> in PromQL to get per-second or per-interval rates. Never graph the raw value — it's cumulative.</p>
+  </div>
+  <div class="type-card">
+    <h3>Gauge <span class="badge badge-gauge">gauge</span></h3>
+    <p>A value that can go <strong>up or down</strong>. Represents a snapshot: current uptime, last batch size, endpoint health. Graph the raw value directly.</p>
+  </div>
+  <div class="type-card">
+    <h3>Summary <span class="badge badge-summary">summary</span></h3>
+    <p>Pre-calculated <strong>quantiles</strong> (p50, p90, p99) plus total count and sum. Ideal for response time distributions. Use <code>_sum / _count</code> for the average.</p>
+  </div>
+  <div class="type-card">
+    <h3>Info <span class="badge badge-info">info</span></h3>
+    <p>A gauge that's always <code>1</code>, carrying metadata in labels. Used for non-numeric values like the current checkpoint sequence string.</p>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- LABELS -->
+<!-- ================================================================ -->
+<div id="labels" class="section-header">
+  <h2>Labels</h2>
+</div>
+
+<div class="metric">
+  <p class="metric-desc">Every metric includes these labels for multi-instance dashboards:</p>
+  <table class="labels-table">
+    <thead>
+      <tr><th>Label</th><th>Example</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>src</code></td><td><code>sync_gateway</code></td><td>Gateway type: <code>sync_gateway</code>, <code>app_services</code>, or <code>edge_server</code></td></tr>
+      <tr><td><code>database</code></td><td><code>db</code></td><td>The database name from <code>gateway.database</code> in config</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ================================================================ -->
+<!-- PROCESS -->
+<!-- ================================================================ -->
+<div id="process" class="section-header">
+  <div class="section-icon gauge">⏱</div>
+  <h2>Process Metrics</h2>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_uptime_seconds</span>
+    <span class="metric-type badge-gauge">gauge</span>
+  </div>
+  <p class="metric-desc">Time in seconds since the worker process started. Resets to zero on restart.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>How long the worker has been running continuously. A sudden drop to zero means the process restarted.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Single-stat panel showing uptime in hours/days. Alert if uptime drops below a threshold (unexpected restarts).</dd>
+    <dt>PromQL</dt>
+    <dd><pre>changes_worker_uptime_seconds</pre></dd>
+    <dt>Alert example</dt>
+    <dd><pre># Worker restarted in the last 5 minutes
+changes_worker_uptime_seconds < 300</pre></dd>
+  </dl>
+</div>
+
+<!-- ================================================================ -->
+<!-- POLL LOOP -->
+<!-- ================================================================ -->
+<div id="poll" class="section-header">
+  <div class="section-icon counter">🔄</div>
+  <h2>Poll Loop Metrics</h2>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_poll_cycles_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total number of <code>_changes</code> poll cycles completed. Incremented after every successful response from the gateway, whether the batch contained changes or not.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>How actively the worker is polling. If this counter stops increasing, the worker is stuck or the gateway is unreachable.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Line chart with <code>rate()</code> — shows polls per second. Should match roughly <code>1 / poll_interval_seconds</code> when idle.</dd>
+    <dt>PromQL</dt>
+    <dd><pre>rate(changes_worker_poll_cycles_total[5m])</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_poll_errors_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total number of <code>_changes</code> poll errors. Includes non-retryable errors (4xx) and exhausted retries (5xx / connection failures).</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Gateway connectivity problems. Any non-zero rate means the worker is failing to read the feed.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Line chart with <code>rate()</code>. Overlay with <code>poll_cycles_total</code> to see error ratio. Alert if > 0 for sustained periods.</dd>
+    <dt>PromQL</dt>
+    <dd><pre># Error rate
+rate(changes_worker_poll_errors_total[5m])
+
+# Error ratio (errors / total polls)
+rate(changes_worker_poll_errors_total[5m])
+  / rate(changes_worker_poll_cycles_total[5m])</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_last_poll_timestamp_seconds</span>
+    <span class="metric-type badge-gauge">gauge</span>
+  </div>
+  <p class="metric-desc">Unix timestamp (epoch seconds) of the last successful <code>_changes</code> poll response.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>How recently the worker successfully fetched changes. If this timestamp is stale, the worker may be stuck or the gateway is down.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Single-stat showing "time since last poll" using <code>time() - value</code>. Alert if the gap exceeds 2× your poll interval.</dd>
+    <dt>PromQL</dt>
+    <dd><pre># Seconds since last successful poll
+time() - changes_worker_last_poll_timestamp_seconds</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_last_batch_size</span>
+    <span class="metric-type badge-gauge">gauge</span>
+  </div>
+  <p class="metric-desc">Number of changes in the most recent batch received from the <code>_changes</code> feed.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Current load. A batch size of 0 means the worker is caught up (no new changes). Large batches indicate heavy write activity or a catch-up scenario.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Line chart or bar chart. If using <code>throttle_feed</code>, full batches (= throttle limit) mean there's more data waiting.</dd>
+    <dt>PromQL</dt>
+    <dd><pre>changes_worker_last_batch_size</pre></dd>
+  </dl>
+</div>
+
+<!-- ================================================================ -->
+<!-- CHANGES -->
+<!-- ================================================================ -->
+<div id="changes" class="section-header">
+  <div class="section-icon counter">📊</div>
+  <h2>Changes Metrics</h2>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_changes_received_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total number of changes received from the <code>_changes</code> feed. This is the raw count before any filtering.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Total throughput from the gateway. This is your ingest rate — how many document mutations the gateway is reporting.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Line chart with <code>rate()</code> — shows changes per second arriving from the feed. Compare against <code>changes_processed_total</code> to see how many survive filtering.</dd>
+    <dt>PromQL</dt>
+    <dd><pre># Changes arriving per second
+rate(changes_worker_changes_received_total[5m])
+
+# Total changes in the last hour
+increase(changes_worker_changes_received_total[1h])</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_changes_processed_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total number of changes that passed filtering and were forwarded to the output (stdout or HTTP endpoint).</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Your effective processing throughput — the work the output endpoint actually receives. The difference between <code>received</code> and <code>processed</code> equals filtered-out changes.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Line chart with <code>rate()</code>. Stack with <code>changes_filtered_total</code> to show the full picture.</dd>
+    <dt>PromQL</dt>
+    <dd><pre>rate(changes_worker_changes_processed_total[5m])</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_changes_filtered_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total number of changes filtered out (sum of deletes + removes skipped due to <code>ignore_delete</code> / <code>ignore_remove</code> settings).</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>How many changes are being discarded by your filter rules. A high ratio may indicate heavy delete activity in the source database.</dd>
+    <dt>PromQL</dt>
+    <dd><pre># Filter ratio: what percentage of changes are dropped
+rate(changes_worker_changes_filtered_total[5m])
+  / rate(changes_worker_changes_received_total[5m]) * 100</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_changes_deleted_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total deleted changes filtered out (subset of <code>changes_filtered_total</code>). Only incremented when <code>ignore_delete=true</code>.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Delete activity in the source database that was intentionally skipped.</dd>
+    <dt>PromQL</dt>
+    <dd><pre>rate(changes_worker_changes_deleted_total[5m])</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_changes_removed_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total removed-from-channel changes filtered out (subset of <code>changes_filtered_total</code>). Only incremented when <code>ignore_remove=true</code>.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>How often documents are being revoked from channels. High numbers may indicate channel assignment churn.</dd>
+    <dt>PromQL</dt>
+    <dd><pre>rate(changes_worker_changes_removed_total[5m])</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_feed_deletes_seen_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total changes with <code>deleted=true</code> seen in the <code>_changes</code> feed. Counted <strong>always</strong>, regardless of whether <code>ignore_delete</code> is enabled. This tells you the true delete activity in the source database.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>How many document deletions are happening in the source, independent of your filter settings. Compare against <code>changes_deleted_total</code> to confirm your filter is working — if <code>ignore_delete=false</code>, <code>changes_deleted_total</code> stays at 0 while this metric still climbs.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Line chart with <code>rate()</code>. Overlay with <code>changes_received_total</code> to see what percentage of feed activity is deletions.</dd>
+    <dt>PromQL</dt>
+    <dd><pre># Delete ratio in the feed
+rate(changes_worker_feed_deletes_seen_total[5m])
+  / rate(changes_worker_changes_received_total[5m]) * 100</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_feed_removes_seen_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total changes with <code>removed=true</code> seen in the <code>_changes</code> feed. Counted <strong>always</strong>, regardless of whether <code>ignore_remove</code> is enabled. These are documents revoked from channels the worker is listening to.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Channel access revocation rate. High values may indicate frequent channel reassignment or access control changes in your Sync Function.</dd>
+    <dt>PromQL</dt>
+    <dd><pre>rate(changes_worker_feed_removes_seen_total[5m])</pre></dd>
+  </dl>
+</div>
+
+<!-- ================================================================ -->
+<!-- BYTES -->
+<!-- ================================================================ -->
+<div id="bytes" class="section-header">
+  <div class="section-icon counter">📦</div>
+  <h2>Bytes / Data Volume Metrics</h2>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_bytes_received_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total bytes received from the gateway. Includes raw response bodies from <code>_changes</code> feed responses, <code>_bulk_get</code> responses (SG/App Services), and individual document <code>GET</code> responses (Edge Server). This is the actual wire payload — the JSON data the worker ingests.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Ingest data volume. Combine with uptime or time windows to get bytes/second throughput. Large values indicate big documents or high change volume.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Line chart with <code>rate()</code> in bytes/sec. Apply Grafana unit formatting (bytes/sec → KB/s, MB/s) for readability.</dd>
+    <dt>PromQL</dt>
+    <dd><pre># Ingest throughput in bytes/sec
+rate(changes_worker_bytes_received_total[5m])
+
+# Total data ingested in the last hour (in MB)
+increase(changes_worker_bytes_received_total[1h]) / 1024 / 1024
+
+# Average document size (bytes per change received)
+rate(changes_worker_bytes_received_total[5m])
+  / rate(changes_worker_changes_received_total[5m])</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_bytes_output_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total bytes sent to the output endpoint (or stdout). This is the serialized body size — JSON, XML, msgpack, etc. — for every document forwarded downstream.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Egress data volume. Compare against <code>bytes_received_total</code> to understand compression/expansion from serialization format changes (e.g., JSON→msgpack shrinks, JSON→XML grows).</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Line chart with <code>rate()</code> in bytes/sec. Dual-axis with <code>bytes_received_total</code> to see in vs out.</dd>
+    <dt>PromQL</dt>
+    <dd><pre># Output throughput in bytes/sec
+rate(changes_worker_bytes_output_total[5m])
+
+# Average output payload size per doc
+rate(changes_worker_bytes_output_total[5m])
+  / rate(changes_worker_output_requests_total[5m])
+
+# Input vs output ratio (should be ~1.0 for JSON→JSON)
+rate(changes_worker_bytes_output_total[5m])
+  / rate(changes_worker_bytes_received_total[5m])</pre></dd>
+  </dl>
+</div>
+
+<!-- ================================================================ -->
+<!-- DOC FETCHING -->
+<!-- ================================================================ -->
+<div id="docs" class="section-header">
+  <div class="section-icon counter">📥</div>
+  <h2>Doc Fetching Metrics</h2>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_docs_fetched_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total documents fetched via <code>_bulk_get</code> (SG/App Services) or individual <code>GET</code> requests (Edge Server). Only incremented when <code>include_docs=false</code>, since the worker must fetch doc bodies separately.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Secondary fetch volume. If this is high, consider switching to <code>include_docs=true</code> to reduce round trips. For Edge Server, each doc is a separate HTTP request.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Line chart with <code>rate()</code>. Compare against <code>changes_processed_total</code> — they should roughly match when <code>include_docs=false</code>.</dd>
+    <dt>PromQL</dt>
+    <dd><pre>rate(changes_worker_docs_fetched_total[5m])</pre></dd>
+  </dl>
+</div>
+
+<!-- ================================================================ -->
+<!-- OUTPUT -->
+<!-- ================================================================ -->
+<div id="output" class="section-header">
+  <div class="section-icon counter">📤</div>
+  <h2>Output Metrics</h2>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_output_requests_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total output requests sent to the downstream endpoint (or stdout writes). Includes both successful and failed requests.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Total delivery attempts. In <code>mode=stdout</code>, this counts JSON lines written. In <code>mode=http</code>, this counts HTTP requests sent.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Line chart with <code>rate()</code>. This is your delivery throughput — docs per second reaching the downstream system.</dd>
+    <dt>PromQL</dt>
+    <dd><pre>rate(changes_worker_output_requests_total[5m])</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_output_errors_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total output request errors. Includes 4xx client errors, 3xx redirects, 5xx after retries exhausted, and connection failures.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Downstream delivery failures. If <code>halt_on_failure=true</code>, a single error stops the pipeline. If <code>false</code>, errors mean skipped docs.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Line chart with <code>rate()</code>. Alert on any sustained rate > 0.</dd>
+    <dt>PromQL</dt>
+    <dd><pre># Output error rate
+rate(changes_worker_output_errors_total[5m])
+
+# Output success ratio
+1 - (
+  rate(changes_worker_output_errors_total[5m])
+  / rate(changes_worker_output_requests_total[5m])
+)</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_output_requests_by_method_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Output requests broken down by HTTP method. Carries a <code>method</code> label with values <code>"PUT"</code> or <code>"DELETE"</code>. PUT corresponds to document creates/updates; DELETE corresponds to document deletions.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>The mix of create/update vs delete operations hitting your downstream endpoint. A sudden spike in DELETEs might indicate a mass purge or TTL expiration in the source.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Stacked area chart with both methods. Or a pie chart showing the PUT/DELETE ratio over a time window.</dd>
+    <dt>PromQL</dt>
+    <dd><pre># PUT rate
+rate(changes_worker_output_requests_by_method_total{method="PUT"}[5m])
+
+# DELETE rate
+rate(changes_worker_output_requests_by_method_total{method="DELETE"}[5m])
+
+# Delete-to-PUT ratio
+rate(changes_worker_output_requests_by_method_total{method="DELETE"}[5m])
+  / rate(changes_worker_output_requests_by_method_total{method="PUT"}[5m])</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_output_errors_by_method_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Output errors broken down by HTTP method (<code>"PUT"</code> or <code>"DELETE"</code>). Helps pinpoint whether your downstream endpoint is failing on writes vs deletes specifically.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>If DELETE errors are high but PUT errors are zero, your endpoint may not support DELETE. If PUT errors are high, the endpoint may be rejecting payloads (schema mismatch, size limits, etc.).</dd>
+    <dt>PromQL</dt>
+    <dd><pre># PUT error rate
+rate(changes_worker_output_errors_by_method_total{method="PUT"}[5m])
+
+# DELETE error rate
+rate(changes_worker_output_errors_by_method_total{method="DELETE"}[5m])</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_output_endpoint_up</span>
+    <span class="metric-type badge-gauge">gauge</span>
+  </div>
+  <p class="metric-desc">Whether the output HTTP endpoint is reachable. <code>1</code> = up, <code>0</code> = down (set when <code>halt_on_failure</code> triggers).</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Instant health signal. When this drops to 0, the worker has stopped forwarding and is holding the checkpoint.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Single-stat or status panel (green/red). Alert immediately when 0.</dd>
+    <dt>PromQL</dt>
+    <dd><pre>changes_worker_output_endpoint_up == 0</pre></dd>
+  </dl>
+</div>
+
+<!-- ================================================================ -->
+<!-- RESPONSE TIME -->
+<!-- ================================================================ -->
+<div id="response-time" class="section-header">
+  <div class="section-icon summary">⏱</div>
+  <h2>Response Time Summary</h2>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_output_response_time_seconds</span>
+    <span class="metric-type badge-summary">summary</span>
+  </div>
+  <p class="metric-desc">Output HTTP response time distribution in seconds. Exposed as pre-calculated quantiles (p50, p90, p99) plus cumulative sum and count. Only populated when <code>output.mode=http</code>.</p>
+  <dl class="metric-detail">
+    <dt>Sub-metrics</dt>
+    <dd>
+      <table class="labels-table">
+        <thead><tr><th>Metric</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>{quantile="0.5"}</code></td><td>Median response time (p50) — half of requests are faster than this</td></tr>
+          <tr><td><code>{quantile="0.9"}</code></td><td>90th percentile (p90) — 90% of requests are faster than this</td></tr>
+          <tr><td><code>{quantile="0.99"}</code></td><td>99th percentile (p99) — tail latency, worst 1% of requests</td></tr>
+          <tr><td><code>_sum</code></td><td>Total time spent on all output requests (seconds)</td></tr>
+          <tr><td><code>_count</code></td><td>Total number of output requests timed</td></tr>
+        </tbody>
+      </table>
+    </dd>
+    <dt>What it tells you</dt>
+    <dd>How fast your downstream endpoint is responding. The p50 shows typical latency; p99 shows worst-case. If p99 is much higher than p50, you have tail latency issues.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Multi-line chart with all three quantiles on the same panel. Add the average (<code>_sum / _count</code>) as a fourth line. Y-axis in seconds (or milliseconds).</dd>
+    <dt>PromQL</dt>
+    <dd><pre># Average output response time
+changes_worker_output_response_time_seconds_sum
+  / changes_worker_output_response_time_seconds_count
+
+# p99 directly
+changes_worker_output_response_time_seconds{quantile="0.99"}</pre></dd>
+  </dl>
+</div>
+
+<!-- ================================================================ -->
+<!-- CHECKPOINT -->
+<!-- ================================================================ -->
+<div id="checkpoint" class="section-header">
+  <div class="section-icon gauge">💾</div>
+  <h2>Checkpoint Metrics</h2>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_checkpoint_saves_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total checkpoint save operations (successful PUTs to <code>_local/checkpoint-{uuid}</code> on the gateway).</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>How frequently the checkpoint advances. Should increase at roughly the same rate as <code>poll_cycles_total</code>.</dd>
+    <dt>PromQL</dt>
+    <dd><pre>rate(changes_worker_checkpoint_saves_total[5m])</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_checkpoint_save_errors_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total checkpoint save errors. When the gateway is unreachable, the checkpoint falls back to the local <code>checkpoint.json</code> file.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Gateway write failures. If this increases, the checkpoint is being saved locally — the worker will still function but the checkpoint won't survive container restarts without volume mounts.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Line chart with <code>rate()</code>. Alert on any sustained rate > 0.</dd>
+    <dt>PromQL</dt>
+    <dd><pre>rate(changes_worker_checkpoint_save_errors_total[5m]) > 0</pre></dd>
+  </dl>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_checkpoint_seq</span>
+    <span class="metric-type badge-info">info / gauge</span>
+  </div>
+  <p class="metric-desc">Current checkpoint sequence value. Exposed as a gauge with value <code>1</code> and the sequence as a <code>seq</code> label, since sequences can be non-numeric strings (e.g., <code>"1234:56"</code>).</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Where the worker is in the feed. If this stops advancing, the worker is either caught up (no new changes) or stuck (output failure holding the checkpoint).</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Table panel or log-style panel showing the <code>seq</code> label value over time.</dd>
+    <dt>PromQL</dt>
+    <dd><pre># See the current sequence value in the seq label
+changes_worker_checkpoint_seq</pre></dd>
+  </dl>
+</div>
+
+<!-- ================================================================ -->
+<!-- RETRIES -->
+<!-- ================================================================ -->
+<div id="retries" class="section-header">
+  <div class="section-icon counter">🔁</div>
+  <h2>Retry Metrics</h2>
+</div>
+
+<div class="metric">
+  <div>
+    <span class="metric-name">changes_worker_retries_total</span>
+    <span class="metric-type badge-counter">counter</span>
+  </div>
+  <p class="metric-desc">Total HTTP retry attempts across all requests (gateway <code>_changes</code>, <code>_bulk_get</code>, checkpoint, and output endpoint). Each individual retry attempt increments this counter by 1.</p>
+  <dl class="metric-detail">
+    <dt>What it tells you</dt>
+    <dd>Network reliability issues. A high retry rate indicates flaky connections, overloaded servers, or transient errors. Compare against total requests to gauge severity.</dd>
+    <dt>Chart suggestion</dt>
+    <dd>Line chart with <code>rate()</code>. Spike correlation with <code>poll_errors_total</code> and <code>output_errors_total</code> helps identify the source.</dd>
+    <dt>PromQL</dt>
+    <dd><pre>rate(changes_worker_retries_total[5m])</pre></dd>
+  </dl>
+</div>
+
+<!-- ================================================================ -->
+<!-- DERIVED METRICS -->
+<!-- ================================================================ -->
+<div id="derived" class="section-header">
+  <h2>Derived Metrics &amp; Formulas</h2>
+</div>
+
+<p style="color: var(--text-muted); margin-bottom: 1.5rem;">These are not exposed directly but can be computed in Prometheus/Grafana by combining raw metrics. These are the most valuable panels for operational dashboards.</p>
+
+<div class="derived">
+  <h4>📈 Throughput — Changes Per Second</h4>
+  <p>How fast the worker is ingesting changes from the gateway.</p>
+  <pre>rate(changes_worker_changes_received_total[5m])</pre>
+</div>
+
+<div class="derived">
+  <h4>📈 Effective Processing Rate — Docs Forwarded Per Second</h4>
+  <p>How fast documents are being delivered to the downstream system, after filtering.</p>
+  <pre>rate(changes_worker_changes_processed_total[5m])</pre>
+</div>
+
+<div class="derived">
+  <h4>⏱ Average Time Per Document (end-to-end)</h4>
+  <p>Divide total output time by total docs processed to get average end-to-end processing time per document. This includes output HTTP latency.</p>
+  <pre>changes_worker_output_response_time_seconds_sum
+  / changes_worker_output_response_time_seconds_count</pre>
+</div>
+
+<div class="derived">
+  <h4>⏱ Average Time Per Poll Cycle</h4>
+  <p>How long each poll cycle takes on average (from poll to next poll). Useful for understanding overall loop cadence.</p>
+  <pre>changes_worker_uptime_seconds
+  / changes_worker_poll_cycles_total</pre>
+</div>
+
+<div class="derived">
+  <h4>📊 Filter Drop Rate (%)</h4>
+  <p>What percentage of incoming changes are being filtered out (deletes + removes). High values mean most feed activity is irrelevant to your pipeline.</p>
+  <pre>rate(changes_worker_changes_filtered_total[5m])
+  / rate(changes_worker_changes_received_total[5m]) * 100</pre>
+</div>
+
+<div class="derived">
+  <h4>❌ Output Error Rate (%)</h4>
+  <p>Percentage of output requests that failed. Should be 0% in a healthy system.</p>
+  <pre>rate(changes_worker_output_errors_total[5m])
+  / rate(changes_worker_output_requests_total[5m]) * 100</pre>
+</div>
+
+<div class="derived">
+  <h4>📉 Poll Error Rate (%)</h4>
+  <p>Percentage of poll cycles that hit errors. Indicates gateway reliability.</p>
+  <pre>rate(changes_worker_poll_errors_total[5m])
+  / rate(changes_worker_poll_cycles_total[5m]) * 100</pre>
+</div>
+
+<div class="derived">
+  <h4>⏱ Staleness — Seconds Since Last Successful Poll</h4>
+  <p>How stale the data is. If this exceeds 2–3× your <code>poll_interval_seconds</code>, something is wrong.</p>
+  <pre>time() - changes_worker_last_poll_timestamp_seconds</pre>
+</div>
+
+<div class="derived">
+  <h4>📊 Average Batch Size</h4>
+  <p>Average number of changes per batch over time. Useful for capacity planning and understanding load patterns.</p>
+  <pre>rate(changes_worker_changes_received_total[5m])
+  / rate(changes_worker_poll_cycles_total[5m])</pre>
+</div>
+
+<div class="derived">
+  <h4>📦 Ingest Throughput — Bytes Per Second (In)</h4>
+  <p>How fast data is flowing in from the gateway. Apply Grafana's bytes/sec unit for automatic KB/s, MB/s formatting.</p>
+  <pre>rate(changes_worker_bytes_received_total[5m])</pre>
+</div>
+
+<div class="derived">
+  <h4>📦 Output Throughput — Bytes Per Second (Out)</h4>
+  <p>How fast data is flowing out to your downstream endpoint.</p>
+  <pre>rate(changes_worker_bytes_output_total[5m])</pre>
+</div>
+
+<div class="derived">
+  <h4>📦 Average Document Size (Ingest)</h4>
+  <p>Average size (in bytes) of each change received from the gateway. Useful for capacity planning — tells you if docs are 500 bytes or 50KB.</p>
+  <pre>rate(changes_worker_bytes_received_total[5m])
+  / rate(changes_worker_changes_received_total[5m])</pre>
+</div>
+
+<div class="derived">
+  <h4>📦 Average Payload Size (Output)</h4>
+  <p>Average bytes per output request. If you changed the <code>output_format</code> from JSON to msgpack, this will show the size reduction.</p>
+  <pre>rate(changes_worker_bytes_output_total[5m])
+  / rate(changes_worker_output_requests_total[5m])</pre>
+</div>
+
+<div class="derived">
+  <h4>📊 Feed Delete Rate (%)</h4>
+  <p>What percentage of all changes in the feed are document deletions. Always counted, regardless of <code>ignore_delete</code> setting.</p>
+  <pre>rate(changes_worker_feed_deletes_seen_total[5m])
+  / rate(changes_worker_changes_received_total[5m]) * 100</pre>
+</div>
+
+<div class="derived">
+  <h4>📊 PUT vs DELETE Split</h4>
+  <p>Percentage of output requests that are DELETE operations. Tells you the mutation-type distribution hitting your downstream.</p>
+  <pre>rate(changes_worker_output_requests_by_method_total{method="DELETE"}[5m])
+  / rate(changes_worker_output_requests_total[5m]) * 100</pre>
+</div>
+
+<div class="derived">
+  <h4>📊 Docs Fetched Per Processed Change</h4>
+  <p>Only relevant when <code>include_docs=false</code>. Should be ≈1.0 — if higher, docs are being fetched redundantly.</p>
+  <pre>rate(changes_worker_docs_fetched_total[5m])
+  / rate(changes_worker_changes_processed_total[5m])</pre>
+</div>
+
+<!-- ================================================================ -->
+<!-- ALERTING -->
+<!-- ================================================================ -->
+<div id="alerts" class="section-header">
+  <h2>Alerting Examples</h2>
+</div>
+
+<p style="color: var(--text-muted); margin-bottom: 1.5rem;">Copy-paste these Prometheus alerting rules to get started:</p>
+
+<div class="metric">
+  <pre>groups:
+  - name: changes_worker
+    rules:
+
+      # Worker is down or restarted
+      - alert: ChangesWorkerDown
+        expr: changes_worker_uptime_seconds < 60
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Changes worker restarted or down"
+
+      # No polls in 2× poll_interval
+      - alert: ChangesWorkerStale
+        expr: time() - changes_worker_last_poll_timestamp_seconds > 120
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No successful poll in over 2 minutes"
+
+      # Output endpoint is down
+      - alert: OutputEndpointDown
+        expr: changes_worker_output_endpoint_up == 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Output endpoint down, checkpoint frozen"
+
+      # Output error rate > 1%
+      - alert: OutputErrorRate
+        expr: >
+          rate(changes_worker_output_errors_total[5m])
+          / rate(changes_worker_output_requests_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Output error rate exceeds 1%"
+
+      # p99 latency > 1 second
+      - alert: OutputLatencyHigh
+        expr: >
+          changes_worker_output_response_time_seconds{quantile="0.99"} > 1.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Output p99 latency exceeds 1 second"
+
+      # Checkpoint falling back to local file
+      - alert: CheckpointFallback
+        expr: rate(changes_worker_checkpoint_save_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Checkpoint saving to local file (gateway unreachable)"</pre>
+</div>
+
+</div><!-- .container -->
+
+<footer>
+  <p>Changes Worker — Prometheus Metrics Reference &nbsp;|&nbsp; <a href="README.md">Back to README</a> &nbsp;|&nbsp; <a href="https://prometheus.io/docs/practices/naming/">Prometheus Naming Conventions</a></p>
+</footer>
+
+</body>
+</html>

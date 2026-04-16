@@ -1,0 +1,9 @@
+# Required
+aiohttp>=3.9,<4
+icecream>=2.1,<3
+
+# Optional – install only for the output_format you need:
+#   pip install msgpack     # for output_format=msgpack
+#   pip install cbor2       # for output_format=cbor
+#   pip install pymongo     # for output_format=bson (provides bson module)
+#   pip install pyyaml      # for output_format=yaml

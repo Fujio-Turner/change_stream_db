@@ -1,0 +1,1417 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Changes Worker -- Schema Mappings</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <script src="/static/js/tailwind.js"></script>
+  <script src="/static/js/echarts.min.js"></script>
+  <script>
+    (function(){
+      var t = localStorage.getItem('cw_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <style>
+    .field-item { cursor: grab; padding: 2px 8px; border-radius: 6px; font-size: 13px; font-family: monospace; }
+    .field-item:hover { background: oklch(var(--p) / 0.15); }
+    .field-item.drag-over { outline: 2px solid oklch(var(--p)); }
+    .ac-wrap { position: relative; }
+    .ac-list { position: absolute; top: 100%; left: 0; right: 0; z-index: 100; max-height: 220px; overflow-y: auto;
+               border-radius: 8px; font-size: 12px; font-family: monospace; display: none; }
+    .ac-list.show { display: block; }
+    .ac-item { padding: 4px 8px; cursor: pointer; }
+    .ac-item:hover, .ac-item.active { background: oklch(var(--p) / 0.2); }
+    .ac-cat { padding: 3px 8px; font-size: 10px; font-weight: 700; opacity: 0.5; text-transform: uppercase; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col bg-base-200">
+
+  <!-- Navbar -->
+  <nav class="navbar bg-base-100 shadow-sm px-4">
+    <div class="flex-1">
+      <a href="/" class="text-xl font-bold">Changes Worker Admin</a>
+    </div>
+    <div class="flex-none">
+      <ul class="menu menu-horizontal px-1 gap-1">
+        <li><a href="/">Dashboard</a></li>
+        <li><a href="/config">Config</a></li>
+        <li><a href="/schema" class="active">Schema Mappings</a></li>
+        <li><a href="/transforms">Transforms</a></li>
+        </ul>
+      <label class="label cursor-pointer gap-2 ml-4">
+        <span class="label-text text-sm">Dark</span>
+        <input type="checkbox" id="themeToggle" class="toggle toggle-sm" />
+        <span class="label-text text-sm">Light</span>
+      </label>
+    </div>
+  </nav>
+
+  <main class="flex-1 flex flex-col w-full p-6 gap-4" style="min-height: calc(100vh - 132px);">
+
+    <!-- Top action bar -->
+    <div class="card bg-base-100 shadow-sm rounded-2xl">
+      <div class="card-body p-4 flex-row items-center gap-2 flex-wrap">
+        <div class="flex items-center gap-2">
+          <h2 class="font-semibold text-base">Mapping:</h2>
+          <input id="filenameInput" type="text" placeholder="filename.json" class="input input-bordered input-sm w-48" />
+        </div>
+        <button class="btn btn-success btn-sm" onclick="saveMapping()">Save</button>
+        <button class="btn btn-secondary btn-sm" onclick="downloadMapping()">Download</button>
+        <div class="dropdown">
+          <label tabindex="0" class="btn btn-accent btn-sm">Sample Templates ▾</label>
+          <ul tabindex="0" class="dropdown-content menu p-2 shadow-lg bg-base-200 rounded-box w-56 z-50">
+            <li class="menu-title text-xs opacity-50">Tables</li>
+            <li><a onclick="loadTemplate('orders')">Orders</a></li>
+            <li><a onclick="loadTemplate('profiles')">Profiles</a></li>
+            <li><a onclick="loadTemplate('products')">Products</a></li>
+            <li class="menu-title text-xs opacity-50 mt-1">JSON</li>
+            <li><a onclick="loadTemplate('orders_json')">Orders (JSON)</a></li>
+            <li><a onclick="loadTemplate('events_json')">Events (JSON)</a></li>
+            <li><a onclick="loadTemplate('sensors_json')">Sensors (JSON)</a></li>
+          </ul>
+        </div>
+        <div class="dropdown">
+          <label tabindex="0" class="btn btn-ghost btn-sm">Saved Files ▾</label>
+          <ul tabindex="0" class="dropdown-content menu p-2 shadow-lg bg-base-200 rounded-box w-64 z-50" id="fileListDropdown">
+            <li><a class="text-base-content/50">Loading...</a></li>
+          </ul>
+        </div>
+        <span id="statusMsg" class="text-sm ml-auto"></span>
+      </div>
+    </div>
+
+    <!-- Split pane: Source (left) | Target Tables (right) -->
+    <div class="flex gap-4 flex-1" style="min-height: 500px;">
+
+      <!-- LEFT: Source JSON -->
+      <div class="w-[45%] flex flex-col gap-4">
+        <div class="card bg-base-100 shadow-sm rounded-2xl flex-1 flex flex-col">
+          <div class="card-body p-4 flex-1 flex flex-col">
+            <div class="tabs tabs-boxed mb-3">
+              <a class="tab tab-active" id="tabPaste" onclick="switchSourceTab('paste')">Paste JSON</a>
+              <a class="tab" id="tabSchema" onclick="switchSourceTab('schema')">JSON Schema</a>
+              <a class="tab" id="tabLive" onclick="switchSourceTab('live')">Live Sample</a>
+            </div>
+
+            <!-- Paste JSON panel -->
+            <div id="panelPaste" class="flex-1 flex flex-col">
+              <textarea id="sourceEditor" class="textarea textarea-bordered w-full font-mono text-sm flex-1"
+                        style="min-height: 200px; resize: vertical;"
+                        placeholder='Paste a sample JSON document from the _changes feed...'
+                        oninput="onSourceChange()"></textarea>
+            </div>
+
+            <!-- JSON Schema panel -->
+            <div id="panelSchema" class="flex-1 flex-col hidden">
+              <textarea id="schemaEditor" class="textarea textarea-bordered w-full font-mono text-sm flex-1"
+                        style="min-height: 200px; resize: vertical;"
+                        placeholder='Paste a JSON Schema (json-schema.org format)...'
+                        oninput="onSchemaChange()"></textarea>
+            </div>
+
+            <!-- Live Sample panel -->
+            <div id="panelLive" class="flex-1 flex-col hidden">
+              <div class="flex items-center gap-2 mb-3">
+                <button class="btn btn-primary btn-sm" onclick="fetchLiveSample()" id="btnFetchSample">
+                  🎲 Random Sample from _changes Feed
+                </button>
+                <span id="liveSampleStatus" class="text-sm opacity-60"></span>
+              </div>
+              <textarea id="liveEditor" class="textarea textarea-bordered w-full font-mono text-sm flex-1"
+                        style="min-height: 200px; resize: vertical;"
+                        placeholder="Click the button above to fetch a live document..."
+                        readonly></textarea>
+            </div>
+
+            <!-- Extracted Fields -->
+            <div class="divider my-1 text-xs opacity-60">Source Fields</div>
+            <div id="sourceFields" class="overflow-y-auto" style="max-height: 220px;">
+              <p class="text-sm opacity-50 p-2">Paste or load a JSON document above to see available fields.</p>
+            </div>
+            <div id="sourceCoverage" class="mt-2 hidden"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Target Output -->
+      <div class="w-[55%] flex flex-col gap-4">
+        <div class="card bg-base-100 shadow-sm rounded-2xl flex-1 flex flex-col">
+          <div class="card-body p-4 flex-1 flex flex-col">
+
+            <!-- Output mode toggle -->
+            <div class="flex items-center gap-3 mb-3">
+              <span class="text-sm font-semibold">Output Mode:</span>
+              <div class="tabs tabs-boxed">
+                <a class="tab tab-active" id="modeTabTables" onclick="switchOutputMode('tables')">Tables</a>
+                <a class="tab" id="modeTabJson" onclick="switchOutputMode('json')">JSON</a>
+              </div>
+            </div>
+
+            <!-- Source match (shared) -->
+            <div class="card bg-base-200 rounded-xl mb-3">
+              <div class="card-body p-3">
+                <div class="flex items-center gap-2 mb-1">
+                  <h4 class="text-sm font-semibold">Source Match</h4>
+                  <div class="tooltip tooltip-right" data-tip="Match documents where a field equals a value. Only matched documents are processed by this mapping.">
+                    <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                  </div>
+                </div>
+                <div class="flex gap-2">
+                  <input id="matchField" type="text" placeholder="field (e.g. type)" class="input input-bordered input-sm flex-1" oninput="onMappingChange()" />
+                  <input id="matchValue" type="text" placeholder="value (e.g. order)" class="input input-bordered input-sm flex-1" oninput="onMappingChange()" />
+                </div>
+              </div>
+            </div>
+
+            <!-- TABLES mode -->
+            <div id="tablesMode" class="flex-1 flex flex-col">
+              <div class="flex items-center gap-2 mb-3">
+                <div class="tabs tabs-boxed flex-1" id="tableTabs"></div>
+                <button class="btn btn-primary btn-sm" onclick="addTable()">+ Table</button>
+              </div>
+              <div id="tableEditor" class="flex-1 flex flex-col overflow-y-auto">
+                <p class="text-sm opacity-50 p-2">Click "+ Table" to add your first target table.</p>
+              </div>
+              <div id="targetCoverageTables" class="mt-2 hidden"></div>
+            </div>
+
+            <!-- JSON mode -->
+            <div id="jsonMode" class="flex-1 flex-col hidden">
+              <div class="card bg-base-200 rounded-xl mb-3">
+                <div class="card-body p-3">
+                  <div class="flex items-center gap-2 mb-2">
+                    <h4 class="text-sm font-semibold">JSON Field Mappings</h4>
+                    <div class="tooltip tooltip-right" data-tip="Map source paths to target JSON keys. Drag fields from the left panel. Add optional transforms to convert values.">
+                      <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                    </div>
+                    <button class="btn btn-primary btn-xs ml-auto" onclick="addJsonFieldRow()">+ Field</button>
+                  </div>
+                  <div id="jsonFieldRows" class="space-y-1">
+                    <div class="flex gap-1 mb-1">
+                      <span class="w-[18%] text-xs font-semibold opacity-60">Target Key</span>
+                      <span class="w-[24%] text-xs font-semibold opacity-60">Source Path</span>
+                      <span class="w-[25%] text-xs font-semibold opacity-60">Transform ▾</span>
+                      <span class="w-[28%] text-xs font-semibold opacity-60">Transform (edit)</span>
+                      <span class="w-[5%]"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div id="targetCoverageJson" class="mt-2 hidden"></div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Relationship Diagram -->
+    <div class="card bg-base-100 shadow-sm rounded-2xl">
+      <div class="card-body p-4">
+        <h3 class="font-semibold text-base mb-2">Table Relationship Diagram</h3>
+        <div id="chart" style="width: 100%; height: 350px;"></div>
+      </div>
+    </div>
+
+    <!-- Generated Mapping JSON (collapsible) -->
+    <div class="collapse collapse-arrow bg-base-100 shadow-sm rounded-2xl">
+      <input type="checkbox" />
+      <div class="collapse-title font-semibold text-base">Generated Mapping JSON</div>
+      <div class="collapse-content">
+        <pre id="mappingOutput" class="bg-base-200 p-4 rounded-xl font-mono text-sm overflow-x-auto whitespace-pre-wrap"></pre>
+      </div>
+    </div>
+
+  </main>
+
+  <footer class="footer footer-center p-4 bg-base-100 text-base-content">
+    <p>Changes Worker v1.1.0</p>
+  </footer>
+
+<script>
+// ── Theme toggle ─────────────────────────────────────────────
+var themeToggle = document.getElementById('themeToggle');
+themeToggle.checked = (localStorage.getItem('cw_theme') || 'dark') === 'light';
+themeToggle.addEventListener('change', function() {
+  var theme = themeToggle.checked ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('cw_theme', theme);
+  if (chartInstance) chartInstance.dispose();
+  chartInstance = echarts.init(document.getElementById('chart'));
+  renderDiagram();
+});
+
+// ── State ────────────────────────────────────────────────────
+var tables = [];
+var activeTableIdx = 0;
+var sourceFields = [];
+var currentFile = null;
+var outputMode = 'tables'; // 'tables' or 'json'
+var jsonFields = [];       // [{key, path, transform}] for JSON output mode
+var chartInstance = echarts.init(document.getElementById('chart'));
+
+// ── Transform functions ──────────────────────────────────────
+var TRANSFORMS = [
+  '',
+  // ── String ──
+  'trim()',
+  'ltrim()',
+  'rtrim()',
+  'uppercase()',
+  'lowercase()',
+  'camelcase()',
+  'propercase()',
+  'concat(,"")',
+  'replace(,"","")',
+  'replace_regex(,"","")',
+  'strip_chars(,"")',
+  'pad_left(,8,"0")',
+  'pad_right(,8," ")',
+  'substr(,0,10)',
+  'split(,",")[0]',
+  'split(,",")[1]',
+  'join(,",")',
+  'length()',
+  'urlencode()',
+  'urldecode()',
+  // ── Numeric ──
+  'to_int()',
+  'to_float()',
+  'to_decimal(,2)',
+  'to_decimal(,4)',
+  'to_string()',
+  'round()',
+  'ceil()',
+  'floor()',
+  'abs()',
+  'coalesce(,"")',
+  'coalesce(,0)',
+  // ── Date / Time ──
+  'to_iso8601()',
+  'to_epoch()',
+  'from_epoch()',
+  'format_date(,"yyyy-MM-dd")',
+  'parse_date(,"MM/dd/yyyy")',
+  'date_add(,"days",1)',
+  'date_diff(,"days")',
+  'truncate_date(,"month")',
+  'now()',
+  // ── Array / Object ──
+  'flatten()',
+  'slice(,0,5)',
+  'keys()',
+  'values()',
+  // ── Encoding / Hash ──
+  'json_safe()',
+  'json_parse()',
+  'json_stringify()',
+  'base64_encode()',
+  'base64_decode()',
+  'md5()',
+  'sha256()',
+  'uuid()',
+  // ── Conditional ──
+  'if(,!= "",$.value,"N/A")'
+];
+
+function transformOptions(selected) {
+  var html = '<option value=""' + (!selected ? ' selected' : '') + '>-- none --</option>';
+  var group = '';
+  for (var i = 0; i < TRANSFORMS.length; i++) {
+    var t = TRANSFORMS[i];
+    if (!t) continue;
+    // Detect category from comments in the array (we embed them as markers)
+    var newGroup = '';
+    if (i <= 22) newGroup = 'String';
+    else if (i <= 33) newGroup = 'Numeric';
+    else if (i <= 42) newGroup = 'Date / Time';
+    else if (i <= 46) newGroup = 'Array / Object';
+    else if (i <= 54) newGroup = 'Encoding / Hash';
+    else newGroup = 'Conditional';
+    if (newGroup !== group) {
+      if (group) html += '</optgroup>';
+      html += '<optgroup label="' + newGroup + '">';
+      group = newGroup;
+    }
+    html += '<option value="' + esc(t) + '"' + (t === selected ? ' selected' : '') + '>' + t + '</option>';
+  }
+  if (group) html += '</optgroup>';
+  return html;
+}
+
+// ── Output Mode Toggle ──────────────────────────────────────
+function switchOutputMode(mode) {
+  outputMode = mode;
+  document.getElementById('modeTabTables').classList.toggle('tab-active', mode === 'tables');
+  document.getElementById('modeTabJson').classList.toggle('tab-active', mode === 'json');
+  var tm = document.getElementById('tablesMode');
+  var jm = document.getElementById('jsonMode');
+  if (mode === 'tables') {
+    tm.classList.remove('hidden'); tm.classList.add('flex');
+    jm.classList.add('hidden'); jm.classList.remove('flex');
+  } else {
+    tm.classList.add('hidden'); tm.classList.remove('flex');
+    jm.classList.remove('hidden'); jm.classList.add('flex');
+    renderJsonFields();
+  }
+  onMappingChange();
+}
+
+// ── Sample Templates ─────────────────────────────────────────
+var TEMPLATES = {
+  orders: {
+    source: {
+      type: "order",
+      _id: "order::1001",
+      _rev: "3-abc123",
+      status: "shipped",
+      customer_id: "cust_42",
+      order_date: "2025-09-15",
+      total: 129.99,
+      items: [
+        { product_id: "prod_A", qty: 2, price: 49.99 },
+        { product_id: "prod_B", qty: 1, price: 30.01 }
+      ]
+    },
+    mapping: {
+      source: { match: { field: "type", value: "order" } },
+      tables: [
+        {
+          name: "orders",
+          primary_key: "doc_id",
+          columns: { doc_id: "$._id", rev: "$._rev", status: "$.status", customer_id: "$.customer_id", order_date: "$.order_date", total: "$.total" },
+          on_delete: "delete"
+        },
+        {
+          name: "order_items",
+          parent: "orders",
+          foreign_key: { column: "order_doc_id", references: "doc_id" },
+          source_array: "$.items",
+          replace_strategy: "delete_insert",
+          columns: { order_doc_id: "$._id", product_id: "$.product_id", qty: "$.qty", price: "$.price" }
+        }
+      ]
+    }
+  },
+  profiles: {
+    source: {
+      type: "profile",
+      _id: "profile::jane",
+      _rev: "1-def456",
+      first_name: "Jane",
+      last_name: "Doe",
+      email: "jane@example.com",
+      phone: "+1-555-0123",
+      address: {
+        street: "123 Main St",
+        city: "Springfield",
+        state: "IL",
+        zip: "62701"
+      },
+      tags: ["vip", "beta-tester"]
+    },
+    mapping: {
+      source: { match: { field: "type", value: "profile" } },
+      tables: [
+        {
+          name: "profiles",
+          primary_key: "doc_id",
+          columns: { doc_id: "$._id", rev: "$._rev", first_name: { path: "$.first_name", transform: "propercase()" }, last_name: { path: "$.last_name", transform: "propercase()" }, email: { path: "$.email", transform: "lowercase()" }, phone: { path: "$.phone", transform: "trim()" }, street: "$.address.street", city: "$.address.city", state: { path: "$.address.state", transform: "uppercase()" }, zip: "$.address.zip" },
+          on_delete: "delete"
+        },
+        {
+          name: "profile_tags",
+          parent: "profiles",
+          foreign_key: { column: "profile_doc_id", references: "doc_id" },
+          source_array: "$.tags",
+          replace_strategy: "delete_insert",
+          columns: { profile_doc_id: "$._id", tag: "$" }
+        }
+      ]
+    }
+  },
+  products: {
+    source: {
+      type: "product",
+      _id: "product::widget-x",
+      _rev: "5-ghi789",
+      name: "Widget X",
+      sku: "WX-1000",
+      price: 24.99,
+      category: "electronics",
+      in_stock: true,
+      specs: { weight_kg: 0.5, color: "blue", dimensions: { w: 10, h: 5, d: 3 } },
+      variants: [
+        { size: "S", color: "red", sku_suffix: "-SR" },
+        { size: "M", color: "blue", sku_suffix: "-MB" }
+      ]
+    },
+    mapping: {
+      source: { match: { field: "type", value: "product" } },
+      tables: [
+        {
+          name: "products",
+          primary_key: "doc_id",
+          columns: { doc_id: "$._id", rev: "$._rev", name: { path: "$.name", transform: "trim()" }, sku: { path: "$.sku", transform: "uppercase()" }, price: { path: "$.price", transform: "to_decimal(,2)" }, category: "$.category", in_stock: "$.in_stock", weight_kg: "$.specs.weight_kg", color: "$.specs.color" },
+          on_delete: "delete"
+        },
+        {
+          name: "product_variants",
+          parent: "products",
+          foreign_key: { column: "product_doc_id", references: "doc_id" },
+          source_array: "$.variants",
+          replace_strategy: "delete_insert",
+          columns: { product_doc_id: "$._id", size: "$.size", color: "$.color", sku_suffix: "$.sku_suffix" }
+        }
+      ]
+    }
+  },
+  // ── JSON templates ──
+  orders_json: {
+    source: {
+      type: "order",
+      _id: "order::1001",
+      _rev: "3-abc123",
+      status: "shipped",
+      customer_id: "cust_42",
+      order_date: "2025-09-15T14:30:00Z",
+      updated_at: 1757894400,
+      total: 129.99,
+      notes: "  rush delivery  "
+    },
+    mapping: {
+      source: { match: { field: "type", value: "order" } },
+      output_format: "json",
+      mapping: {
+        id: "$._id",
+        rev: "$._rev",
+        status: { path: "$.status", transform: "uppercase()" },
+        customer: "$.customer_id",
+        order_date_epoch: { path: "$.order_date", transform: "to_epoch()" },
+        order_date_iso: { path: "$.order_date", transform: "to_iso8601()" },
+        updated_iso: { path: "$.updated_at", transform: "from_epoch()" },
+        updated_formatted: { path: "$.updated_at", transform: "from_epoch().format_date(,\"yyyy-MM-dd\")" },
+        total: { path: "$.total", transform: "to_decimal($.total,2)" },
+        notes: { path: "$.notes", transform: "trim($.notes)" }
+      }
+    }
+  },
+  events_json: {
+    source: {
+      type: "event",
+      _id: "evt::signup::u789",
+      _rev: "1-aaa111",
+      event_name: "user_signup",
+      timestamp: 1757894400,
+      user_email: "  JANE@Example.COM  ",
+      metadata: { source: "web", campaign: "summer-sale", referrer: "https://example.com/landing?ref=abc" },
+      tags: ["new-user", "promo"]
+    },
+    mapping: {
+      source: { match: { field: "type", value: "event" } },
+      output_format: "json",
+      mapping: {
+        event_id: "$._id",
+        event_type: { path: "$.event_name", transform: "lowercase()" },
+        timestamp_epoch: "$.timestamp",
+        timestamp_iso: { path: "$.timestamp", transform: "from_epoch()" },
+        timestamp_date: { path: "$.timestamp", transform: "from_epoch().format_date(,\"yyyy-MM-dd\")" },
+        email: { path: "$.user_email", transform: "trim($.user_email).lowercase()" },
+        source: "$.metadata.source",
+        campaign: { path: "$.metadata.campaign", transform: "replace($.metadata.campaign,\"-\",\" \").propercase()" },
+        tags: { path: "$.tags", transform: "join($.tags,\", \")" }
+      }
+    }
+  },
+  sensors_json: {
+    source: {
+      type: "reading",
+      _id: "sensor::temp::floor3::1694793600",
+      _rev: "1-bbb222",
+      sensor_id: "temp-floor3",
+      reading: 72.4567,
+      unit: "fahrenheit",
+      recorded_at: "2025-09-15T10:00:00Z",
+      location: { building: "HQ", floor: 3, room: "server-room" },
+      battery_pct: 0.87,
+      firmware: "v2.1.4"
+    },
+    mapping: {
+      source: { match: { field: "type", value: "reading" } },
+      output_format: "json",
+      mapping: {
+        id: "$._id",
+        sensor: { path: "$.sensor_id", transform: "uppercase()" },
+        value: { path: "$.reading", transform: "to_decimal($.reading,2)" },
+        unit: "$.unit",
+        recorded_epoch: { path: "$.recorded_at", transform: "to_epoch()" },
+        recorded_iso: "$.recorded_at",
+        recorded_date: { path: "$.recorded_at", transform: "format_date($.recorded_at,\"yyyy-MM-dd\")" },
+        location: { path: "$.location.building", transform: "concat($.location.building,\" / \").propercase()" },
+        floor: { path: "$.location.floor", transform: "to_string()" },
+        room: { path: "$.location.room", transform: "replace($.location.room,\"-\",\" \").propercase()" },
+        battery: { path: "$.battery_pct", transform: "to_decimal($.battery_pct,0)" },
+        firmware_hash: { path: "$.firmware", transform: "sha256()" }
+      }
+    }
+  }
+};
+
+// ── Source Tab Switching ──────────────────────────────────────
+function switchSourceTab(tab) {
+  ['paste','schema','live'].forEach(function(t) {
+    document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('tab-active', t === tab);
+    var panel = document.getElementById('panel' + t.charAt(0).toUpperCase() + t.slice(1));
+    if (t === tab) { panel.classList.remove('hidden'); panel.classList.add('flex'); }
+    else { panel.classList.add('hidden'); panel.classList.remove('flex'); }
+  });
+}
+
+// ── Extract JSON paths from an object ────────────────────────
+function extractPaths(obj, prefix, results) {
+  if (!prefix) prefix = '$';
+  if (!results) results = [];
+  if (obj === null || obj === undefined) return results;
+  if (Array.isArray(obj)) {
+    results.push({ path: prefix, type: 'array', sample: '[' + obj.length + ' items]' });
+    if (obj.length > 0 && typeof obj[0] === 'object' && obj[0] !== null) {
+      extractPaths(obj[0], prefix + '[]', results);
+    } else if (obj.length > 0) {
+      results.push({ path: prefix + '[]', type: typeof obj[0], sample: String(obj[0]) });
+    }
+  } else if (typeof obj === 'object') {
+    var keys = Object.keys(obj);
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      var p = prefix + '.' + k;
+      var v = obj[k];
+      if (v === null) { results.push({ path: p, type: 'null', sample: 'null' }); }
+      else if (Array.isArray(v)) { extractPaths(v, p, results); }
+      else if (typeof v === 'object') {
+        results.push({ path: p, type: 'object', sample: '{...}' });
+        extractPaths(v, p, results);
+      } else {
+        results.push({ path: p, type: typeof v, sample: String(v).substring(0, 40) });
+      }
+    }
+  }
+  return results;
+}
+
+function extractFromSchema(schema, prefix, results) {
+  if (!prefix) prefix = '$';
+  if (!results) results = [];
+  if (!schema || !schema.properties) return results;
+  var keys = Object.keys(schema.properties);
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    var p = prefix + '.' + k;
+    var prop = schema.properties[k];
+    var t = prop.type || 'any';
+    if (t === 'object' && prop.properties) {
+      results.push({ path: p, type: 'object', sample: '{...}' });
+      extractFromSchema(prop, p, results);
+    } else if (t === 'array') {
+      results.push({ path: p, type: 'array', sample: '[]' });
+      if (prop.items && prop.items.properties) {
+        extractFromSchema(prop.items, p + '[]', results);
+      }
+    } else {
+      results.push({ path: p, type: t, sample: prop.example || '' });
+    }
+  }
+  return results;
+}
+
+function renderSourceFields(fields) {
+  sourceFields = fields;
+  var el = document.getElementById('sourceFields');
+  if (!fields.length) {
+    el.innerHTML = '<p class="text-sm opacity-50 p-2">No fields extracted.</p>';
+    return;
+  }
+  var typeColors = { string: 'badge-success', number: 'badge-info', boolean: 'badge-warning', array: 'badge-secondary', object: 'badge-ghost', null: 'badge-ghost' };
+  el.innerHTML = fields.map(function(f) {
+    var depth = (f.path.match(/\./g) || []).length;
+    var indent = depth * 12;
+    var bc = typeColors[f.type] || 'badge-ghost';
+    return '<div class="field-item flex items-center gap-2" style="padding-left:' + indent + 'px" draggable="true" ondragstart="dragField(event,\'' + f.path.replace(/'/g, "\\'") + '\')">' +
+      '<span class="badge badge-xs ' + bc + '">' + f.type + '</span>' +
+      '<span>' + f.path + '</span>' +
+      (f.sample && f.type !== 'object' && f.type !== 'array' ? '<span class="opacity-40 text-xs ml-auto truncate max-w-[120px]">' + f.sample + '</span>' : '') +
+      '</div>';
+  }).join('');
+}
+
+// ── Source change handlers ───────────────────────────────────
+function onSourceChange() {
+  var text = document.getElementById('sourceEditor').value.trim();
+  if (!text) { renderSourceFields([]); return; }
+  try {
+    var obj = JSON.parse(text);
+    renderSourceFields(extractPaths(obj));
+  } catch (e) { renderSourceFields([]); }
+}
+
+function onSchemaChange() {
+  var text = document.getElementById('schemaEditor').value.trim();
+  if (!text) { renderSourceFields([]); return; }
+  try {
+    var schema = JSON.parse(text);
+    renderSourceFields(extractFromSchema(schema));
+  } catch (e) { renderSourceFields([]); }
+}
+
+// ── Live sample fetch ────────────────────────────────────────
+async function fetchLiveSample() {
+  var btn = document.getElementById('btnFetchSample');
+  var status = document.getElementById('liveSampleStatus');
+  btn.classList.add('loading');
+  status.textContent = 'Fetching...';
+  try {
+    var res = await fetch('/api/sample-doc');
+    var data = await res.json();
+    if (data.error) { status.textContent = data.detail || data.error; btn.classList.remove('loading'); return; }
+    var pretty = JSON.stringify(data.doc, null, 2);
+    document.getElementById('liveEditor').value = pretty;
+    renderSourceFields(extractPaths(data.doc));
+    var pool = data.pool_size || 1;
+    status.textContent = 'Random pick from ' + pool + ' docs — ' + (data.doc._id || 'unknown');
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+  }
+  btn.classList.remove('loading');
+}
+
+// ── Drag & Drop ──────────────────────────────────────────────
+function dragField(ev, path) {
+  ev.dataTransfer.setData('text/plain', path);
+}
+
+// ── Table Management ─────────────────────────────────────────
+function addTable() {
+  var name = 'table_' + (tables.length + 1);
+  tables.push({
+    name: name,
+    primary_key: 'doc_id',
+    parent: '',
+    foreign_key: { column: '', references: '' },
+    source_array: '',
+    replace_strategy: '',
+    on_delete: 'delete',
+    columns: {}
+  });
+  activeTableIdx = tables.length - 1;
+  renderTableTabs();
+  renderTableEditor();
+  onMappingChange();
+}
+
+function switchTable(idx) {
+  saveCurrentTableEdits();
+  activeTableIdx = idx;
+  renderTableTabs();
+  renderTableEditor();
+}
+
+function removeTable(idx) {
+  if (!confirm('Delete table "' + tables[idx].name + '"?')) return;
+  tables.splice(idx, 1);
+  if (activeTableIdx >= tables.length) activeTableIdx = Math.max(0, tables.length - 1);
+  renderTableTabs();
+  renderTableEditor();
+  onMappingChange();
+}
+
+function renderTableTabs() {
+  var el = document.getElementById('tableTabs');
+  el.innerHTML = tables.map(function(t, i) {
+    return '<a class="tab' + (i === activeTableIdx ? ' tab-active' : '') + '" onclick="switchTable(' + i + ')">' +
+      t.name +
+      (tables.length > 1 ? ' <span class="text-error text-xs ml-1 cursor-pointer" onclick="event.stopPropagation(); removeTable(' + i + ')">&times;</span>' : '') +
+      '</a>';
+  }).join('');
+}
+
+function saveCurrentTableEdits() {
+  if (!tables.length) return;
+  var t = tables[activeTableIdx];
+  var nameEl = document.getElementById('tblName');
+  if (nameEl) {
+    t.name = nameEl.value.trim() || t.name;
+    t.primary_key = document.getElementById('tblPK').value.trim();
+    t.parent = document.getElementById('tblParent').value.trim();
+    t.foreign_key.column = document.getElementById('tblFKCol').value.trim();
+    t.foreign_key.references = document.getElementById('tblFKRef').value.trim();
+    t.source_array = document.getElementById('tblSourceArray').value.trim();
+    t.replace_strategy = document.getElementById('tblReplaceStrategy').value.trim();
+    t.on_delete = document.getElementById('tblOnDelete').value;
+    // Read columns from rows (with optional transform)
+    t.columns = {};
+    var rows = document.querySelectorAll('.col-row');
+    rows.forEach(function(row) {
+      var colName = row.querySelector('.col-name').value.trim();
+      var colPath = row.querySelector('.col-path').value.trim();
+      var colTransform = row.querySelector('input.col-transform') ? row.querySelector('input.col-transform').value.trim() : '';
+      if (colName && colPath) {
+        t.columns[colName] = colTransform ? { path: colPath, transform: colTransform } : colPath;
+      }
+    });
+  }
+}
+
+function renderTableEditor() {
+  var el = document.getElementById('tableEditor');
+  if (!tables.length) {
+    el.innerHTML = '<p class="text-sm opacity-50 p-2">Click "+ Table" to add your first target table.</p>';
+    return;
+  }
+  var t = tables[activeTableIdx];
+  var parentOptions = '<option value="">-- none --</option>' +
+    tables.filter(function(_, i) { return i !== activeTableIdx; })
+      .map(function(pt) { return '<option value="' + pt.name + '"' + (t.parent === pt.name ? ' selected' : '') + '>' + pt.name + '</option>'; }).join('');
+
+  var colRows = Object.keys(t.columns).map(function(colName) {
+    return colRow(colName, t.columns[colName]);
+  }).join('');
+
+  el.innerHTML =
+    '<div class="space-y-3">' +
+    // Table name & PK
+    '<div class="card bg-base-200 rounded-xl"><div class="card-body p-3">' +
+      '<div class="flex items-center gap-2 mb-2"><h4 class="text-sm font-semibold">Table Settings</h4>' +
+        '<div class="tooltip tooltip-right" data-tip="Table name, primary key column, and delete behavior.">' +
+          '<span class="badge badge-ghost badge-sm cursor-help">?</span></div></div>' +
+      '<div class="grid grid-cols-3 gap-2">' +
+        '<div><label class="label label-text text-xs">Table Name</label><input id="tblName" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.name) + '" oninput="onTableNameChange()"></div>' +
+        '<div><label class="label label-text text-xs">Primary Key</label><input id="tblPK" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.primary_key) + '" oninput="onMappingChange()"></div>' +
+        '<div><label class="label label-text text-xs">On Delete</label><select id="tblOnDelete" class="select select-bordered select-sm w-full" onchange="onMappingChange()"><option' + (t.on_delete === 'delete' ? ' selected' : '') + '>delete</option><option' + (t.on_delete === 'ignore' ? ' selected' : '') + '>ignore</option></select></div>' +
+      '</div>' +
+    '</div></div>' +
+    // Parent / FK
+    '<div class="card bg-base-200 rounded-xl"><div class="card-body p-3">' +
+      '<div class="flex items-center gap-2 mb-2"><h4 class="text-sm font-semibold">Parent / Foreign Key</h4>' +
+        '<div class="tooltip tooltip-right" data-tip="For child tables: select the parent table and define the foreign key relationship. Source array is the JSON path to the array of child objects.">' +
+          '<span class="badge badge-ghost badge-sm cursor-help">?</span></div></div>' +
+      '<div class="grid grid-cols-2 gap-2">' +
+        '<div><label class="label label-text text-xs">Parent Table</label><select id="tblParent" class="select select-bordered select-sm w-full" onchange="onMappingChange()">' + parentOptions + '</select></div>' +
+        '<div><label class="label label-text text-xs">Source Array</label><input id="tblSourceArray" type="text" class="input input-bordered input-sm w-full" placeholder="$.items" value="' + esc(t.source_array) + '" oninput="onMappingChange()"></div>' +
+        '<div><label class="label label-text text-xs">FK Column</label><input id="tblFKCol" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.column) + '" oninput="onMappingChange()"></div>' +
+        '<div><label class="label label-text text-xs">FK References</label><input id="tblFKRef" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.references) + '" oninput="onMappingChange()"></div>' +
+      '</div>' +
+      '<div class="mt-2"><label class="label label-text text-xs">Replace Strategy</label><input id="tblReplaceStrategy" type="text" class="input input-bordered input-sm w-48" placeholder="delete_insert" value="' + esc(t.replace_strategy) + '" oninput="onMappingChange()"></div>' +
+    '</div></div>' +
+    // Columns
+    '<div class="card bg-base-200 rounded-xl"><div class="card-body p-3">' +
+      '<div class="flex items-center gap-2 mb-2"><h4 class="text-sm font-semibold">Column Mappings</h4>' +
+        '<div class="tooltip tooltip-right" data-tip="Map source JSON paths to target column names. Drag a field from the Source Fields panel on the left and drop it onto a JSON Path input.">' +
+          '<span class="badge badge-ghost badge-sm cursor-help">?</span></div>' +
+        '<button class="btn btn-primary btn-xs ml-auto" onclick="addColumnRow()">+ Column</button></div>' +
+      '<div id="columnRows" class="space-y-1">' +
+        '<div class="flex gap-1 mb-1"><span class="w-[22%] text-xs font-semibold opacity-60">Column Name</span><span class="w-[28%] text-xs font-semibold opacity-60">Source Path</span><span class="w-[25%] text-xs font-semibold opacity-60">Transform ▾</span><span class="w-[22%] text-xs font-semibold opacity-60">Transform (edit)</span><span class="w-[3%]"></span></div>' +
+        colRows +
+      '</div>' +
+    '</div></div>' +
+    '</div>';
+}
+
+function colRow(name, colDef) {
+  var path = typeof colDef === 'object' ? colDef.path : colDef;
+  var transform = typeof colDef === 'object' ? (colDef.transform || '') : '';
+  var isCustom = transform && TRANSFORMS.indexOf(transform) < 0;
+  return '<div class="col-row flex gap-1 items-center">' +
+    '<input type="text" class="col-name input input-bordered input-xs w-[22%] font-mono" value="' + esc(name) + '" oninput="onMappingChange()">' +
+    '<input type="text" class="col-path input input-bordered input-xs w-[28%] font-mono" value="' + esc(path) + '" oninput="onMappingChange()" ondrop="dropOnCol(event, this)" ondragover="event.preventDefault(); this.classList.add(\'drag-over\')" ondragleave="this.classList.remove(\'drag-over\')">' +
+    '<select class="col-transform-select select select-bordered select-xs w-[25%]" onchange="onTransformSelect(this)">' + transformOptions(isCustom ? '' : transform) + '</select>' +
+    '<input type="text" class="col-transform input input-bordered input-xs w-[22%] font-mono" value="' + esc(transform) + '" placeholder="editable" oninput="onMappingChange()">' +
+    '<button class="btn btn-ghost btn-xs text-error w-[3%]" onclick="this.parentElement.remove(); onMappingChange()">×</button>' +
+    '</div>';
+}
+
+function onTransformSelect(sel) {
+  var row = sel.closest('.col-row');
+  var input = row.querySelector('.col-transform');
+  if (sel.value) {
+    var path = row.querySelector('.col-path').value.trim();
+    input.value = injectPathIntoTransform(sel.value, path);
+  }
+  onMappingChange();
+}
+
+function injectPathIntoTransform(tpl, path) {
+  if (!path) return tpl;
+  if (tpl.indexOf('(,') >= 0) return tpl.replace('(,', '(' + path + ',');
+  return tpl.replace('()', '(' + path + ')');
+}
+
+function addColumnRow() {
+  var container = document.getElementById('columnRows');
+  container.insertAdjacentHTML('beforeend', colRow('', { path: '', transform: '' }));
+}
+
+function dropOnCol(ev, el) {
+  ev.preventDefault();
+  el.classList.remove('drag-over');
+  var path = ev.dataTransfer.getData('text/plain');
+  el.value = path;
+  onMappingChange();
+}
+
+function onTableNameChange() {
+  var nameEl = document.getElementById('tblName');
+  if (nameEl && tables[activeTableIdx]) {
+    tables[activeTableIdx].name = nameEl.value.trim();
+    renderTableTabs();
+    onMappingChange();
+  }
+}
+
+function esc(s) { return (s || '').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+
+// ── Build Mapping JSON ──────────────────────────────────────
+function onMappingChange() {
+  saveCurrentTableEdits();
+  var mapping = buildMapping();
+  document.getElementById('mappingOutput').textContent = JSON.stringify(mapping, null, 2);
+  renderDiagram();
+  updateCoverage();
+}
+
+// ── Coverage Stats ──────────────────────────────────────────
+function updateCoverage() {
+  // Collect all mapped source paths from the right side
+  var mappedPaths = {};
+  var targetTotal = 0, targetFilled = 0, targetEmpty = [];
+
+  if (outputMode === 'json') {
+    var rows = document.querySelectorAll('.json-field-row');
+    rows.forEach(function(row) {
+      var key = row.querySelector('.jf-key').value.trim();
+      var path = row.querySelector('.jf-path').value.trim();
+      if (key || path) targetTotal++;
+      if (key && path) { targetFilled++; mappedPaths[path] = true; }
+      else if (key && !path) targetEmpty.push(key);
+    });
+  } else {
+    // Read current table's columns directly from DOM for live accuracy
+    var domCols = document.querySelectorAll('.col-row');
+    domCols.forEach(function(row) {
+      var name = row.querySelector('.col-name').value.trim();
+      var path = row.querySelector('.col-path').value.trim();
+      if (name) {
+        targetTotal++;
+        if (path) { targetFilled++; mappedPaths[path] = true; }
+        else targetEmpty.push((tables[activeTableIdx] ? tables[activeTableIdx].name : 'table') + '.' + name);
+      }
+    });
+    // Also count columns from other tables (not currently in DOM)
+    for (var i = 0; i < tables.length; i++) {
+      if (i === activeTableIdx) continue;
+      var cols = tables[i].columns;
+      var keys = Object.keys(cols);
+      for (var j = 0; j < keys.length; j++) {
+        targetTotal++;
+        var v = cols[keys[j]];
+        var p = typeof v === 'object' ? v.path : v;
+        if (p) { targetFilled++; mappedPaths[p] = true; }
+        else targetEmpty.push(tables[i].name + '.' + keys[j]);
+      }
+    }
+  }
+
+  // Leaf source fields (skip object/array containers)
+  var leafFields = sourceFields.filter(function(f) { return f.type !== 'object' && f.type !== 'array'; });
+  var srcTotal = leafFields.length;
+  var srcMapped = 0, srcUnmapped = [];
+  for (var k = 0; k < leafFields.length; k++) {
+    if (mappedPaths[leafFields[k].path]) srcMapped++;
+    else srcUnmapped.push(leafFields[k].path);
+  }
+
+  // --- Render LEFT (source) coverage ---
+  var srcEl = document.getElementById('sourceCoverage');
+  if (!srcTotal) { srcEl.classList.add('hidden'); }
+  else {
+    srcEl.classList.remove('hidden');
+    var srcPct = Math.round(srcMapped / srcTotal * 100);
+    var srcColor = srcPct === 100 ? 'progress-success' : srcPct >= 50 ? 'progress-warning' : 'progress-error';
+    var srcBadge = srcPct === 100 ? 'badge-success' : srcPct >= 50 ? 'badge-warning' : 'badge-error';
+    var html = '<div class="card bg-base-200 rounded-xl"><div class="card-body p-3">' +
+      '<div class="flex items-center gap-2 mb-1">' +
+        '<h4 class="text-xs font-semibold">Source Coverage</h4>' +
+        '<span class="badge badge-xs ' + srcBadge + '">' + srcPct + '%</span>' +
+        '<span class="text-xs opacity-60">' + srcMapped + ' / ' + srcTotal + ' fields mapped</span>' +
+      '</div>' +
+      '<progress class="progress ' + srcColor + ' w-full h-2" value="' + srcMapped + '" max="' + srcTotal + '"></progress>';
+    if (srcUnmapped.length) {
+      html += '<details class="mt-1"><summary class="text-xs cursor-pointer opacity-60">' + srcUnmapped.length + ' unmapped field' + (srcUnmapped.length > 1 ? 's' : '') + '</summary>' +
+        '<div class="flex flex-wrap gap-1 mt-1">' +
+        srcUnmapped.map(function(p) { return '<span class="badge badge-ghost badge-xs font-mono">' + esc(p) + '</span>'; }).join('') +
+        '</div></details>';
+    }
+    html += '</div></div>';
+    srcEl.innerHTML = html;
+  }
+
+  // --- Render RIGHT (target) coverage ---
+  var tgtId = outputMode === 'json' ? 'targetCoverageJson' : 'targetCoverageTables';
+  var tgtEl = document.getElementById(tgtId);
+  // Hide the other one
+  var otherId = outputMode === 'json' ? 'targetCoverageTables' : 'targetCoverageJson';
+  document.getElementById(otherId).classList.add('hidden');
+
+  if (!targetTotal) { tgtEl.classList.add('hidden'); }
+  else {
+    tgtEl.classList.remove('hidden');
+    var tgtPct = Math.round(targetFilled / targetTotal * 100);
+    var tgtColor = tgtPct === 100 ? 'progress-success' : 'progress-error';
+    var tgtBadge = tgtPct === 100 ? 'badge-success' : 'badge-error';
+    var thtml = '<div class="card bg-base-200 rounded-xl"><div class="card-body p-3">' +
+      '<div class="flex items-center gap-2 mb-1">' +
+        '<h4 class="text-xs font-semibold">Target Coverage</h4>' +
+        '<span class="badge badge-xs ' + tgtBadge + '">' + tgtPct + '%</span>' +
+        '<span class="text-xs opacity-60">' + targetFilled + ' / ' + targetTotal + ' columns filled</span>' +
+      '</div>' +
+      '<progress class="progress ' + tgtColor + ' w-full h-2" value="' + targetFilled + '" max="' + targetTotal + '"></progress>';
+    if (targetEmpty.length) {
+      thtml += '<div class="flex flex-wrap gap-1 mt-1">' +
+        targetEmpty.map(function(c) { return '<span class="badge badge-error badge-xs font-mono">' + esc(c) + ' ⚠</span>'; }).join('') +
+        '</div>';
+    }
+    thtml += '</div></div>';
+    tgtEl.innerHTML = thtml;
+  }
+}
+
+function buildMapping() {
+  var mf = document.getElementById('matchField').value.trim();
+  var mv = document.getElementById('matchValue').value.trim();
+  var mapping = { source: { match: { field: mf, value: mv } }, output_format: outputMode };
+
+  if (outputMode === 'json') {
+    // Save JSON field rows from DOM
+    jsonFields = [];
+    var rows = document.querySelectorAll('.json-field-row');
+    rows.forEach(function(row) {
+      var key = row.querySelector('.jf-key').value.trim();
+      var path = row.querySelector('.jf-path').value.trim();
+      var transform = row.querySelector('input.jf-transform') ? row.querySelector('input.jf-transform').value.trim() : '';
+      if (key && path) jsonFields.push({ key: key, path: path, transform: transform });
+    });
+    mapping.mapping = {};
+    for (var j = 0; j < jsonFields.length; j++) {
+      var f = jsonFields[j];
+      mapping.mapping[f.key] = f.transform ? { path: f.path, transform: f.transform } : f.path;
+    }
+  } else {
+    mapping.tables = [];
+    for (var i = 0; i < tables.length; i++) {
+      var t = tables[i];
+      var tbl = { name: t.name, primary_key: t.primary_key, columns: Object.assign({}, t.columns) };
+      if (t.on_delete) tbl.on_delete = t.on_delete;
+      if (t.parent) {
+        tbl.parent = t.parent;
+        if (t.foreign_key.column) tbl.foreign_key = { column: t.foreign_key.column, references: t.foreign_key.references };
+        if (t.source_array) tbl.source_array = t.source_array;
+        if (t.replace_strategy) tbl.replace_strategy = t.replace_strategy;
+      }
+      mapping.tables.push(tbl);
+    }
+  }
+  return mapping;
+}
+
+// ── Load Template ────────────────────────────────────────────
+function loadTemplate(name) {
+  var tmpl = TEMPLATES[name];
+  if (!tmpl) return;
+  // Load source doc
+  document.getElementById('sourceEditor').value = JSON.stringify(tmpl.source, null, 2);
+  switchSourceTab('paste');
+  onSourceChange();
+  // Load mapping
+  var m = tmpl.mapping;
+  document.getElementById('matchField').value = m.source.match.field;
+  document.getElementById('matchValue').value = m.source.match.value;
+  switchOutputMode(m.output_format || 'tables');
+  if (outputMode === 'json') {
+    jsonFields = [];
+    var mj = m.mapping || {};
+    Object.keys(mj).forEach(function(k) {
+      var v = mj[k];
+      if (typeof v === 'object') jsonFields.push({ key: k, path: v.path || '', transform: v.transform || '' });
+      else jsonFields.push({ key: k, path: v, transform: '' });
+    });
+    renderJsonFields();
+  } else {
+    tables = (m.tables || []).map(function(t) {
+      return {
+        name: t.name,
+        primary_key: t.primary_key || '',
+        parent: t.parent || '',
+        foreign_key: t.foreign_key || { column: '', references: '' },
+        source_array: t.source_array || '',
+        replace_strategy: t.replace_strategy || '',
+        on_delete: t.on_delete || 'delete',
+        columns: Object.assign({}, t.columns)
+      };
+    });
+    activeTableIdx = 0;
+    renderTableTabs();
+    renderTableEditor();
+  }
+  document.getElementById('filenameInput').value = name + '.json';
+  onMappingChange();
+  showStatus('Loaded ' + name + ' template', 'success');
+}
+
+// ── JSON Output Mode ─────────────────────────────────────────
+function renderJsonFields() {
+  var container = document.getElementById('jsonFieldRows');
+  // Keep the header row
+  var header = container.querySelector('.grid.mb-1');
+  var headerHTML = header ? header.outerHTML : '';
+  container.innerHTML = headerHTML;
+  for (var i = 0; i < jsonFields.length; i++) {
+    container.insertAdjacentHTML('beforeend', jsonFieldRow(jsonFields[i].key, jsonFields[i].path, jsonFields[i].transform));
+  }
+}
+
+function jsonFieldRow(key, path, transform) {
+  var isCustom = transform && TRANSFORMS.indexOf(transform) < 0;
+  return '<div class="json-field-row flex gap-1 items-center">' +
+    '<input type="text" class="jf-key input input-bordered input-xs w-[18%] font-mono" value="' + esc(key) + '" placeholder="targetKey" oninput="onMappingChange()">' +
+    '<input type="text" class="jf-path input input-bordered input-xs w-[24%] font-mono" value="' + esc(path) + '" placeholder="$.source.path" oninput="onMappingChange()" ondrop="dropOnCol(event, this)" ondragover="event.preventDefault(); this.classList.add(\'drag-over\')" ondragleave="this.classList.remove(\'drag-over\')">' +
+    '<select class="jf-transform-select select select-bordered select-xs w-[25%]" onchange="onJsonTransformSelect(this)">' + transformOptions(isCustom ? '' : (transform || '')) + '</select>' +
+    '<input type="text" class="jf-transform input input-bordered input-xs w-[28%] font-mono" value="' + esc(transform) + '" placeholder="editable" oninput="onMappingChange()">' +
+    '<button class="btn btn-ghost btn-xs text-error w-[5%]" onclick="this.parentElement.remove(); onMappingChange()">×</button>' +
+    '</div>';
+}
+
+function onJsonTransformSelect(sel) {
+  var row = sel.closest('.json-field-row');
+  var input = row.querySelector('input.jf-transform');
+  if (sel.value) {
+    var path = row.querySelector('.jf-path').value.trim();
+    input.value = injectPathIntoTransform(sel.value, path);
+  }
+  onMappingChange();
+}
+
+function addJsonFieldRow() {
+  var container = document.getElementById('jsonFieldRows');
+  container.insertAdjacentHTML('beforeend', jsonFieldRow('', '', ''));
+}
+
+// ── Diagram ──────────────────────────────────────────────────
+function renderDiagram() {
+  if (outputMode === 'json') {
+    // For JSON mode show a simple source→target diagram
+    var fieldCount = jsonFields.length;
+    if (!fieldCount) { chartInstance.clear(); return; }
+    chartInstance.setOption({
+      tooltip: { trigger: 'item' },
+      series: [{
+        type: 'graph', layout: 'force', roam: true, draggable: true,
+        force: { repulsion: 200, edgeLength: [150, 200], gravity: 0.1 },
+        edgeSymbol: ['none', 'arrow'], edgeSymbolSize: 10,
+        lineStyle: { width: 2, curveness: 0.1, color: '#666' },
+        data: [
+          { name: 'Source Doc', symbolSize: 60, itemStyle: { color: '#3b82f6' }, label: { show: true, fontSize: 11 } },
+          { name: 'Target JSON\n(' + fieldCount + ' fields)', symbolSize: 50 + fieldCount * 3, itemStyle: { color: '#36d399' }, label: { show: true, fontSize: 11 } }
+        ],
+        links: [{ source: 'Source Doc', target: 'Target JSON\n(' + fieldCount + ' fields)', label: { show: true, formatter: fieldCount + ' mappings', fontSize: 9 } }]
+      }]
+    }, true);
+    return;
+  }
+  if (!tables.length) { chartInstance.clear(); return; }
+  var parentColor = '#3b82f6', childColor = '#f59e0b';
+  var nodes = tables.map(function(t) {
+    var cols = t.columns ? Object.keys(t.columns).length : 0;
+    return {
+      name: t.name,
+      symbolSize: 40 + cols * 4,
+      itemStyle: { color: t.parent ? childColor : parentColor },
+      label: { show: true, formatter: t.name + '\n(' + cols + ' cols)', fontSize: 11 }
+    };
+  });
+  var edges = [];
+  for (var i = 0; i < tables.length; i++) {
+    if (tables[i].parent) {
+      edges.push({
+        source: tables[i].parent, target: tables[i].name,
+        label: { show: true, formatter: tables[i].foreign_key.column || 'FK', fontSize: 9 }
+      });
+    }
+  }
+  chartInstance.setOption({
+    tooltip: { trigger: 'item' },
+    legend: { data: [
+      { name: 'Parent', icon: 'circle', itemStyle: { color: parentColor } },
+      { name: 'Child', icon: 'circle', itemStyle: { color: childColor } }
+    ], textStyle: { color: '#999' }, bottom: 10 },
+    series: [{
+      type: 'graph', layout: 'force', roam: true, draggable: true,
+      force: { repulsion: 300, edgeLength: [120, 200], gravity: 0.1 },
+      edgeSymbol: ['none', 'arrow'], edgeSymbolSize: 10,
+      lineStyle: { width: 2, curveness: 0.1, color: '#666' },
+      data: nodes, links: edges,
+      categories: [
+        { name: 'Parent', itemStyle: { color: parentColor } },
+        { name: 'Child', itemStyle: { color: childColor } }
+      ]
+    }]
+  }, true);
+}
+
+// ── Save / Download / File List ──────────────────────────────
+async function saveMapping() {
+  saveCurrentTableEdits();
+  var filename = document.getElementById('filenameInput').value.trim();
+  if (!filename) { showStatus('Enter a filename', 'error'); return; }
+  if (!filename.endsWith('.json')) filename += '.json';
+  document.getElementById('filenameInput').value = filename;
+  var content = JSON.stringify(buildMapping(), null, 2);
+  try {
+    var res = await fetch('/api/mappings/' + encodeURIComponent(filename), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: content
+    });
+    if (!res.ok) throw new Error(res.statusText);
+    currentFile = filename;
+    showStatus('Saved ' + filename, 'success');
+    loadFileList();
+  } catch (e) { showStatus('Save failed: ' + e.message, 'error'); }
+}
+
+function downloadMapping() {
+  saveCurrentTableEdits();
+  var content = JSON.stringify(buildMapping(), null, 2);
+  var filename = document.getElementById('filenameInput').value.trim() || 'mapping.json';
+  var blob = new Blob([content], { type: 'application/json' });
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function loadFileList() {
+  try {
+    var res = await fetch('/api/mappings');
+    var data = await res.json();
+    var files = data.files || data || [];
+    var el = document.getElementById('fileListDropdown');
+    if (!files.length) { el.innerHTML = '<li><a class="text-base-content/50">No saved mappings</a></li>'; return; }
+    el.innerHTML = files.map(function(f) {
+      var name = typeof f === 'string' ? f : f.name || f.filename;
+      return '<li class="flex"><a class="flex-1" onclick="openFile(\'' + name + '\')">' + name + '</a>' +
+        '<button class="btn btn-ghost btn-xs text-error" onclick="event.stopPropagation(); deleteFile(\'' + name + '\')">×</button></li>';
+    }).join('');
+  } catch (e) {
+    document.getElementById('fileListDropdown').innerHTML = '<li><a class="text-error">Failed to load</a></li>';
+  }
+}
+
+async function openFile(name) {
+  try {
+    var res = await fetch('/api/mappings/' + encodeURIComponent(name));
+    if (!res.ok) throw new Error(res.statusText);
+    var data = await res.json();
+    var content = typeof data.content === 'string' ? data.content : JSON.stringify(data.content);
+    var mapping;
+    try { mapping = typeof data.content === 'object' ? data.content : JSON.parse(content); } catch (e) {
+      showStatus('File is not valid JSON', 'error'); return;
+    }
+    currentFile = name;
+    document.getElementById('filenameInput').value = name;
+    // Populate UI from mapping
+    if (mapping.source && mapping.source.match) {
+      document.getElementById('matchField').value = mapping.source.match.field || '';
+      document.getElementById('matchValue').value = mapping.source.match.value || '';
+    }
+    // Detect output mode
+    var mode = mapping.output_format || (mapping.mapping ? 'json' : 'tables');
+    switchOutputMode(mode);
+    if (mode === 'json') {
+      jsonFields = [];
+      var m = mapping.mapping || {};
+      Object.keys(m).forEach(function(k) {
+        var v = m[k];
+        if (typeof v === 'object') jsonFields.push({ key: k, path: v.path || '', transform: v.transform || '' });
+        else jsonFields.push({ key: k, path: v, transform: '' });
+      });
+      renderJsonFields();
+    } else {
+      tables = (mapping.tables || []).map(function(t) {
+        return {
+          name: t.name || '', primary_key: t.primary_key || '', parent: t.parent || '',
+          foreign_key: t.foreign_key || { column: '', references: '' },
+          source_array: t.source_array || '', replace_strategy: t.replace_strategy || '',
+          on_delete: t.on_delete || 'delete', columns: Object.assign({}, t.columns || {})
+        };
+      });
+      activeTableIdx = 0;
+      renderTableTabs();
+      renderTableEditor();
+    }
+    onMappingChange();
+    showStatus('Loaded ' + name, 'success');
+  } catch (e) { showStatus('Error: ' + e.message, 'error'); }
+}
+
+async function deleteFile(name) {
+  if (!confirm('Delete ' + name + '?')) return;
+  try {
+    var res = await fetch('/api/mappings/' + encodeURIComponent(name), { method: 'DELETE' });
+    if (!res.ok) throw new Error(res.statusText);
+    if (currentFile === name) { currentFile = null; tables = []; jsonFields = []; activeTableIdx = 0; renderTableTabs(); renderTableEditor(); if (outputMode === 'json') renderJsonFields(); onMappingChange(); }
+    showStatus('Deleted ' + name, 'success');
+    loadFileList();
+  } catch (e) { showStatus('Delete failed: ' + e.message, 'error'); }
+}
+
+function showStatus(msg, type) {
+  var el = document.getElementById('statusMsg');
+  el.textContent = msg;
+  el.className = 'text-sm ml-auto ' + (type === 'error' ? 'text-error' : 'text-success');
+  setTimeout(function() { el.textContent = ''; }, 3000);
+}
+
+// ── Resize ───────────────────────────────────────────────────
+window.addEventListener('resize', function() { chartInstance.resize(); });
+
+// ── Autocomplete for source path inputs ──────────────────────
+var acActive = null; // currently open autocomplete list element
+var acIdx = -1;
+
+function buildACItems(query) {
+  var items = [];
+  var q = query.toLowerCase();
+  // Source fields first
+  if (sourceFields.length) {
+    var matched = sourceFields.filter(function(f) { return f.path.toLowerCase().indexOf(q) >= 0; });
+    if (matched.length) {
+      items.push({ cat: 'Source Fields' });
+      matched.slice(0, 15).forEach(function(f) { items.push({ value: f.path, label: f.path, type: f.type }); });
+    }
+  }
+  // Transforms
+  var tMatched = TRANSFORMS.filter(function(t) { return t && t.toLowerCase().indexOf(q) >= 0; });
+  if (tMatched.length) {
+    items.push({ cat: 'Transforms' });
+    tMatched.slice(0, 15).forEach(function(t) { items.push({ value: t, label: t }); });
+  }
+  return items;
+}
+
+function showAC(input) {
+  var wrap = input.closest('.ac-wrap');
+  if (!wrap) return;
+  var list = wrap.querySelector('.ac-list');
+  if (!list) return;
+  var val = input.value.trim();
+  if (!val) { hideAC(list); return; }
+  var items = buildACItems(val);
+  if (!items.length) { hideAC(list); return; }
+  list.innerHTML = items.map(function(it, i) {
+    if (it.cat) return '<div class="ac-cat">' + it.cat + '</div>';
+    return '<div class="ac-item" data-idx="' + i + '" data-val="' + esc(it.value) + '">' +
+      (it.type ? '<span class="opacity-40">[' + it.type + ']</span> ' : '') + it.label + '</div>';
+  }).join('');
+  list.classList.add('show');
+  acActive = list;
+  acIdx = -1;
+  // Click handler
+  list.querySelectorAll('.ac-item').forEach(function(el) {
+    el.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      input.value = el.getAttribute('data-val');
+      hideAC(list);
+      onMappingChange();
+    });
+  });
+}
+
+function hideAC(list) {
+  if (list) list.classList.remove('show');
+  if (acActive === list) acActive = null;
+  acIdx = -1;
+}
+
+function acKeydown(e, input) {
+  var wrap = input.closest('.ac-wrap');
+  var list = wrap ? wrap.querySelector('.ac-list') : null;
+  if (!list || !list.classList.contains('show')) return;
+  var items = list.querySelectorAll('.ac-item');
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); acIdx = Math.min(acIdx + 1, items.length - 1); highlightAC(items); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); acIdx = Math.max(acIdx - 1, 0); highlightAC(items); }
+  else if (e.key === 'Enter' && acIdx >= 0) { e.preventDefault(); input.value = items[acIdx].getAttribute('data-val'); hideAC(list); onMappingChange(); }
+  else if (e.key === 'Escape') { hideAC(list); }
+}
+
+function highlightAC(items) {
+  items.forEach(function(el, i) { el.classList.toggle('active', i === acIdx); });
+  if (acIdx >= 0 && items[acIdx]) items[acIdx].scrollIntoView({ block: 'nearest' });
+}
+
+// Close on outside click
+document.addEventListener('click', function(e) {
+  if (acActive && !acActive.closest('.ac-wrap').contains(e.target)) hideAC(acActive);
+});
+
+// ── Wrap col-path and jf-path inputs with autocomplete ──────
+// We modify colRow and jsonFieldRow to add ac-wrap + ac-list.
+// Override via MutationObserver for dynamically added rows.
+var _origColRow = colRow;
+colRow = function(name, colDef) {
+  var html = _origColRow(name, colDef);
+  // Wrap the col-path input with ac-wrap
+  html = html.replace(
+    /(<input[^>]*class="col-path[^"]*"[^>]*>)/,
+    '<div class="ac-wrap" style="width:28%">$1<div class="ac-list bg-base-200 shadow-lg border border-base-300"></div></div>'
+  );
+  // Remove width from the input since the wrapper now controls it
+  html = html.replace(/col-path([^"]*) w-\[28%\]/, 'col-path$1 w-full');
+  return html;
+};
+
+var _origJsonFieldRow = jsonFieldRow;
+jsonFieldRow = function(key, path, transform) {
+  var html = _origJsonFieldRow(key, path, transform);
+  html = html.replace(
+    /(<input[^>]*class="jf-path[^"]*"[^>]*>)/,
+    '<div class="ac-wrap" style="width:24%">$1<div class="ac-list bg-base-200 shadow-lg border border-base-300"></div></div>'
+  );
+  html = html.replace(/jf-path([^"]*) w-\[24%\]/, 'jf-path$1 w-full');
+  return html;
+};
+
+// Attach input/keydown events via delegation
+document.addEventListener('input', function(e) {
+  if (e.target.classList.contains('col-path') || e.target.classList.contains('jf-path')) {
+    showAC(e.target);
+  }
+});
+document.addEventListener('keydown', function(e) {
+  if (e.target.classList.contains('col-path') || e.target.classList.contains('jf-path')) {
+    acKeydown(e, e.target);
+  }
+});
+document.addEventListener('focusout', function(e) {
+  if (e.target.classList.contains('col-path') || e.target.classList.contains('jf-path')) {
+    setTimeout(function() {
+      var wrap = e.target.closest('.ac-wrap');
+      if (wrap) hideAC(wrap.querySelector('.ac-list'));
+    }, 200);
+  }
+});
+
+// ── Init ─────────────────────────────────────────────────────
+loadFileList();
+</script>
+
+</body>
+</html>
