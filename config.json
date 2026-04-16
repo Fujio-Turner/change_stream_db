@@ -78,7 +78,30 @@
     "host": "0.0.0.0",
     "port": 9090
   },
+  "cbl_maintenance": {
+    "enabled": true,
+    "interval_hours": 24
+  },
   "logging": {
-    "level": "DEBUG"
+    "redaction_level": "partial",
+    "console": {
+      "enabled": true,
+      "log_level": "info",
+      "log_keys": ["*"],
+      "key_levels": {},
+      "color_enabled": false
+    },
+    "file": {
+      "enabled": true,
+      "path": "logs/changes_worker.log",
+      "log_level": "debug",
+      "log_keys": ["*"],
+      "key_levels": {},
+      "rotation": {
+        "max_size": 100,
+        "max_age": 7,
+        "rotated_logs_size_limit": 1024
+      }
+    }
   }
 }

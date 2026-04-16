@@ -6,6 +6,8 @@ This document describes the internal architecture of the changes_worker, how dat
 - [`ADMIN_UI.md`](ADMIN_UI.md) -- Dashboard, config editor, and schema mapping UI
 - [`CBL_DATABASE.md`](CBL_DATABASE.md) -- Embedded Couchbase Lite storage schema
 - [`SCHEMA_MAPPING.md`](SCHEMA_MAPPING.md) -- JSON-to-relational mapping definitions
+- [`RDBMS_PLAN.md`](RDBMS_PLAN.md) -- RDBMS output architecture and config
+- [`RDBMS_IMPLEMENTATION.md`](RDBMS_IMPLEMENTATION.md) -- RDBMS implementation guide (single-table, multi-table, transactions)
 - [`ADMIN_UI.md — Transforms`](ADMIN_UI.md#transform-functions-reference-transforms) -- Transform function reference (58 built-in functions)
 
 ---
@@ -16,9 +18,9 @@ This document describes the internal architecture of the changes_worker, how dat
 
 | Stage | What it does |
 |---|---|
-| **LEFT** | Consume `_changes` on SG / App Services / Edge Server via longpoll, continuous (2-phase: batched catch-up → streaming), or SSE. Returns a batch of changes with `last_seq`. |
+| **LEFT** | Consume `_changes` on SG / App Services / Edge Server via longpoll, continuous (2-phase: batched catch-up → streaming), websocket (SG / App Services only), or SSE (Edge Server only). Returns a batch of changes with `last_seq`. |
 | **MIDDLE** | Filter (skip deletes/removes), optionally fetch full docs via `_bulk_get`, serialize to the output format, manage checkpoints. |
-| **RIGHT** | Forward each doc to the output: `PUT/POST/DELETE` to an HTTP endpoint or write to stdout. Track success/failure per doc. |
+| **RIGHT** | Forward each doc to the output: `PUT/POST/DELETE` to an HTTP endpoint, write to stdout, or write to an RDBMS via the `db/` module (UPSERT/DELETE with optional multi-table transactions). Track success/failure per doc. |
 
 The admin UI dashboard mirrors this pipeline with a [charts-first grouped layout](ADMIN_UI.md#charts-row) showing live metrics for each stage.
 
@@ -261,6 +263,19 @@ This is where most operational failures occur. The behavior depends on `halt_on_
 |---|---|---|
 | **5xx / 4xx / 3xx / connection failure** | After retries exhausted, the doc is **skipped**. `send()` returns `{"ok": false, ...}` instead of raising. | The failed doc + error details are written to `failed_docs.jsonl`. The checkpoint advances past this doc. **The doc will NOT be retried automatically.** |
 
+#### RDBMS Output (`mode: db`)
+
+When the output mode is `db`, failures come from the database instead of an HTTP endpoint. The same `halt_on_failure` and DLQ semantics apply:
+
+| Failure | `halt_on_failure=true` | `halt_on_failure=false` |
+|---|---|---|
+| **Connection lost** | Stop batch, hold checkpoint, reconnect next cycle | Log, DLQ, skip, continue |
+| **Constraint violation** (FK, unique, check) | Stop batch, hold checkpoint | DLQ, skip |
+| **Transaction deadlock** | Retry with backoff, then stop | Retry, then DLQ |
+| **Type mismatch** (e.g., string in INT column) | Stop batch, hold checkpoint | DLQ, skip |
+
+For multi-table writes (one document → multiple tables), all SQL operations are wrapped in a single transaction. If any statement fails, the entire transaction rolls back — no partial writes. See [`RDBMS_IMPLEMENTATION.md`](RDBMS_IMPLEMENTATION.md) for details on single-table vs. multi-table patterns, transaction handling, and the full-record-replace upsert strategy.
+
 **Batch summary is always logged:**
 ```
 INFO  BATCH SUMMARY: 7/10 succeeded, 3 failed (3 written to dead letter queue)
@@ -433,8 +448,11 @@ rate(changes_worker_dead_letter_total[5m]) > 0
                                     ┌─────────────────────────────────┐
                                     │         SUCCESS PATH            │
                                     │                                 │
-  _changes ──► filter ──► fetch ──► send ──► 2xx ──► checkpoint ──►  │
-    (LEFT)     (MIDDLE)   (MIDDLE)  (RIGHT)          (MIDDLE)    sleep│
+  _changes ──► filter ──► fetch ──► send ──► 2xx/OK ──► checkpoint ──►  │
+    (LEFT)     (MIDDLE)   (MIDDLE)  (RIGHT)             (MIDDLE)    sleep│
+                                    │ HTTP: PUT/DELETE to endpoint       │
+                                    │ DB:   UPSERT/DELETE via db/ module │
+                                    │ stdout: print to console           │
                                     │                                 │
                                     ├─────────────────────────────────┤
                                     │     FAILURE + halt_on_failure    │

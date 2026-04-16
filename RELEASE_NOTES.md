@@ -2,6 +2,79 @@
 
 ---
 
+## v1.3.0 — 2026-04-16
+
+### New Features
+
+- **Production logging system** — SG-inspired structured logging with per-handler `log_keys` filtering, per-key level overrides, file rotation (`max_size`, `max_age`, `rotated_logs_size_limit`), and sensitive data redaction (`none` / `partial` / `full`). Console and file handlers are independently configurable via `config.json`. Replaces the previous single-level `logging.basicConfig`.
+
+- **Log keys** — 10 pipeline log categories for granular filtering: `CHANGES`, `PROCESSING`, `MAPPING`, `OUTPUT`, `HTTP`, `CHECKPOINT`, `RETRY`, `METRICS`, `CBL`, `DLQ`. Each can be enabled/disabled and given its own log level per handler.
+
+- **TRACE log level** — New level below DEBUG for verbose diagnostics. `icecream` output is routed to TRACE. Controlled independently per console/file handler.
+
+- **Redaction** — Sensitive data (passwords, tokens, Bearer headers, URL credentials) is automatically masked in log output. Modes: `none` (dev), `partial` (production — `p*****d`), `full` (audit — `<ud>XXXXX</ud>`).
+
+- **Operation tagging** — Every output/checkpoint/DLQ log event includes an `operation` field (`INSERT`, `UPDATE`, `DELETE`, `SELECT`) inferred from the document revision and HTTP method.
+
+- **Couchbase Lite structured logging** — All CBL operations (open, close, read, write, query, purge) now emit structured log events under the `CBL` key with `operation`, `doc_id`, `doc_type`, `db_size_mb`, `duration_ms`, and `error_detail` fields. Missing configs are logged as warnings.
+
+- **CBL database maintenance** — New `CBLStore` methods: `compact()`, `reindex()`, `integrity_check()`, `optimize()`, `full_optimize()`, and `run_all_maintenance()`. Mirrors `CBLMaintenanceType` from the Couchbase Lite SDK.
+
+- **CBL maintenance scheduler** — Background thread runs `compact` + `optimize` on a configurable interval (default: every 24 hours). Configured via `cbl_maintenance.enabled` and `cbl_maintenance.interval_hours`. Logs size before/after compact with % reduction.
+
+- **DLQ log key** — Dead letter queue operations (add, retry, purge, list, clear) now log under their own `DLQ` key instead of being mixed into `OUTPUT` or `CBL`.
+
+- **Proper CBL lifecycle** — Database is explicitly closed on shutdown via `close_db()`, and the maintenance scheduler is stopped cleanly.
+
+### Changes
+
+- **Renamed `changes_worker.py` → `main.py`** — Entrypoint is now `main.py`. Dockerfile, tests, and lazy imports updated. Logger name and metric prefixes remain `changes_worker` (product identity).
+
+- **File logging enabled by default** — `config.json` now ships with `logging.file.enabled: true`, writing to `logs/changes_worker.log` with debug-level, all log keys, and rotation (100 MB / 7 days / 1 GB cap).
+
+- **`.gitignore`** — Added `logs/*.log` and `logs/*.log.*` for rotated log files.
+
+### Configuration
+
+New `config.json` sections:
+
+```json
+"cbl_maintenance": {
+  "enabled": true,
+  "interval_hours": 24
+}
+```
+
+```json
+"logging": {
+  "redaction_level": "partial",
+  "console": {
+    "enabled": true,
+    "log_level": "info",
+    "log_keys": ["*"],
+    "key_levels": {}
+  },
+  "file": {
+    "enabled": true,
+    "path": "logs/changes_worker.log",
+    "log_level": "debug",
+    "log_keys": ["*"],
+    "key_levels": {},
+    "rotation": {
+      "max_size": 100,
+      "max_age": 7,
+      "rotated_logs_size_limit": 1024
+    }
+  }
+}
+```
+
+### New Files
+
+- `pipeline_logging.py` — Logging module: `configure_logging()`, `log_event()`, `infer_operation()`, `Redactor`, `LogKeyLevelFilter`, `RedactingFormatter`, `ManagedRotatingFileHandler`
+
+---
+
 ## v1.2.0 — 2026-04-16
 
 ### New Features
@@ -113,9 +186,9 @@
 ### CLI
 
 ```
-python changes_worker.py --config config.json          # Run the worker
-python changes_worker.py --config config.json --test   # Test connectivity
-python changes_worker.py --version                     # Print version
+python main.py --config config.json          # Run the worker
+python main.py --config config.json --test   # Test connectivity
+python main.py --version                     # Print version
 ```
 
 ### Requirements

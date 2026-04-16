@@ -35,5 +35,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 RUN mkdir -p /app/data
 
-ENTRYPOINT ["python", "changes_worker.py"]
+ENTRYPOINT ["python", "main.py"]
 CMD ["--config", "config.json"]

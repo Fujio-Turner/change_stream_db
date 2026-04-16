@@ -2,6 +2,11 @@
 
 This document outlines the plan for forwarding Couchbase `_changes` feed documents into relational databases (MS SQL, PostgreSQL, Oracle, MySQL) as an alternative output mode alongside the existing REST/HTTP output.
 
+**Related docs:**
+- [`RDBMS_IMPLEMENTATION.md`](RDBMS_IMPLEMENTATION.md) -- Implementation guide: single-table vs. multi-table writes, transactions, insert-vs-update strategy
+- [`SCHEMA_MAPPING.md`](SCHEMA_MAPPING.md) -- JSON-to-relational mapping definition format, transforms, JSONPath syntax
+- [`ADMIN_UI.md`](ADMIN_UI.md) -- Config editor UI with DB output fields, Schema Mappings visual editor
+
 ---
 
 ## Goal
@@ -121,6 +126,8 @@ A new `output.mode` value — `"db"` — selects RDBMS output. Database-specific
   }
 }
 ```
+
+> **Admin UI:** The config editor at `/config` provides a form-based interface for all DB settings. When `db` is selected as the output mode, the UI dynamically shows the connection, pool, and mapping fields. See [`ADMIN_UI.md`](ADMIN_UI.md#db-output-fields) for details.
 
 ### Mapping Modes
 
@@ -296,8 +303,9 @@ Startup validation will check that the required driver is installed for the conf
 3. **`db_mysql.py`** — MySQL second
 4. **`db_mssql.py`** — MS SQL third
 5. **`db_oracle.py`** — Oracle fourth
-6. **Integration into `changes_worker.py`** — add `mode=db` routing, config validation, `--test` support
+6. **Integration into `main.py`** — add `mode=db` routing, config validation, `--test` support
 7. **`columns` mapping mode** — after `jsonb` mode is proven stable
+8. **Admin UI** — Config editor updated with DB output fields, feed type grouping, and Tagify channels input (✅ done)
 
 ---
 
