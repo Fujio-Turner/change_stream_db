@@ -82,9 +82,10 @@ class PostgresOutputForwarder:
                      self._host, self._port, self._database,
                      self._pool_min, self._pool_max)
 
-        # Load mappings
+        # Load mappings from filesystem (bind-mounted, shared with admin-ui)
         from schema.mapper import SchemaMapper
         from pathlib import Path
+
         if self._mappings_dir:
             mdir = Path(self._mappings_dir)
             if mdir.is_dir():
@@ -94,6 +95,7 @@ class PostgresOutputForwarder:
         if self._mapping_file:
             self._mappers.append(SchemaMapper.from_file(self._mapping_file))
             logger.info("Loaded schema mapping from %s", self._mapping_file)
+
         if not self._mappers:
             logger.warning("No schema mappings loaded – documents will be skipped")
 

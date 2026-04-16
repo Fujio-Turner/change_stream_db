@@ -5,11 +5,11 @@
       "value": "order"
     }
   },
+  "output_format": "tables",
   "tables": [
     {
       "name": "orders",
       "primary_key": "doc_id",
-      "on_delete": "delete",
       "columns": {
         "doc_id": "$._id",
         "rev": "$._rev",
@@ -17,24 +17,26 @@
         "customer_id": "$.customer_id",
         "order_date": {"path": "$.order_date", "transform": "to_date($.order_date)"},
         "total": "$.total"
-      }
+      },
+      "on_delete": "delete"
     },
     {
       "name": "order_items",
-      "parent": "orders",
-      "source_array": "$.items",
-      "replace_strategy": "delete_insert",
+      "primary_key": "",
+      "columns": {
+        "order_doc_id": "$._id",
+        "product_id": {"path": "$.product_id", "transform": "uppercase($.product_id)"},
+        "qty": "$.qty",
+        "price": "$.price"
+      },
       "on_delete": "delete",
+      "parent": "orders",
       "foreign_key": {
         "column": "order_doc_id",
         "references": "doc_id"
       },
-      "columns": {
-        "order_doc_id": "$._id",
-        "product_id": "$.product_id",
-        "qty": "$.qty",
-        "price": "$.price"
-      }
+      "source_array": "$.items",
+      "replace_strategy": "delete_insert"
     }
   ]
 }

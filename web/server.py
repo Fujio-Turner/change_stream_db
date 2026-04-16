@@ -157,7 +157,7 @@ async def put_mapping(request):
     content = await request.text()
     if USE_CBL:
         CBLStore().save_mapping(name, content)
-        return json_response({"ok": True})
+    # Always write to filesystem so changes-worker can pick it up
     MAPPINGS_DIR.mkdir(exist_ok=True)
     (MAPPINGS_DIR / name).write_text(content)
     return json_response({"ok": True})
@@ -169,11 +169,10 @@ async def delete_mapping(request):
         return error_response("Invalid filename")
     if USE_CBL:
         CBLStore().delete_mapping(name)
-        return json_response({"ok": True})
+    # Always remove from filesystem too
     path = MAPPINGS_DIR / name
-    if not path.is_file():
-        return error_response("Not found", 404)
-    path.unlink()
+    if path.is_file():
+        path.unlink()
     return json_response({"ok": True})
 
 
