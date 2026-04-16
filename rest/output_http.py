@@ -13,6 +13,7 @@ import sys
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
+from collections import deque
 from pathlib import Path
 
 import aiohttp
@@ -188,6 +189,28 @@ class OutputForwarder:
         self._halt_on_failure = out_cfg.get("halt_on_failure", True)
         self._log_response_times = out_cfg.get("log_response_times", True)
         self._output_format = out_cfg.get("output_format", "json")
+        self._url_template = out_cfg.get("url_template", "{target_url}/{doc_id}")
+        self._write_method = out_cfg.get("write_method", "PUT").upper()
+        self._delete_method = out_cfg.get("delete_method", "DELETE").upper()
+        self._send_delete_body = out_cfg.get("send_delete_body", False)
+        self._request_timeout = out_cfg.get("request_timeout_seconds", 30)
+        self._follow_redirects = out_cfg.get("follow_redirects", False)
+
+        self._ssl_ctx = None
+        if out_cfg.get("accept_self_signed_certs", False):
+            import ssl as _ssl
+            self._ssl_ctx = _ssl.create_default_context()
+            self._ssl_ctx.check_hostname = False
+            self._ssl_ctx.verify_mode = _ssl.CERT_NONE
+
+        hc = out_cfg.get("health_check", {})
+        self._hc_enabled = hc.get("enabled", False)
+        self._hc_interval = hc.get("interval_seconds", 30)
+        self._hc_url = hc.get("url", "") or self._target_url
+        self._hc_method = hc.get("method", "GET").upper()
+        self._hc_timeout = hc.get("timeout_seconds", 5)
+        self._hc_task: asyncio.Task | None = None
+
         self._metrics = metrics
 
         # Auth for the output endpoint
@@ -212,7 +235,7 @@ class OutputForwarder:
         self._http = _http_cls(session, out_retry) if self._mode == "http" else None
 
         # Response time tracking
-        self._resp_times: list[float] = []
+        self._resp_times: deque[float] = deque(maxlen=10000)
         self._lock = asyncio.Lock()
 
     # -- Public API ------------------------------------------------------------
@@ -232,7 +255,8 @@ class OutputForwarder:
             return {"ok": True, "doc_id": doc.get("_id", doc.get("id", "unknown")), "method": method}
 
         doc_id = doc.get("_id", doc.get("id", "unknown"))
-        url = f"{self._target_url}/{doc_id}"
+        encoded_doc_id = urllib.parse.quote(str(doc_id), safe="")
+        url = self._url_template.format(target_url=self._target_url, doc_id=encoded_doc_id)
         body, content_type = serialize_doc(doc, self._output_format)
         body_len = len(body) if isinstance(body, (bytes, str)) else 0
 
@@ -244,18 +268,26 @@ class OutputForwarder:
 
         assert self._http is not None
 
-        from icecream import ic
-        ic(method, url, self._output_format)
         mk = self._method_key(method)
 
         t_start = time.monotonic()
         try:
-            merged_headers = {**self._headers, **self._extra_headers, "Content-Type": content_type}
-            resp = await self._http.request(
-                method, url, data=body, auth=self._auth,
-                headers=merged_headers,
-                params=self._extra_params or None,
-            )
+            merged_headers = {**self._headers, **self._extra_headers}
+            request_kwargs: dict = {
+                "auth": self._auth,
+                "headers": merged_headers,
+                "params": self._extra_params or None,
+                "timeout": aiohttp.ClientTimeout(total=self._request_timeout),
+                "allow_redirects": self._follow_redirects,
+            }
+            if self._ssl_ctx is not None:
+                request_kwargs["ssl"] = self._ssl_ctx
+            if method == "DELETE" and not self._send_delete_body:
+                pass
+            else:
+                request_kwargs["data"] = body
+                merged_headers["Content-Type"] = content_type
+            resp = await self._http.request(method, url, **request_kwargs)
             elapsed_ms = (time.monotonic() - t_start) * 1000
             status = resp.status
             resp.release()
@@ -273,6 +305,7 @@ class OutputForwarder:
                       bytes=body_len)
             if self._metrics:
                 self._metrics.inc("output_success_total")
+                self._metrics.set("output_endpoint_up", 1)
             return {"ok": True, "doc_id": doc_id, "method": method, "status": status}
 
         except _ClientHTTPError as exc:
@@ -356,7 +389,12 @@ class OutputForwarder:
         assert self._http is not None
         try:
             t_start = time.monotonic()
-            resp = await self._http.request("GET", self._target_url, auth=self._auth, headers=self._headers)
+            kwargs: dict = {"auth": self._auth, "headers": self._headers,
+                            "timeout": aiohttp.ClientTimeout(total=self._hc_timeout),
+                            "allow_redirects": self._follow_redirects}
+            if self._ssl_ctx is not None:
+                kwargs["ssl"] = self._ssl_ctx
+            resp = await self._http.request("GET", self._hc_url or self._target_url, **kwargs)
             elapsed_ms = (time.monotonic() - t_start) * 1000
             resp.release()
             log_event(logger, "info", "HTTP", "output endpoint reachable",
@@ -379,6 +417,63 @@ class OutputForwarder:
         log_event(logger, "info", "OUTPUT",
                   "output stats: %d requests | avg=%.1fms | min=%.1fms | max=%.1fms" % (n, avg, lo, hi))
 
+    async def start_heartbeat(self, shutdown_event: asyncio.Event) -> None:
+        """Start the periodic health-check background task."""
+        if self._mode != "http" or not self._hc_enabled:
+            return
+        self._hc_task = asyncio.create_task(self._heartbeat_loop(shutdown_event))
+
+    async def stop_heartbeat(self) -> None:
+        """Cancel the heartbeat task."""
+        if self._hc_task and not self._hc_task.done():
+            self._hc_task.cancel()
+            try:
+                await self._hc_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _heartbeat_loop(self, shutdown_event: asyncio.Event) -> None:
+        """Periodically probe the output endpoint and update metrics."""
+        while not shutdown_event.is_set():
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=self._hc_interval)
+                break  # shutdown signalled
+            except asyncio.TimeoutError:
+                pass  # interval elapsed, do the check
+
+            ok = await self._health_check()
+            if self._metrics:
+                self._metrics.set("output_endpoint_up", 1 if ok else 0)
+            if ok:
+                log_event(logger, "debug", "HTTP", "heartbeat OK",
+                          url=self._hc_url)
+            else:
+                log_event(logger, "warn", "HTTP", "heartbeat FAILED",
+                          url=self._hc_url)
+
+    async def _health_check(self) -> bool:
+        """Single health-check probe."""
+        if not self._hc_url or self._http is None:
+            return True
+        try:
+            timeout = aiohttp.ClientTimeout(total=self._hc_timeout)
+            kwargs: dict = {"auth": self._auth, "headers": self._headers, "timeout": timeout,
+                            "allow_redirects": self._follow_redirects}
+            if self._ssl_ctx is not None:
+                kwargs["ssl"] = self._ssl_ctx
+            t_start = time.monotonic()
+            resp = await self._http.request(self._hc_method, self._hc_url, **kwargs)
+            elapsed_ms = (time.monotonic() - t_start) * 1000
+            resp.release()
+            log_event(logger, "debug", "HTTP", "health check",
+                      url=self._hc_url, status=resp.status,
+                      elapsed_ms=round(elapsed_ms, 1))
+            return resp.status < 500
+        except Exception as exc:
+            log_event(logger, "warn", "HTTP", "health check failed: %s" % exc,
+                      url=self._hc_url)
+            return False
+
     # -- Internal --------------------------------------------------------------
 
     def _send_stdout(self, doc: dict) -> None:
@@ -396,10 +491,10 @@ class OutputForwarder:
                 self._resp_times.append(ms)
 
 
-def determine_method(change: dict) -> str:
+def determine_method(change: dict, write_method: str = "PUT", delete_method: str = "DELETE") -> str:
     if change.get("deleted"):
-        return "DELETE"
-    return "PUT"
+        return delete_method
+    return write_method
 
 
 class DeadLetterQueue:

@@ -20,7 +20,7 @@ This document describes the internal architecture of the changes_worker, how dat
 |---|---|
 | **LEFT** | Consume `_changes` on SG / App Services / Edge Server via longpoll, continuous (2-phase: batched catch-up → streaming), websocket (SG / App Services only), or SSE (Edge Server only). Returns a batch of changes with `last_seq`. |
 | **MIDDLE** | Filter (skip deletes/removes), optionally fetch full docs via `_bulk_get`, serialize to the output format, manage checkpoints. |
-| **RIGHT** | Forward each doc to the output: `PUT/POST/DELETE` to an HTTP endpoint, write to stdout, or write to an RDBMS via the `db/` module (UPSERT/DELETE with optional multi-table transactions). Track success/failure per doc. |
+| **RIGHT** | Forward each doc to the output: configurable HTTP method (`PUT`/`POST`/`PATCH`/`DELETE`) to a REST endpoint with URL templating, write to stdout, or write to an RDBMS via the `db/` module (UPSERT/DELETE with optional multi-table transactions). Track success/failure per doc. Periodic heartbeat monitors endpoint health. |
 
 The admin UI dashboard mirrors this pipeline with a [charts-first grouped layout](ADMIN_UI.md#charts-row) showing live metrics for each stage.
 
@@ -252,7 +252,7 @@ This is where most operational failures occur. The behavior depends on `halt_on_
 |---|---|---|
 | **5xx from endpoint** | `RetryableHTTP` retries with backoff (using `output.retry` config). If retries exhausted → raises `OutputEndpointDown`. | Worker stops processing the batch. Checkpoint is NOT advanced. Sleeps `poll_interval_seconds`, then re-fetches the same batch. The endpoint had time to recover. |
 | **4xx from endpoint** | **Not retried** (client error = bad request, not transient). Raises `OutputEndpointDown`. | Same as 5xx — stops the batch, holds checkpoint. Fix the data or endpoint, then restart. |
-| **3xx from endpoint** | **Not retried** (redirect = endpoint misconfigured). Raises `OutputEndpointDown`. | Same — holds checkpoint. Fix the URL. |
+| **3xx from endpoint** | If `follow_redirects=false` (default): **not retried**, raises `OutputEndpointDown`. If `follow_redirects=true`: aiohttp follows the redirect transparently. | Same — holds checkpoint. Fix the URL or enable `follow_redirects`. |
 | **Connection refused / timeout** | Retried with backoff. If exhausted → `OutputEndpointDown`. | Same — holds checkpoint. |
 
 **In parallel mode with partial failure:** If 7 of 10 tasks succeed before one raises `OutputEndpointDown`, those 7 docs were already delivered. The checkpoint does NOT advance, so the next cycle re-fetches all 10 and re-delivers the 7. **Your endpoint must be idempotent** (PUT is naturally idempotent; POST is not).
@@ -289,7 +289,7 @@ INFO  BATCH SUMMARY: 7/10 succeeded, 3 failed (3 written to dead letter queue)
 
 ### What it is
 
-When CBL is available, the DLQ stores each failed doc as a CBL document (`dlq:{doc_id}:{timestamp}`) with full context — error details, the original doc body, and a `retried` flag. The admin UI exposes DLQ entries via REST endpoints for viewing, retrying, and deleting. See [`docs/CBL_DATABASE.md`](CBL_DATABASE.md) for the full DLQ schema.
+When CBL is available, the DLQ stores each failed doc as a CBL document (`dlq:{doc_id}:{timestamp}`) in the `changes-worker.dlq` collection, with full context — error details, the original doc body, and a `retried` flag. The admin UI exposes DLQ entries via REST endpoints for viewing, retrying, and deleting. See [`docs/CBL_DATABASE.md`](CBL_DATABASE.md) for the full DLQ schema.
 
 When CBL is not available, the DLQ falls back to an append-only JSONL file where each line is a failed doc with full context:
 
@@ -307,9 +307,7 @@ When CBL is not available, the DLQ falls back to an append-only JSONL file where
 
 ### When it's used
 
-Only when **both** conditions are true:
-1. `halt_on_failure: false` (worker skips failed docs instead of stopping)
-2. `dead_letter_path` is set in config (e.g., `"dead_letter_path": "failed_docs.jsonl"`)
+Only when `halt_on_failure: false` (worker skips failed docs instead of stopping). When CBL is available, entries are stored automatically in the `changes-worker.dlq` collection — no file path needed. The `dead_letter_path` config (e.g., `"failed_docs.jsonl"`) is only used as a fallback when CBL is not installed.
 
 If `halt_on_failure: true`, the worker stops on failure and holds the checkpoint — no docs are lost, no DLQ needed.
 
@@ -345,7 +343,7 @@ The dead letter queue is **not automatically drained.** It is a record of what f
 
 ### Container restart behavior
 
-**With CBL:** DLQ data is stored in the CBL database at `/app/data/`. The `docker-compose.yml` mounts a shared `cbl-data` named volume at `/app/data`, so DLQ entries persist across container restarts automatically.
+**With CBL:** DLQ data is stored in the `changes-worker.dlq` collection within the CBL database at `/app/data/`. The `docker-compose.yml` mounts a shared `cbl-data` named volume at `/app/data`, so DLQ entries persist across container restarts automatically.
 
 **Without CBL (file fallback):** The DLQ file is written to the container's filesystem by default. **If the container is brought down, the file is lost** unless:
 
@@ -416,7 +414,7 @@ rate(changes_worker_dead_letter_total[5m]) > 0
 - Parallel processing, up to 50 concurrent tasks.
 - Checkpoint per-batch (default).
 - Output failure stops the batch — the next cycle re-delivers any docs from the partial batch.
-- **Requires an idempotent endpoint** (PUT is safe; POST may create duplicates).
+- **Requires an idempotent endpoint** (PUT is safe; POST may create duplicates). Use `write_method: "PUT"` (default) for idempotent upserts.
 - Use `throttle_feed` for large catch-ups to keep batch sizes manageable.
 
 ### Best Effort (skip failures, log everything)
@@ -450,7 +448,7 @@ rate(changes_worker_dead_letter_total[5m]) > 0
                                     │                                 │
   _changes ──► filter ──► fetch ──► send ──► 2xx/OK ──► checkpoint ──►  │
     (LEFT)     (MIDDLE)   (MIDDLE)  (RIGHT)             (MIDDLE)    sleep│
-                                    │ HTTP: PUT/DELETE to endpoint       │
+                                    │ HTTP: PUT/POST/PATCH/DELETE to endpoint │
                                     │ DB:   UPSERT/DELETE via db/ module │
                                     │ stdout: print to console           │
                                     │                                 │

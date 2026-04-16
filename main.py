@@ -22,6 +22,7 @@ import ssl
 import sys
 import time
 import threading
+from collections import deque
 from pathlib import Path
 
 import aiohttp
@@ -36,7 +37,7 @@ from rest import (
     VALID_OUTPUT_FORMATS,
 )
 from rest.output_http import check_serialization_library
-from cbl_store import USE_CBL, CBLStore, CBLMaintenanceScheduler, close_db, migrate_files_to_cbl
+from cbl_store import USE_CBL, CBLStore, CBLMaintenanceScheduler, close_db, migrate_files_to_cbl, configure_cbl, migrate_default_to_collections
 from pipeline_logging import (
     configure_logging,
     log_event,
@@ -103,8 +104,8 @@ class MetricsCollector:
         self.checkpoint_seq: str = "0"
         self.output_endpoint_up: int = 1
 
-        # Output response time tracking (for summary)
-        self._output_resp_times: list[float] = []
+        # Output response time tracking (for summary) – capped to avoid unbounded growth
+        self._output_resp_times: deque[float] = deque(maxlen=10000)
 
     def inc(self, name: str, value: int = 1) -> None:
         with self._lock:
@@ -296,6 +297,41 @@ def load_config(path: str | None = None) -> dict:
     return cfg
 
 
+def _ensure_full_logging_config(cfg: dict) -> None:
+    """Upgrade legacy ``{"level": "DEBUG"}`` logging config to full SG-style format."""
+    logging_cfg = cfg.get("logging", {})
+    if "console" in logging_cfg or "file" in logging_cfg:
+        return  # already in full format
+
+    old_level = logging_cfg.get("level", "info").lower()
+
+    cfg["logging"] = {
+        "redaction_level": "partial",
+        "console": {
+            "enabled": True,
+            "log_level": old_level,
+            "log_keys": ["*"],
+            "key_levels": {},
+            "color_enabled": False,
+        },
+        "file": {
+            "enabled": True,
+            "path": "logs/changes_worker.log",
+            "log_level": old_level,
+            "log_keys": ["*"],
+            "key_levels": {},
+            "rotation": {
+                "max_size": 100,
+                "max_age": 7,
+                "rotated_logs_size_limit": 1024,
+            },
+        },
+    }
+
+    if USE_CBL:
+        CBLStore().save_config(cfg)
+
+
 VALID_SOURCES = ("sync_gateway", "app_services", "edge_server")
 
 
@@ -437,8 +473,8 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
     # -- output ----------------------------------------------------------------
     out_cfg = cfg.get("output", {})
     out_mode = out_cfg.get("mode", "stdout")
-    if out_mode not in ("stdout", "http"):
-        errors.append(f"output.mode must be 'stdout' or 'http', got '{out_mode}'")
+    if out_mode not in ("stdout", "http", "db"):
+        errors.append(f"output.mode must be 'stdout', 'http', or 'db', got '{out_mode}'")
     if out_mode == "http" and not out_cfg.get("target_url"):
         errors.append("output.target_url is required when output.mode=http")
 
@@ -458,6 +494,18 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
         )
 
     if out_mode == "http":
+        valid_methods = ("PUT", "POST", "PATCH", "DELETE")
+        write_method = out_cfg.get("write_method", "PUT").upper()
+        delete_method = out_cfg.get("delete_method", "DELETE").upper()
+        if write_method not in valid_methods:
+            errors.append(f"output.write_method must be one of {valid_methods}, got '{write_method}'")
+        if delete_method not in valid_methods:
+            errors.append(f"output.delete_method must be one of {valid_methods}, got '{delete_method}'")
+
+        req_timeout = out_cfg.get("request_timeout_seconds", 30)
+        if req_timeout <= 0:
+            errors.append(f"output.request_timeout_seconds must be > 0, got {req_timeout}")
+
         out_auth_method = out_cfg.get("target_auth", {}).get("method", "none")
         if out_auth_method == "basic":
             if not out_cfg.get("target_auth", {}).get("username"):
@@ -1041,7 +1089,11 @@ async def _process_changes_batch(
                 doc = change.get("doc", change)
             else:
                 doc = docs_by_id.get(doc_id, change)
-            method = determine_method(change)
+            method = determine_method(
+                change,
+                write_method=getattr(output, '_write_method', 'PUT'),
+                delete_method=getattr(output, '_delete_method', 'DELETE'),
+            )
             op = infer_operation(change=change, doc=doc, method=method)
             log_event(logger, "trace", "OUTPUT", "sending document",
                       operation=op, doc_id=doc_id, mode=output._mode,
@@ -1406,6 +1458,8 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
                 else:
                     log_event(logger, "warn", "OUTPUT",
                               "output endpoint unreachable at startup – continuing (halt_on_failure=false)")
+            # Start periodic heartbeat if configured
+            await output.start_heartbeat(shutdown_event)
 
         # Load checkpoint from SG _local doc (CBL-style)
         since = feed_cfg.get("since", "0")
@@ -1656,11 +1710,13 @@ def main() -> None:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
 
-    # Run one-time migration if CBL is available
+    # Run one-time migrations if CBL is available
     if USE_CBL:
         migrate_files_to_cbl(args.config)
+        migrate_default_to_collections()
 
     cfg = load_config(args.config)
+    _ensure_full_logging_config(cfg)
     configure_logging(cfg.get("logging", {}))
 
     log_event(logger, "info", "PROCESSING", "changes_worker v%s starting (CBL=%s)" % (__version__, USE_CBL))
@@ -1705,9 +1761,15 @@ def main() -> None:
     # ── CBL maintenance scheduler ───────────────────────────────────────
     cbl_scheduler: CBLMaintenanceScheduler | None = None
     if USE_CBL:
-        cbl_cfg = cfg.get("cbl_maintenance", {})
-        if cbl_cfg.get("enabled", True):
-            interval = cbl_cfg.get("interval_hours", 24)
+        # Apply CBL config (db_dir / db_name) before any DB access
+        cbl_cfg = cfg.get("couchbase_lite", {})
+        # Backward compat: fall back to legacy "cbl_maintenance" key
+        maint_cfg = cbl_cfg.get("maintenance", cfg.get("cbl_maintenance", {}))
+        if cbl_cfg.get("db_dir") or cbl_cfg.get("db_name"):
+            from cbl_store import configure_cbl
+            configure_cbl(cbl_cfg.get("db_dir"), cbl_cfg.get("db_name"))
+        if maint_cfg.get("enabled", True):
+            interval = maint_cfg.get("interval_hours", 24)
             cbl_scheduler = CBLMaintenanceScheduler(interval_hours=interval)
             cbl_scheduler.start()
 

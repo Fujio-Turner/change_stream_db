@@ -47,14 +47,25 @@
     <div role="tablist" class="tabs tabs-bordered mb-4">
       <a role="tab" class="tab tab-active" id="tabForm" onclick="switchTab('form')">Form Editor</a>
       <a role="tab" class="tab" id="tabRaw" onclick="switchTab('raw')">Raw JSON</a>
+      <div class="ml-auto flex items-center gap-1 text-sm">
+        <a class="link link-hover link-primary" onclick="toggleAllSections(true)">show all</a>
+        <span class="opacity-40">|</span>
+        <a class="link link-hover link-primary" onclick="toggleAllSections(false)">hide all</a>
+      </div>
     </div>
 
     <!-- Form View -->
     <div id="viewForm">
 
+      <!-- ── GROUP: INPUT ── -->
+      <div class="flex items-center gap-3 mt-0 mb-2">
+        <div class="text-xs font-bold tracking-widest uppercase opacity-50">INPUT</div>
+        <div class="flex-1 border-t border-base-content/10"></div>
+      </div>
+
       <!-- Gateway -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" checked />
+        <input type="checkbox" />
         <div class="collapse-title font-semibold">Gateway</div>
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
@@ -92,7 +103,7 @@
 
       <!-- Auth -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" checked />
+        <input type="checkbox" />
         <div class="collapse-title font-semibold">Auth</div>
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
@@ -131,7 +142,7 @@
 
       <!-- Changes Feed -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" checked />
+        <input type="checkbox" />
         <div class="collapse-title font-semibold">Changes Feed</div>
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
@@ -186,9 +197,15 @@
         </div>
       </div>
 
+      <!-- ── GROUP: PROCESS ── -->
+      <div class="flex items-center gap-3 mt-6 mb-2">
+        <div class="text-xs font-bold tracking-widest uppercase opacity-50">PROCESS</div>
+        <div class="flex-1 border-t border-base-content/10"></div>
+      </div>
+
       <!-- Processing -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" checked />
+        <input type="checkbox" />
         <div class="collapse-title font-semibold">Processing</div>
         <div class="collapse-content flex flex-col gap-3">
           <div class="form-control">
@@ -222,9 +239,15 @@
         </div>
       </div>
 
+      <!-- ── GROUP: OUTPUT ── -->
+      <div class="flex items-center gap-3 mt-6 mb-2">
+        <div class="text-xs font-bold tracking-widest uppercase opacity-50">OUTPUT</div>
+        <div class="flex-1 border-t border-base-content/10"></div>
+      </div>
+
       <!-- Output -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" checked />
+        <input type="checkbox" />
         <div class="collapse-title font-semibold">Output</div>
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
@@ -242,7 +265,18 @@
               <div class="label"><span class="label-text">Target URL</span></div>
               <input type="text" id="output_target_url" class="input input-bordered w-full" placeholder="https://example.com/webhook" />
             </label>
-            <label class="form-control w-full">
+            <label class="form-control w-full mb-3">
+              <div class="label">
+                <span class="label-text flex items-center gap-2">
+                  URL Template
+                  <div class="tooltip tooltip-right" data-tip="How the final request URL is built. Use {target_url} and {doc_id} placeholders. Default appends the doc ID. For collection-style POST endpoints use just {target_url}.">
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                  </div>
+                </span>
+              </div>
+              <input type="text" id="output_url_template" class="input input-bordered w-full font-mono text-sm" placeholder="{target_url}/{doc_id}" />
+            </label>
+            <label class="form-control w-full mb-3">
               <div class="label"><span class="label-text">Output Format</span></div>
               <select id="output_output_format" class="select select-bordered w-full">
                 <option value="json">json</option>
@@ -252,6 +286,208 @@
                 <option value="cbor">cbor</option>
                 <option value="bson">bson</option>
                 <option value="yaml">yaml</option>
+              </select>
+            </label>
+
+            <!-- HTTP Method & Body -->
+            <div class="divider text-xs opacity-60">HTTP Method</div>
+            <div class="grid grid-cols-2 gap-3 mb-3">
+              <label class="form-control w-full">
+                <div class="label">
+                  <span class="label-text flex items-center gap-2">
+                    Write Method
+                    <div class="tooltip tooltip-right" data-tip="HTTP method for create/update operations. PUT (default) is idempotent. Use POST for collection endpoints, PATCH for partial updates.">
+                      <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                    </div>
+                  </span>
+                </div>
+                <select id="output_write_method" class="select select-bordered w-full">
+                  <option value="PUT">PUT</option>
+                  <option value="POST">POST</option>
+                  <option value="PATCH">PATCH</option>
+                </select>
+              </label>
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Delete Method</span></div>
+                <select id="output_delete_method" class="select select-bordered w-full">
+                  <option value="DELETE">DELETE</option>
+                  <option value="PUT">PUT</option>
+                  <option value="POST">POST</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-control mb-3">
+              <label class="label cursor-pointer justify-start gap-4">
+                <span class="label-text flex items-center gap-2">
+                  Send Body on DELETE
+                  <div class="tooltip tooltip-right" data-tip="When off (default), DELETE requests are sent without a body — most REST APIs expect this. Enable if your endpoint requires the document body in DELETE requests.">
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                  </div>
+                </span>
+                <input type="checkbox" id="output_send_delete_body" class="toggle toggle-success" />
+              </label>
+            </div>
+
+            <!-- Connection -->
+            <div class="divider text-xs opacity-60">Connection</div>
+            <div class="grid grid-cols-2 gap-3 mb-3">
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Request Timeout (s)</span></div>
+                <input type="number" id="output_request_timeout" class="input input-bordered w-full" min="1" value="30" />
+              </label>
+            </div>
+            <div class="form-control mb-3">
+              <label class="label cursor-pointer justify-start gap-4">
+                <span class="label-text">Accept Self-Signed Certs</span>
+                <input type="checkbox" id="output_accept_self_signed_certs" class="toggle toggle-success" />
+              </label>
+            </div>
+            <div class="form-control mb-3">
+              <label class="label cursor-pointer justify-start gap-4">
+                <span class="label-text">Follow Redirects</span>
+                <input type="checkbox" id="output_follow_redirects" class="toggle toggle-success" />
+              </label>
+            </div>
+
+            <!-- Target Auth -->
+            <div class="divider text-xs opacity-60">Target Authentication</div>
+            <label class="form-control w-full mb-3">
+              <div class="label"><span class="label-text">Auth Method</span></div>
+              <select id="output_target_auth_method" class="select select-bordered w-full" onchange="toggleOutputAuthFields()">
+                <option value="none">none</option>
+                <option value="basic">basic</option>
+                <option value="session">session</option>
+                <option value="bearer">bearer</option>
+              </select>
+            </label>
+            <div id="output_auth_basic_fields" class="hidden">
+              <div class="grid grid-cols-2 gap-3 mb-3">
+                <label class="form-control w-full">
+                  <div class="label"><span class="label-text">Username</span></div>
+                  <input type="text" id="output_target_auth_username" class="input input-bordered w-full" />
+                </label>
+                <label class="form-control w-full">
+                  <div class="label"><span class="label-text">Password</span></div>
+                  <input type="password" id="output_target_auth_password" class="input input-bordered w-full" />
+                </label>
+              </div>
+            </div>
+            <div id="output_auth_session_fields" class="hidden">
+              <label class="form-control w-full mb-3">
+                <div class="label"><span class="label-text">Session Cookie</span></div>
+                <input type="text" id="output_target_auth_session_cookie" class="input input-bordered w-full" />
+              </label>
+            </div>
+            <div id="output_auth_bearer_fields" class="hidden">
+              <label class="form-control w-full mb-3">
+                <div class="label"><span class="label-text">Bearer Token</span></div>
+                <input type="text" id="output_target_auth_bearer_token" class="input input-bordered w-full" />
+              </label>
+            </div>
+
+            <!-- Request Options -->
+            <div class="divider text-xs opacity-60">Request Options</div>
+            <label class="form-control w-full mb-3">
+              <div class="label">
+                <span class="label-text flex items-center gap-2">
+                  Custom Headers
+                  <div class="tooltip tooltip-right" data-tip="JSON object of extra HTTP headers sent with every output request. Example: {&quot;X-Api-Key&quot;: &quot;abc123&quot;, &quot;X-Source&quot;: &quot;changes_worker&quot;}">
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                  </div>
+                </span>
+              </div>
+              <textarea id="output_request_headers" class="textarea textarea-bordered w-full font-mono text-sm" rows="3" placeholder='{"X-Api-Key": "abc123"}'></textarea>
+            </label>
+            <label class="form-control w-full mb-3">
+              <div class="label">
+                <span class="label-text flex items-center gap-2">
+                  Query Parameters
+                  <div class="tooltip tooltip-right" data-tip="JSON object of query parameters appended to every output request URL. Example: {&quot;version&quot;: &quot;2&quot;, &quot;source&quot;: &quot;sg&quot;}">
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                  </div>
+                </span>
+              </div>
+              <textarea id="output_request_params" class="textarea textarea-bordered w-full font-mono text-sm" rows="3" placeholder='{"version": "2"}'></textarea>
+            </label>
+
+            <!-- Retry -->
+            <div class="divider text-xs opacity-60">Retry</div>
+            <div class="grid grid-cols-2 gap-3 mb-3">
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Max Retries</span></div>
+                <input type="number" id="output_retry_max_retries" class="input input-bordered w-full" min="0" value="3" />
+              </label>
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Backoff Base (s)</span></div>
+                <input type="number" id="output_retry_backoff_base" class="input input-bordered w-full" min="0" step="0.5" value="1" />
+              </label>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mb-3">
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Backoff Max (s)</span></div>
+                <input type="number" id="output_retry_backoff_max" class="input input-bordered w-full" min="0" value="30" />
+              </label>
+              <label class="form-control w-full">
+                <div class="label">
+                  <span class="label-text flex items-center gap-2">
+                    Retry on Status
+                    <div class="tooltip tooltip-right" data-tip="Comma-separated HTTP status codes that trigger a retry. Default: 500,502,503,504">
+                      <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                    </div>
+                  </span>
+                </div>
+                <input type="text" id="output_retry_on_status" class="input input-bordered w-full" placeholder="500,502,503,504" />
+              </label>
+            </div>
+
+            <!-- Misc HTTP options -->
+            <div class="divider text-xs opacity-60">Options</div>
+            <div class="form-control mb-3">
+              <label class="label cursor-pointer justify-start gap-4">
+                <span class="label-text">Log Response Times</span>
+                <input type="checkbox" id="output_log_response_times" class="toggle toggle-success" checked />
+              </label>
+            </div>
+
+            <!-- Health Check -->
+            <div class="divider text-xs opacity-60">Health Check</div>
+            <div class="form-control mb-3">
+              <label class="label cursor-pointer justify-start gap-4">
+                <span class="label-text flex items-center gap-2">
+                  Enable Heartbeat
+                  <div class="tooltip tooltip-right" data-tip="Periodically probe the output endpoint to verify it is reachable. Updates the output_endpoint_up metric for monitoring and alerting.">
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                  </div>
+                </span>
+                <input type="checkbox" id="output_hc_enabled" class="toggle toggle-success" />
+              </label>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mb-3">
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Interval (s)</span></div>
+                <input type="number" id="output_hc_interval" class="input input-bordered w-full" min="5" value="30" />
+              </label>
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Timeout (s)</span></div>
+                <input type="number" id="output_hc_timeout" class="input input-bordered w-full" min="1" value="5" />
+              </label>
+            </div>
+            <label class="form-control w-full mb-3">
+              <div class="label">
+                <span class="label-text flex items-center gap-2">
+                  Health Check URL
+                  <div class="tooltip tooltip-right" data-tip="URL to probe for health checks. Leave blank to use the Target URL. Use a dedicated health endpoint (e.g. /health or /ping) if available.">
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                  </div>
+                </span>
+              </div>
+              <input type="text" id="output_hc_url" class="input input-bordered w-full" placeholder="(defaults to Target URL)" />
+            </label>
+            <label class="form-control w-full mb-3">
+              <div class="label"><span class="label-text">Health Check Method</span></div>
+              <select id="output_hc_method" class="select select-bordered w-full">
+                <option value="GET">GET</option>
+                <option value="HEAD">HEAD</option>
               </select>
             </label>
           </div>
@@ -392,9 +628,104 @@
         </div>
       </div>
 
+      <!-- ── GROUP: RELIABILITY ── -->
+      <div class="flex items-center gap-3 mt-6 mb-2">
+        <div class="text-xs font-bold tracking-widest uppercase opacity-50">RELIABILITY</div>
+        <div class="flex-1 border-t border-base-content/10"></div>
+      </div>
+
+      <!-- Couchbase Lite -->
+      <div class="collapse collapse-arrow bg-base-100 mb-2">
+        <input type="checkbox" />
+        <div class="collapse-title font-semibold">Couchbase Lite</div>
+        <div class="collapse-content flex flex-col gap-3">
+          <div class="alert alert-info text-sm">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            <span>Embedded Couchbase Lite CE database. Data is organized into scoped collections under <code>changes-worker.*</code>: <code>config</code>, <code>checkpoints</code>, <code>mappings</code>, and <code>dlq</code>.</span>
+          </div>
+          <div class="grid grid-cols-2 gap-3 mb-3">
+            <label class="form-control w-full">
+              <div class="label">
+                <span class="label-text flex items-center gap-2">
+                  Database Directory
+                  <div class="tooltip tooltip-right" data-tip="Filesystem path where the CBL database is stored. Can also be set via the CBL_DB_DIR environment variable. Default: /app/data">
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                  </div>
+                </span>
+              </div>
+              <input type="text" id="cbl_db_dir" class="input input-bordered w-full font-mono text-sm" placeholder="/app/data" />
+            </label>
+            <label class="form-control w-full">
+              <div class="label">
+                <span class="label-text flex items-center gap-2">
+                  Database Name
+                  <div class="tooltip tooltip-right" data-tip="Name of the CBL database file. The on-disk directory will be {db_dir}/{db_name}.cblite2/">
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                  </div>
+                </span>
+              </div>
+              <input type="text" id="cbl_db_name" class="input input-bordered w-full font-mono text-sm" placeholder="changes_worker_db" />
+            </label>
+          </div>
+
+          <div class="divider text-xs opacity-60">Schema</div>
+          <div class="overflow-x-auto mb-3">
+            <table class="table table-xs table-zebra">
+              <thead><tr><th>Scope</th><th>Collection</th><th>Documents</th></tr></thead>
+              <tbody>
+                <tr><td rowspan="4" class="font-mono align-top">changes-worker</td><td class="font-mono">config</td><td>Worker configuration</td></tr>
+                <tr><td class="font-mono">checkpoints</td><td>Checkpoint sequence data</td></tr>
+                <tr><td class="font-mono">mappings</td><td>Schema mapping definitions</td></tr>
+                <tr><td class="font-mono">dlq</td><td>Dead letter queue entries</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="divider text-xs opacity-60">Maintenance</div>
+          <div class="form-control mb-3">
+            <label class="label cursor-pointer justify-start gap-4">
+              <span class="label-text flex items-center gap-2">
+                Enable Scheduled Maintenance
+                <div class="tooltip tooltip-right" data-tip="Periodically run compact + optimize on the CBL database to reclaim disk space and update index statistics.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+              <input type="checkbox" id="cbl_maintenance_enabled" class="toggle toggle-success" checked />
+            </label>
+          </div>
+          <label class="form-control w-full">
+            <div class="label"><span class="label-text">Maintenance Interval (hours)</span></div>
+            <input type="number" id="cbl_maintenance_interval" class="input input-bordered w-full" min="1" step="0.5" value="24" />
+          </label>
+        </div>
+      </div>
+
+      <!-- Dead Letter Queue -->
+      <div class="collapse collapse-arrow bg-base-100 mb-2">
+        <input type="checkbox" />
+        <div class="collapse-title font-semibold">Dead Letter Queue</div>
+        <div class="collapse-content flex flex-col gap-3">
+          <div class="alert alert-info text-sm">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            <span>When Couchbase Lite is available, failed documents are stored as CBL documents with full context for retry via the admin UI. The file path below is only used as a fallback when CBL is not installed.</span>
+          </div>
+          <label class="form-control w-full">
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Fallback File Path
+                <div class="tooltip tooltip-right" data-tip="Append-only JSONL file for failed documents. Only used when Couchbase Lite is not available. Each line is a JSON object with doc_id, seq, method, status, error, and the original document.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
+            <input type="text" id="output_dead_letter_path" class="input input-bordered w-full" placeholder="failed_docs.jsonl" />
+          </label>
+        </div>
+      </div>
+
       <!-- Checkpoint -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" checked />
+        <input type="checkbox" />
         <div class="collapse-title font-semibold">Checkpoint</div>
         <div class="collapse-content flex flex-col gap-3">
           <div class="form-control">
@@ -414,9 +745,15 @@
         </div>
       </div>
 
+      <!-- ── GROUP: OBSERVABILITY ── -->
+      <div class="flex items-center gap-3 mt-6 mb-2">
+        <div class="text-xs font-bold tracking-widest uppercase opacity-50">OBSERVABILITY</div>
+        <div class="flex-1 border-t border-base-content/10"></div>
+      </div>
+
       <!-- Metrics -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" checked />
+        <input type="checkbox" />
         <div class="collapse-title font-semibold">Metrics</div>
         <div class="collapse-content flex flex-col gap-3">
           <div class="form-control">
@@ -438,17 +775,97 @@
 
       <!-- Logging -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" checked />
+        <input type="checkbox" />
         <div class="collapse-title font-semibold">Logging</div>
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
-            <div class="label"><span class="label-text">Level</span></div>
-            <select id="logging_level" class="select select-bordered w-full">
-              <option value="DEBUG">DEBUG</option>
-              <option value="INFO">INFO</option>
-              <option value="WARNING">WARNING</option>
-              <option value="ERROR">ERROR</option>
+            <div class="label"><span class="label-text">Redaction Level</span></div>
+            <select id="logging_redaction_level" class="select select-bordered w-full">
+              <option value="none">none</option>
+              <option value="partial">partial</option>
+              <option value="full">full</option>
             </select>
+          </label>
+
+          <!-- Console sub-section -->
+          <div class="divider text-sm opacity-60">Console</div>
+          <div class="form-control">
+            <label class="label cursor-pointer justify-start gap-4">
+              <span class="label-text">Enabled</span>
+              <input type="checkbox" id="logging_console_enabled" class="toggle toggle-success" />
+            </label>
+          </div>
+          <label class="form-control w-full">
+            <div class="label"><span class="label-text">Log Level</span></div>
+            <select id="logging_console_log_level" class="select select-bordered w-full">
+              <option value="trace">trace</option>
+              <option value="debug">debug</option>
+              <option value="info">info</option>
+              <option value="warn">warn</option>
+              <option value="error">error</option>
+              <option value="critical">critical</option>
+            </select>
+          </label>
+          <label class="form-control w-full">
+            <div class="label"><span class="label-text">Log Keys</span></div>
+            <input type="text" id="logging_console_log_keys" class="input input-bordered w-full" placeholder="Type a log key and press Enter" />
+          </label>
+          <label class="form-control w-full">
+            <div class="label"><span class="label-text">Key Levels (JSON)</span></div>
+            <textarea id="logging_console_key_levels" class="textarea textarea-bordered w-full font-mono text-sm" rows="3" placeholder='{"HTTP": "warn", "MAPPING": "debug"}'></textarea>
+          </label>
+          <div class="form-control">
+            <label class="label cursor-pointer justify-start gap-4">
+              <span class="label-text">Color Enabled</span>
+              <input type="checkbox" id="logging_console_color_enabled" class="toggle toggle-success" />
+            </label>
+          </div>
+
+          <!-- File sub-section -->
+          <div class="divider text-sm opacity-60">File</div>
+          <div class="form-control">
+            <label class="label cursor-pointer justify-start gap-4">
+              <span class="label-text">Enabled</span>
+              <input type="checkbox" id="logging_file_enabled" class="toggle toggle-success" />
+            </label>
+          </div>
+          <label class="form-control w-full">
+            <div class="label"><span class="label-text">Path</span></div>
+            <input type="text" id="logging_file_path" class="input input-bordered w-full" placeholder="logs/changes_worker.log" />
+          </label>
+          <label class="form-control w-full">
+            <div class="label"><span class="label-text">Log Level</span></div>
+            <select id="logging_file_log_level" class="select select-bordered w-full">
+              <option value="trace">trace</option>
+              <option value="debug">debug</option>
+              <option value="info">info</option>
+              <option value="warn">warn</option>
+              <option value="error">error</option>
+              <option value="critical">critical</option>
+            </select>
+          </label>
+          <label class="form-control w-full">
+            <div class="label"><span class="label-text">Log Keys</span></div>
+            <input type="text" id="logging_file_log_keys" class="input input-bordered w-full" placeholder="Type a log key and press Enter" />
+          </label>
+          <label class="form-control w-full">
+            <div class="label"><span class="label-text">Key Levels (JSON)</span></div>
+            <textarea id="logging_file_key_levels" class="textarea textarea-bordered w-full font-mono text-sm" rows="3" placeholder='{"HTTP": "warn", "MAPPING": "debug"}'></textarea>
+          </label>
+
+          <!-- Rotation sub-section -->
+          <div class="divider text-xs opacity-50">File Rotation</div>
+          <label class="form-control w-full">
+            <div class="label"><span class="label-text">Max Size (MB)</span></div>
+            <input type="number" id="logging_file_rotation_max_size" class="input input-bordered w-full" min="1" />
+          </label>
+          <label class="form-control w-full">
+            <div class="label"><span class="label-text">Max Age (days)</span></div>
+            <input type="number" id="logging_file_rotation_max_age" class="input input-bordered w-full" min="1" />
+          </label>
+          <label class="form-control w-full">
+            <div class="label"><span class="label-text">Rotated Logs Size Limit (MB)</span></div>
+            <input type="number" id="logging_file_rotation_rotated_logs_size_limit" class="input input-bordered w-full" min="1" />
           </label>
         </div>
       </div>
@@ -484,6 +901,12 @@
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('cw_theme', theme);
   });
+
+  // Expand / collapse all sections
+  function toggleAllSections(show) {
+    var checks = document.querySelectorAll('#viewForm .collapse > input[type="checkbox"]');
+    checks.forEach(function(cb) { cb.checked = show; });
+  }
 
   // Tab switching
   function switchTab(tab) {
@@ -522,6 +945,13 @@
     var mode = document.getElementById('output_mode').value;
     document.getElementById('output_http_fields').classList.toggle('hidden', mode !== 'http');
     document.getElementById('output_db_fields').classList.toggle('hidden', mode !== 'db');
+  }
+
+  function toggleOutputAuthFields() {
+    var method = document.getElementById('output_target_auth_method').value;
+    document.getElementById('output_auth_basic_fields').classList.toggle('hidden', method !== 'basic');
+    document.getElementById('output_auth_session_fields').classList.toggle('hidden', method !== 'session');
+    document.getElementById('output_auth_bearer_fields').classList.toggle('hidden', method !== 'bearer');
   }
 
   // DB mapping mode field visibility
@@ -575,8 +1005,48 @@
 
     document.getElementById('output_mode').value = cfg.output?.mode || 'stdout';
     document.getElementById('output_target_url').value = cfg.output?.target_url || '';
+    document.getElementById('output_url_template').value = cfg.output?.url_template || '{target_url}/{doc_id}';
     document.getElementById('output_output_format').value = cfg.output?.output_format || 'json';
+    document.getElementById('output_write_method').value = (cfg.output?.write_method || 'PUT').toUpperCase();
+    document.getElementById('output_delete_method').value = (cfg.output?.delete_method || 'DELETE').toUpperCase();
+    document.getElementById('output_send_delete_body').checked = cfg.output?.send_delete_body || false;
+    document.getElementById('output_request_timeout').value = cfg.output?.request_timeout_seconds ?? 30;
+    document.getElementById('output_accept_self_signed_certs').checked = cfg.output?.accept_self_signed_certs || false;
+    document.getElementById('output_follow_redirects').checked = cfg.output?.follow_redirects || false;
     document.getElementById('output_halt_on_failure').checked = cfg.output?.halt_on_failure ?? true;
+    document.getElementById('output_dead_letter_path').value = cfg.output?.dead_letter_path || '';
+
+    // Health check
+    var hc = cfg.output?.health_check || {};
+    document.getElementById('output_hc_enabled').checked = hc.enabled || false;
+    document.getElementById('output_hc_interval').value = hc.interval_seconds ?? 30;
+    document.getElementById('output_hc_timeout').value = hc.timeout_seconds ?? 5;
+    document.getElementById('output_hc_url').value = hc.url || '';
+    document.getElementById('output_hc_method').value = hc.method || 'GET';
+
+    // HTTP target auth
+    var tAuth = cfg.output?.target_auth || {};
+    document.getElementById('output_target_auth_method').value = tAuth.method || 'none';
+    document.getElementById('output_target_auth_username').value = tAuth.username || '';
+    document.getElementById('output_target_auth_password').value = tAuth.password || '';
+    document.getElementById('output_target_auth_session_cookie').value = tAuth.session_cookie || '';
+    document.getElementById('output_target_auth_bearer_token').value = tAuth.bearer_token || '';
+    toggleOutputAuthFields();
+
+    // HTTP request options
+    var reqOpts = cfg.output?.request_options || {};
+    document.getElementById('output_request_headers').value = Object.keys(reqOpts.headers || {}).length ? JSON.stringify(reqOpts.headers, null, 2) : '';
+    document.getElementById('output_request_params').value = Object.keys(reqOpts.params || {}).length ? JSON.stringify(reqOpts.params, null, 2) : '';
+
+    // HTTP retry
+    var outRetry = cfg.output?.retry || {};
+    document.getElementById('output_retry_max_retries').value = outRetry.max_retries ?? 3;
+    document.getElementById('output_retry_backoff_base').value = outRetry.backoff_base_seconds ?? 1;
+    document.getElementById('output_retry_backoff_max').value = outRetry.backoff_max_seconds ?? 30;
+    document.getElementById('output_retry_on_status').value = (outRetry.retry_on_status || [500, 502, 503, 504]).join(',');
+
+    // HTTP misc
+    document.getElementById('output_log_response_times').checked = cfg.output?.log_response_times ?? true;
 
     // DB fields
     var db = cfg.output?.db || {};
@@ -608,6 +1078,14 @@
     toggleOutputFields();
     toggleDbMappingFields();
 
+    // Couchbase Lite
+    var cbl = cfg.couchbase_lite || {};
+    document.getElementById('cbl_db_dir').value = cbl.db_dir || '/app/data';
+    document.getElementById('cbl_db_name').value = cbl.db_name || 'changes_worker_db';
+    var cblMaint = cbl.maintenance || cfg.cbl_maintenance || {};
+    document.getElementById('cbl_maintenance_enabled').checked = cblMaint.enabled ?? true;
+    document.getElementById('cbl_maintenance_interval').value = cblMaint.interval_hours ?? 24;
+
     document.getElementById('checkpoint_enabled').checked = cfg.checkpoint?.enabled ?? true;
     document.getElementById('checkpoint_client_id').value = cfg.checkpoint?.client_id || '';
     document.getElementById('checkpoint_every_n_docs').value = cfg.checkpoint?.every_n_docs ?? 0;
@@ -616,7 +1094,30 @@
     document.getElementById('metrics_host').value = cfg.metrics?.host || '0.0.0.0';
     document.getElementById('metrics_port').value = cfg.metrics?.port ?? 9090;
 
-    document.getElementById('logging_level').value = cfg.logging?.level || 'INFO';
+    // Logging
+    var log = cfg.logging || {};
+    document.getElementById('logging_redaction_level').value = log.redaction_level || 'partial';
+
+    var con = log.console || {};
+    document.getElementById('logging_console_enabled').checked = con.enabled ?? true;
+    document.getElementById('logging_console_log_level').value = con.log_level || 'info';
+    consoleLogKeysTagify.removeAllTags();
+    consoleLogKeysTagify.addTags(con.log_keys || ['*']);
+    document.getElementById('logging_console_key_levels').value = Object.keys(con.key_levels || {}).length ? JSON.stringify(con.key_levels, null, 2) : '';
+    document.getElementById('logging_console_color_enabled').checked = con.color_enabled || false;
+
+    var fil = log.file || {};
+    document.getElementById('logging_file_enabled').checked = fil.enabled ?? false;
+    document.getElementById('logging_file_path').value = fil.path || 'logs/changes_worker.log';
+    document.getElementById('logging_file_log_level').value = fil.log_level || 'debug';
+    fileLogKeysTagify.removeAllTags();
+    fileLogKeysTagify.addTags(fil.log_keys || ['*']);
+    document.getElementById('logging_file_key_levels').value = Object.keys(fil.key_levels || {}).length ? JSON.stringify(fil.key_levels, null, 2) : '';
+
+    var rot = fil.rotation || {};
+    document.getElementById('logging_file_rotation_max_size').value = rot.max_size ?? 100;
+    document.getElementById('logging_file_rotation_max_age').value = rot.max_age ?? 7;
+    document.getElementById('logging_file_rotation_rotated_logs_size_limit').value = rot.rotated_logs_size_limit ?? 1024;
   }
 
   // Collect form values into config object
@@ -659,11 +1160,44 @@
         var mode = document.getElementById('output_mode').value;
         var o = {
           mode: mode,
-          halt_on_failure: document.getElementById('output_halt_on_failure').checked
+          halt_on_failure: document.getElementById('output_halt_on_failure').checked,
+          dead_letter_path: document.getElementById('output_dead_letter_path').value
         };
         if (mode === 'http') {
           o.target_url = document.getElementById('output_target_url').value;
+          o.url_template = document.getElementById('output_url_template').value || '{target_url}/{doc_id}';
           o.output_format = document.getElementById('output_output_format').value;
+          o.write_method = document.getElementById('output_write_method').value;
+          o.delete_method = document.getElementById('output_delete_method').value;
+          o.send_delete_body = document.getElementById('output_send_delete_body').checked;
+          o.request_timeout_seconds = parseInt(document.getElementById('output_request_timeout').value) || 30;
+          o.accept_self_signed_certs = document.getElementById('output_accept_self_signed_certs').checked;
+          o.follow_redirects = document.getElementById('output_follow_redirects').checked;
+          o.target_auth = {
+            method: document.getElementById('output_target_auth_method').value,
+            username: document.getElementById('output_target_auth_username').value,
+            password: document.getElementById('output_target_auth_password').value,
+            session_cookie: document.getElementById('output_target_auth_session_cookie').value,
+            bearer_token: document.getElementById('output_target_auth_bearer_token').value
+          };
+          o.request_options = {
+            headers: (function() { try { return JSON.parse(document.getElementById('output_request_headers').value || '{}'); } catch(e) { return {}; } })(),
+            params: (function() { try { return JSON.parse(document.getElementById('output_request_params').value || '{}'); } catch(e) { return {}; } })()
+          };
+          o.retry = {
+            max_retries: parseInt(document.getElementById('output_retry_max_retries').value) || 3,
+            backoff_base_seconds: parseFloat(document.getElementById('output_retry_backoff_base').value) || 1,
+            backoff_max_seconds: parseInt(document.getElementById('output_retry_backoff_max').value) || 30,
+            retry_on_status: (document.getElementById('output_retry_on_status').value || '500,502,503,504').split(',').map(function(s) { return parseInt(s.trim()); }).filter(function(n) { return !isNaN(n); })
+          };
+          o.log_response_times = document.getElementById('output_log_response_times').checked;
+          o.health_check = {
+            enabled: document.getElementById('output_hc_enabled').checked,
+            interval_seconds: parseInt(document.getElementById('output_hc_interval').value) || 30,
+            timeout_seconds: parseInt(document.getElementById('output_hc_timeout').value) || 5,
+            url: document.getElementById('output_hc_url').value,
+            method: document.getElementById('output_hc_method').value
+          };
         }
         if (mode === 'db') {
           var mappingMode = document.getElementById('output_db_mapping_mode').value;
@@ -699,6 +1233,14 @@
         }
         return o;
       })(),
+      couchbase_lite: {
+        db_dir: document.getElementById('cbl_db_dir').value,
+        db_name: document.getElementById('cbl_db_name').value,
+        maintenance: {
+          enabled: document.getElementById('cbl_maintenance_enabled').checked,
+          interval_hours: parseFloat(document.getElementById('cbl_maintenance_interval').value) || 24
+        }
+      },
       checkpoint: {
         enabled: document.getElementById('checkpoint_enabled').checked,
         client_id: document.getElementById('checkpoint_client_id').value,
@@ -710,7 +1252,26 @@
         port: parseInt(document.getElementById('metrics_port').value) || 9090
       },
       logging: {
-        level: document.getElementById('logging_level').value
+        redaction_level: document.getElementById('logging_redaction_level').value,
+        console: {
+          enabled: document.getElementById('logging_console_enabled').checked,
+          log_level: document.getElementById('logging_console_log_level').value,
+          log_keys: consoleLogKeysTagify.value.map(function(t) { return t.value; }),
+          key_levels: (function() { try { return JSON.parse(document.getElementById('logging_console_key_levels').value || '{}'); } catch(e) { return {}; } })(),
+          color_enabled: document.getElementById('logging_console_color_enabled').checked
+        },
+        file: {
+          enabled: document.getElementById('logging_file_enabled').checked,
+          path: document.getElementById('logging_file_path').value,
+          log_level: document.getElementById('logging_file_log_level').value,
+          log_keys: fileLogKeysTagify.value.map(function(t) { return t.value; }),
+          key_levels: (function() { try { return JSON.parse(document.getElementById('logging_file_key_levels').value || '{}'); } catch(e) { return {}; } })(),
+          rotation: {
+            max_size: parseInt(document.getElementById('logging_file_rotation_max_size').value) || 100,
+            max_age: parseInt(document.getElementById('logging_file_rotation_max_age').value) || 7,
+            rotated_logs_size_limit: parseInt(document.getElementById('logging_file_rotation_rotated_logs_size_limit').value) || 1024
+          }
+        }
       }
     };
   }
@@ -765,6 +1326,20 @@
     duplicates: false,
     placeholder: 'Type a channel and press Enter'
   });
+
+  // Initialize Tagify on Logging Log Keys inputs
+  var logKeyWhitelist = ['*', 'CHANGES', 'PROCESSING', 'MAPPING', 'OUTPUT', 'HTTP', 'CHECKPOINT', 'RETRY', 'METRICS', 'CBL', 'DLQ'];
+  var logKeyTagifySettings = {
+    delimiters: ',| |Enter',
+    trim: true,
+    duplicates: false,
+    whitelist: logKeyWhitelist,
+    enforceWhitelist: true,
+    dropdown: { maxItems: 20, enabled: 0, closeOnSelect: false },
+    placeholder: 'Type a log key and press Enter'
+  };
+  var consoleLogKeysTagify = new Tagify(document.getElementById('logging_console_log_keys'), logKeyTagifySettings);
+  var fileLogKeysTagify = new Tagify(document.getElementById('logging_file_log_keys'), logKeyTagifySettings);
 
   // Load on page init
   loadConfig();

@@ -497,6 +497,22 @@ class TestDetermineMethod(unittest.TestCase):
     def test_not_deleted_returns_put(self):
         self.assertEqual(cw.determine_method({"id": "doc1", "deleted": False}), "PUT")
 
+    def test_custom_write_method(self):
+        self.assertEqual(cw.determine_method({"id": "doc1"}, write_method="POST"), "POST")
+
+    def test_custom_delete_method(self):
+        self.assertEqual(cw.determine_method({"id": "doc1", "deleted": True}, delete_method="PUT"), "PUT")
+
+    def test_custom_both_methods(self):
+        self.assertEqual(
+            cw.determine_method({"id": "d1"}, write_method="PATCH", delete_method="POST"),
+            "PATCH",
+        )
+        self.assertEqual(
+            cw.determine_method({"id": "d1", "deleted": True}, write_method="PATCH", delete_method="POST"),
+            "POST",
+        )
+
 
 # ===================================================================
 # _chunked
@@ -1117,6 +1133,449 @@ class TestSleepWithBackoff(unittest.TestCase):
             )
 
         asyncio.run(_run())
+
+
+# ===================================================================
+# validate_config – new HTTP output fields
+# ===================================================================
+
+class TestValidateConfigHTTPOutputFields(unittest.TestCase):
+    """Tests for config validation of the new HTTP output settings."""
+
+    def _http_cfg(self, **output_overrides):
+        cfg = _base_config()
+        cfg["output"] = {
+            "mode": "http",
+            "target_url": "http://example.com/api",
+            "output_format": "json",
+            **output_overrides,
+        }
+        return cfg
+
+    def test_valid_write_method_put(self):
+        _, _, errors = cw.validate_config(self._http_cfg(write_method="PUT"))
+        self.assertFalse(any("write_method" in e for e in errors))
+
+    def test_valid_write_method_post(self):
+        _, _, errors = cw.validate_config(self._http_cfg(write_method="POST"))
+        self.assertFalse(any("write_method" in e for e in errors))
+
+    def test_valid_write_method_patch(self):
+        _, _, errors = cw.validate_config(self._http_cfg(write_method="PATCH"))
+        self.assertFalse(any("write_method" in e for e in errors))
+
+    def test_invalid_write_method(self):
+        _, _, errors = cw.validate_config(self._http_cfg(write_method="OPTIONS"))
+        self.assertTrue(any("write_method" in e for e in errors))
+
+    def test_invalid_delete_method(self):
+        _, _, errors = cw.validate_config(self._http_cfg(delete_method="OPTIONS"))
+        self.assertTrue(any("delete_method" in e for e in errors))
+
+    def test_write_method_case_insensitive(self):
+        _, _, errors = cw.validate_config(self._http_cfg(write_method="post"))
+        self.assertFalse(any("write_method" in e for e in errors))
+
+    def test_request_timeout_zero_errors(self):
+        _, _, errors = cw.validate_config(self._http_cfg(request_timeout_seconds=0))
+        self.assertTrue(any("request_timeout" in e for e in errors))
+
+    def test_request_timeout_negative_errors(self):
+        _, _, errors = cw.validate_config(self._http_cfg(request_timeout_seconds=-5))
+        self.assertTrue(any("request_timeout" in e for e in errors))
+
+    def test_request_timeout_valid(self):
+        _, _, errors = cw.validate_config(self._http_cfg(request_timeout_seconds=30))
+        self.assertFalse(any("request_timeout" in e for e in errors))
+
+    def test_db_mode_valid(self):
+        cfg = _base_config()
+        cfg["output"] = {"mode": "db", "output_format": "json"}
+        _, _, errors = cw.validate_config(cfg)
+        mode_errors = [e for e in errors if "output.mode" in e]
+        self.assertEqual(mode_errors, [])
+
+
+# ===================================================================
+# OutputForwarder – new HTTP config fields
+# ===================================================================
+
+def _http_out_cfg(**overrides):
+    """Minimal HTTP output config for testing."""
+    cfg = {
+        "mode": "http",
+        "target_url": "http://example.com/api",
+        "output_format": "json",
+        "target_auth": {"method": "none"},
+        "retry": {
+            "max_retries": 1,
+            "backoff_base_seconds": 0,
+            "backoff_max_seconds": 0,
+            "retry_on_status": [],
+        },
+        "halt_on_failure": True,
+    }
+    cfg.update(overrides)
+    return cfg
+
+
+class TestOutputForwarderURLTemplate(unittest.TestCase):
+    """Tests for url_template and URL encoding of doc_id."""
+
+    def _make_fwd(self, **cfg_overrides):
+        session = MagicMock()
+        cfg = _http_out_cfg(**cfg_overrides)
+        fwd = cw.OutputForwarder(session, cfg, dry_run=False)
+        mock_http = MagicMock()
+        resp = AsyncMock()
+        resp.status = 200
+        resp.release = MagicMock()
+        mock_http.request = AsyncMock(return_value=resp)
+        fwd._http = mock_http
+        return fwd, mock_http
+
+    def test_default_template_appends_doc_id(self):
+        fwd, mock = self._make_fwd()
+        asyncio.run(fwd.send({"_id": "doc123"}, "PUT"))
+        url = mock.request.call_args[0][1]
+        self.assertEqual(url, "http://example.com/api/doc123")
+
+    def test_custom_template_no_doc_id(self):
+        fwd, mock = self._make_fwd(url_template="{target_url}")
+        asyncio.run(fwd.send({"_id": "doc123"}, "POST"))
+        url = mock.request.call_args[0][1]
+        self.assertEqual(url, "http://example.com/api")
+
+    def test_custom_template_nested_path(self):
+        fwd, mock = self._make_fwd(url_template="{target_url}/items/{doc_id}/sync")
+        asyncio.run(fwd.send({"_id": "abc"}, "PUT"))
+        url = mock.request.call_args[0][1]
+        self.assertEqual(url, "http://example.com/api/items/abc/sync")
+
+    def test_doc_id_with_slash_is_encoded(self):
+        fwd, mock = self._make_fwd()
+        asyncio.run(fwd.send({"_id": "ns/doc1"}, "PUT"))
+        url = mock.request.call_args[0][1]
+        self.assertIn("ns%2Fdoc1", url)
+        self.assertNotIn("ns/doc1/", url.replace("example.com/api/", ""))
+
+    def test_doc_id_with_special_chars_is_encoded(self):
+        fwd, mock = self._make_fwd()
+        asyncio.run(fwd.send({"_id": "a b?c#d"}, "PUT"))
+        url = mock.request.call_args[0][1]
+        self.assertNotIn(" ", url)
+        self.assertNotIn("?c", url.split("/")[-1])
+
+
+class TestOutputForwarderDeleteBody(unittest.TestCase):
+    """Tests for send_delete_body behaviour."""
+
+    def _make_fwd(self, send_delete_body=False):
+        session = MagicMock()
+        cfg = _http_out_cfg(send_delete_body=send_delete_body)
+        fwd = cw.OutputForwarder(session, cfg, dry_run=False)
+        mock_http = MagicMock()
+        resp = AsyncMock()
+        resp.status = 200
+        resp.release = MagicMock()
+        mock_http.request = AsyncMock(return_value=resp)
+        fwd._http = mock_http
+        return fwd, mock_http
+
+    def test_delete_omits_body_by_default(self):
+        fwd, mock = self._make_fwd(send_delete_body=False)
+        asyncio.run(fwd.send({"_id": "doc1", "val": 1}, "DELETE"))
+        kwargs = mock.request.call_args[1]
+        self.assertNotIn("data", kwargs)
+
+    def test_delete_sends_body_when_enabled(self):
+        fwd, mock = self._make_fwd(send_delete_body=True)
+        asyncio.run(fwd.send({"_id": "doc1", "val": 1}, "DELETE"))
+        kwargs = mock.request.call_args[1]
+        self.assertIn("data", kwargs)
+
+    def test_put_always_sends_body(self):
+        fwd, mock = self._make_fwd(send_delete_body=False)
+        asyncio.run(fwd.send({"_id": "doc1", "val": 1}, "PUT"))
+        kwargs = mock.request.call_args[1]
+        self.assertIn("data", kwargs)
+
+
+class TestOutputForwarderTimeout(unittest.TestCase):
+    """Tests for request_timeout_seconds."""
+
+    def test_timeout_passed_to_request(self):
+        session = MagicMock()
+        cfg = _http_out_cfg(request_timeout_seconds=42)
+        fwd = cw.OutputForwarder(session, cfg, dry_run=False)
+        mock_http = MagicMock()
+        resp = AsyncMock()
+        resp.status = 200
+        resp.release = MagicMock()
+        mock_http.request = AsyncMock(return_value=resp)
+        fwd._http = mock_http
+
+        asyncio.run(fwd.send({"_id": "doc1"}, "PUT"))
+
+        kwargs = mock_http.request.call_args[1]
+        timeout = kwargs["timeout"]
+        self.assertIsInstance(timeout, aiohttp.ClientTimeout)
+        self.assertEqual(timeout.total, 42)
+
+    def test_default_timeout_30(self):
+        session = MagicMock()
+        fwd = cw.OutputForwarder(session, _http_out_cfg(), dry_run=False)
+        self.assertEqual(fwd._request_timeout, 30)
+
+
+class TestOutputForwarderRedirects(unittest.TestCase):
+    """Tests for follow_redirects config."""
+
+    def test_default_no_follow(self):
+        session = MagicMock()
+        fwd = cw.OutputForwarder(session, _http_out_cfg(), dry_run=False)
+        self.assertFalse(fwd._follow_redirects)
+
+    def test_follow_redirects_passed_to_request(self):
+        session = MagicMock()
+        cfg = _http_out_cfg(follow_redirects=True)
+        fwd = cw.OutputForwarder(session, cfg, dry_run=False)
+        mock_http = MagicMock()
+        resp = AsyncMock()
+        resp.status = 200
+        resp.release = MagicMock()
+        mock_http.request = AsyncMock(return_value=resp)
+        fwd._http = mock_http
+
+        asyncio.run(fwd.send({"_id": "doc1"}, "PUT"))
+
+        kwargs = mock_http.request.call_args[1]
+        self.assertTrue(kwargs["allow_redirects"])
+
+
+class TestOutputForwarderSSL(unittest.TestCase):
+    """Tests for output-specific accept_self_signed_certs."""
+
+    def test_no_ssl_by_default(self):
+        session = MagicMock()
+        fwd = cw.OutputForwarder(session, _http_out_cfg(), dry_run=False)
+        self.assertIsNone(fwd._ssl_ctx)
+
+    def test_ssl_context_created_when_enabled(self):
+        import ssl
+        session = MagicMock()
+        cfg = _http_out_cfg(accept_self_signed_certs=True)
+        fwd = cw.OutputForwarder(session, cfg, dry_run=False)
+        self.assertIsNotNone(fwd._ssl_ctx)
+        self.assertFalse(fwd._ssl_ctx.check_hostname)
+        self.assertEqual(fwd._ssl_ctx.verify_mode, ssl.CERT_NONE)
+
+    def test_ssl_ctx_passed_to_request(self):
+        session = MagicMock()
+        cfg = _http_out_cfg(accept_self_signed_certs=True)
+        fwd = cw.OutputForwarder(session, cfg, dry_run=False)
+        mock_http = MagicMock()
+        resp = AsyncMock()
+        resp.status = 200
+        resp.release = MagicMock()
+        mock_http.request = AsyncMock(return_value=resp)
+        fwd._http = mock_http
+
+        asyncio.run(fwd.send({"_id": "doc1"}, "PUT"))
+
+        kwargs = mock_http.request.call_args[1]
+        self.assertIs(kwargs["ssl"], fwd._ssl_ctx)
+
+
+class TestOutputForwarderHealthCheck(unittest.TestCase):
+    """Tests for health_check config and heartbeat lifecycle."""
+
+    def test_health_check_defaults(self):
+        session = MagicMock()
+        fwd = cw.OutputForwarder(session, _http_out_cfg(), dry_run=False)
+        self.assertFalse(fwd._hc_enabled)
+        self.assertEqual(fwd._hc_interval, 30)
+        self.assertEqual(fwd._hc_method, "GET")
+        self.assertEqual(fwd._hc_timeout, 5)
+        self.assertEqual(fwd._hc_url, "http://example.com/api")
+
+    def test_health_check_custom_url(self):
+        session = MagicMock()
+        cfg = _http_out_cfg(health_check={
+            "enabled": True,
+            "interval_seconds": 15,
+            "url": "http://example.com/health",
+            "method": "HEAD",
+            "timeout_seconds": 3,
+        })
+        fwd = cw.OutputForwarder(session, cfg, dry_run=False)
+        self.assertTrue(fwd._hc_enabled)
+        self.assertEqual(fwd._hc_interval, 15)
+        self.assertEqual(fwd._hc_url, "http://example.com/health")
+        self.assertEqual(fwd._hc_method, "HEAD")
+        self.assertEqual(fwd._hc_timeout, 3)
+
+    def test_start_heartbeat_noop_when_disabled(self):
+        session = MagicMock()
+        fwd = cw.OutputForwarder(session, _http_out_cfg(), dry_run=False)
+
+        async def _run():
+            event = asyncio.Event()
+            await fwd.start_heartbeat(event)
+            self.assertIsNone(fwd._hc_task)
+        asyncio.run(_run())
+
+    def test_start_heartbeat_noop_for_stdout(self):
+        session = MagicMock()
+        fwd = cw.OutputForwarder(
+            session,
+            _stdout_out_cfg(health_check={"enabled": True, "interval_seconds": 1}),
+            dry_run=False,
+        )
+
+        async def _run():
+            event = asyncio.Event()
+            await fwd.start_heartbeat(event)
+            self.assertIsNone(fwd._hc_task)
+        asyncio.run(_run())
+
+    def test_start_and_stop_heartbeat(self):
+        session = MagicMock()
+        cfg = _http_out_cfg(health_check={
+            "enabled": True,
+            "interval_seconds": 60,
+            "url": "",
+            "method": "GET",
+            "timeout_seconds": 5,
+        })
+        fwd = cw.OutputForwarder(session, cfg, dry_run=False)
+        # Mock _http so heartbeat probe doesn't fail
+        mock_http = MagicMock()
+        resp = AsyncMock()
+        resp.status = 200
+        resp.release = MagicMock()
+        mock_http.request = AsyncMock(return_value=resp)
+        fwd._http = mock_http
+
+        async def _run():
+            event = asyncio.Event()
+            await fwd.start_heartbeat(event)
+            self.assertIsNotNone(fwd._hc_task)
+            self.assertFalse(fwd._hc_task.done())
+            await fwd.stop_heartbeat()
+            self.assertTrue(fwd._hc_task.done())
+        asyncio.run(_run())
+
+    def test_health_check_returns_true_on_success(self):
+        session = MagicMock()
+        cfg = _http_out_cfg(health_check={
+            "enabled": True, "interval_seconds": 30,
+            "url": "http://example.com/health",
+            "method": "GET", "timeout_seconds": 5,
+        })
+        fwd = cw.OutputForwarder(session, cfg, dry_run=False)
+        mock_http = MagicMock()
+        resp = AsyncMock()
+        resp.status = 200
+        resp.release = MagicMock()
+        mock_http.request = AsyncMock(return_value=resp)
+        fwd._http = mock_http
+
+        result = asyncio.run(fwd._health_check())
+        self.assertTrue(result)
+
+    def test_health_check_returns_false_on_5xx(self):
+        session = MagicMock()
+        cfg = _http_out_cfg(health_check={
+            "enabled": True, "interval_seconds": 30,
+            "url": "http://example.com/health",
+            "method": "GET", "timeout_seconds": 5,
+        })
+        fwd = cw.OutputForwarder(session, cfg, dry_run=False)
+        mock_http = MagicMock()
+        resp = AsyncMock()
+        resp.status = 503
+        resp.release = MagicMock()
+        mock_http.request = AsyncMock(return_value=resp)
+        fwd._http = mock_http
+
+        result = asyncio.run(fwd._health_check())
+        self.assertFalse(result)
+
+    def test_health_check_returns_false_on_exception(self):
+        session = MagicMock()
+        cfg = _http_out_cfg(health_check={
+            "enabled": True, "interval_seconds": 30,
+            "url": "http://example.com/health",
+            "method": "GET", "timeout_seconds": 5,
+        })
+        fwd = cw.OutputForwarder(session, cfg, dry_run=False)
+        mock_http = MagicMock()
+        mock_http.request = AsyncMock(side_effect=ConnectionError("refused"))
+        fwd._http = mock_http
+
+        result = asyncio.run(fwd._health_check())
+        self.assertFalse(result)
+
+
+class TestOutputForwarderEndpointUpRecovery(unittest.TestCase):
+    """Tests that output_endpoint_up is set back to 1 on success."""
+
+    def test_metric_recovers_after_success(self):
+        metrics = cw.MetricsCollector("sync_gateway", "db")
+        metrics.set("output_endpoint_up", 0)
+
+        session = MagicMock()
+        cfg = _http_out_cfg()
+        fwd = cw.OutputForwarder(session, cfg, dry_run=False, metrics=metrics)
+        mock_http = MagicMock()
+        resp = AsyncMock()
+        resp.status = 200
+        resp.release = MagicMock()
+        mock_http.request = AsyncMock(return_value=resp)
+        fwd._http = mock_http
+
+        asyncio.run(fwd.send({"_id": "doc1"}, "PUT"))
+        self.assertEqual(metrics.output_endpoint_up, 1)
+
+
+class TestOutputForwarderConfigDefaults(unittest.TestCase):
+    """Tests that new config fields have correct defaults."""
+
+    def test_defaults(self):
+        session = MagicMock()
+        fwd = cw.OutputForwarder(session, _http_out_cfg(), dry_run=False)
+        self.assertEqual(fwd._url_template, "{target_url}/{doc_id}")
+        self.assertEqual(fwd._write_method, "PUT")
+        self.assertEqual(fwd._delete_method, "DELETE")
+        self.assertFalse(fwd._send_delete_body)
+        self.assertEqual(fwd._request_timeout, 30)
+        self.assertFalse(fwd._follow_redirects)
+        self.assertIsNone(fwd._ssl_ctx)
+
+    def test_custom_methods_stored(self):
+        session = MagicMock()
+        cfg = _http_out_cfg(write_method="POST", delete_method="PUT")
+        fwd = cw.OutputForwarder(session, cfg, dry_run=False)
+        self.assertEqual(fwd._write_method, "POST")
+        self.assertEqual(fwd._delete_method, "PUT")
+
+
+class TestRespTimesDeque(unittest.TestCase):
+    """Tests that response time tracking uses bounded deque."""
+
+    def test_forwarder_deque_capped(self):
+        from collections import deque
+        session = MagicMock()
+        fwd = cw.OutputForwarder(session, _stdout_out_cfg(log_response_times=True), dry_run=False)
+        self.assertIsInstance(fwd._resp_times, deque)
+        self.assertEqual(fwd._resp_times.maxlen, 10000)
+
+    def test_metrics_deque_capped(self):
+        from collections import deque
+        m = cw.MetricsCollector("sync_gateway", "db")
+        self.assertIsInstance(m._output_resp_times, deque)
+        self.assertEqual(m._output_resp_times.maxlen, 10000)
 
 
 if __name__ == "__main__":
