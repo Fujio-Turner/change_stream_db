@@ -29,7 +29,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import aiohttp
 import main as cw
-from rest.output_http import _dict_to_xml, _flatten_dict, _ClientHTTPError
+from rest.output_http import (
+    _dict_to_xml, _flatten_dict, _ClientHTTPError, serialize_doc,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -416,26 +418,26 @@ class TestSerializeDoc(unittest.TestCase):
 
     def test_json_format(self):
         doc = {"_id": "doc1", "name": "Alice"}
-        body, ct = cw.serialize_doc(doc, "json")
+        body, ct = serialize_doc(doc, "json")
         self.assertEqual(ct, "application/json")
         self.assertEqual(json.loads(body), doc)
 
     def test_xml_format(self):
         doc = {"_id": "doc1", "name": "Alice"}
-        body, ct = cw.serialize_doc(doc, "xml")
+        body, ct = serialize_doc(doc, "xml")
         self.assertEqual(ct, "application/xml")
         self.assertIn(b"Alice", body)
         self.assertIn(b"<name>", body)
 
     def test_form_format(self):
         doc = {"key": "val", "num": 42}
-        body, ct = cw.serialize_doc(doc, "form")
+        body, ct = serialize_doc(doc, "form")
         self.assertEqual(ct, "application/x-www-form-urlencoded")
         self.assertIn("key=val", body)
 
     def test_unknown_format_raises(self):
         with self.assertRaises(ValueError):
-            cw.serialize_doc({}, "protobuf")
+            serialize_doc({}, "protobuf")
 
 
 # ===================================================================

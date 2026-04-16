@@ -17,7 +17,6 @@ import os
 import re
 import time
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Custom TRACE level (below DEBUG)
@@ -375,7 +374,6 @@ def configure_logging(cfg: dict) -> None:
             for k, v in console_cfg.get("key_levels", {}).items()
         }
 
-        color = console_cfg.get("color_enabled", False)
         handler = logging.StreamHandler()
         handler.setLevel(TRACE)  # actual filtering via LogKeyLevelFilter
         handler.addFilter(LogKeyLevelFilter(log_keys, base_level, key_levels))

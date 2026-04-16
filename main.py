@@ -33,8 +33,6 @@ from rest import (
     OutputEndpointDown,
     DeadLetterQueue,
     determine_method,
-    serialize_doc,
-    CONTENT_TYPES,
     VALID_OUTPUT_FORMATS,
 )
 from rest.output_http import check_serialization_library
@@ -43,7 +41,6 @@ from pipeline_logging import (
     configure_logging,
     log_event,
     infer_operation,
-    get_redactor,
 )
 
 # ---------------------------------------------------------------------------
@@ -1386,7 +1383,6 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
         total=feed_cfg.get("http_timeout_seconds", 300),
     )
 
-    sequential = proc_cfg.get("sequential", False)
     max_concurrent = proc_cfg.get("max_concurrent", 20)
     dry_run = proc_cfg.get("dry_run", False)
     semaphore = asyncio.Semaphore(max_concurrent)

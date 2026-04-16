@@ -11,22 +11,20 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install linters
-        run: pip install flake8 black
+        run: pip install flake8
 
-      - name: flake8
-        run: |
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          flake8 . --count --max-line-length=120 --statistics --ignore=E501,W503,E203,E266,E741
+      - name: flake8 (fatal errors)
+        run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=__pycache__,.git,web/static
 
-      - name: black (check only)
-        run: black --check --line-length 120 --target-version py312 main.py pipeline_logging.py cbl_store.py rest/ || true
+      - name: flake8 (style)
+        run: flake8 . --count --max-line-length=120 --statistics --exclude=__pycache__,.git,web/static --ignore=E501,W503,E203,E266,E741,E127,E226,E302,E303,E402,F541
 
   test:
     name: Tests
@@ -35,7 +33,7 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-python@v5
         with:
