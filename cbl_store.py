@@ -12,7 +12,7 @@ try:
     from CouchbaseLite.Database import Database, DatabaseConfiguration
     from CouchbaseLite.Document import MutableDocument
     from CouchbaseLite._PyCBL import ffi, lib
-    from CouchbaseLite.common import stringParam, sliceToString, gError as _cbl_gError
+    from CouchbaseLite.common import stringParam, gError as _cbl_gError
     USE_CBL = True
 except ImportError:
     USE_CBL = False
@@ -627,7 +627,6 @@ def migrate_default_to_collections() -> None:
     if not USE_CBL:
         return
     db = get_db()
-    store = CBLStore()
 
     # Check if migration is needed — if config already exists in the new collection, skip
     if _coll_get_doc(db, COLL_CONFIG, "config") is not None:

@@ -37,7 +37,7 @@ from rest import (
     VALID_OUTPUT_FORMATS,
 )
 from rest.output_http import check_serialization_library
-from cbl_store import USE_CBL, CBLStore, CBLMaintenanceScheduler, close_db, migrate_files_to_cbl, configure_cbl, migrate_default_to_collections
+from cbl_store import USE_CBL, CBLStore, CBLMaintenanceScheduler, close_db, migrate_files_to_cbl, migrate_default_to_collections
 from pipeline_logging import (
     configure_logging,
     log_event,
