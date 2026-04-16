@@ -30,6 +30,7 @@
         <li><a href="/config" class="active">Config</a></li>
         <li><a href="/schema">Schema Mappings</a></li>
         <li><a href="/transforms">Transforms</a></li>
+        <li><a href="/wizard">Wizard</a></li>
         </ul>
       <label class="label cursor-pointer gap-2 ml-4">
         <span class="label-text text-sm">Dark</span>
@@ -70,10 +71,11 @@
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
             <div class="label"><span class="label-text">Source Type</span></div>
-            <select id="gateway_src" class="select select-bordered w-full">
+            <select id="gateway_src" class="select select-bordered w-full" onchange="onGatewaySrcChange()">
               <option value="sync_gateway">sync_gateway</option>
               <option value="app_services">app_services</option>
               <option value="edge_server">edge_server</option>
+              <option value="couchdb">couchdb</option>
             </select>
           </label>
           <label class="form-control w-full">
@@ -84,11 +86,11 @@
             <div class="label"><span class="label-text">Database</span></div>
             <input type="text" id="gateway_database" class="input input-bordered w-full" />
           </label>
-          <label class="form-control w-full">
+          <label class="form-control w-full" id="gateway_scope_wrap">
             <div class="label"><span class="label-text">Scope</span></div>
             <input type="text" id="gateway_scope" class="input input-bordered w-full" />
           </label>
-          <label class="form-control w-full">
+          <label class="form-control w-full" id="gateway_collection_wrap">
             <div class="label"><span class="label-text">Collection</span></div>
             <input type="text" id="gateway_collection" class="input input-bordered w-full" />
           </label>
@@ -163,6 +165,7 @@
                 <option value="continuous">continuous</option>
                 <option value="websocket">websocket (SG / App Services only)</option>
                 <option value="sse">sse (Edge Server only)</option>
+                <option value="eventsource">eventsource (CouchDB only)</option>
               </optgroup>
             </select>
           </label>
@@ -170,7 +173,7 @@
             <div class="label"><span class="label-text">Poll Interval (seconds)</span></div>
             <input type="number" id="changes_feed_poll_interval_seconds" class="input input-bordered w-full" min="0" />
           </label>
-          <div class="form-control">
+          <div class="form-control" id="active_only_wrap">
             <label class="label cursor-pointer justify-start gap-4">
               <span class="label-text">Active Only</span>
               <input type="checkbox" id="changes_feed_active_only" class="toggle toggle-success" />
@@ -182,7 +185,7 @@
               <input type="checkbox" id="changes_feed_include_docs" class="toggle toggle-success" />
             </label>
           </div>
-          <label class="form-control w-full">
+          <label class="form-control w-full" id="channels_wrap">
             <div class="label"><span class="label-text">Channels</span></div>
             <input type="text" id="changes_feed_channels" class="input input-bordered w-full" placeholder="Type a channel and press Enter" />
           </label>
@@ -886,7 +889,7 @@
 
   <!-- Footer -->
   <footer class="footer footer-center p-4 bg-base-100 text-base-content">
-    <p>Changes Worker v1.1.0</p>
+    <p>Changes Worker v1.4.0</p>
   </footer>
 
   <!-- Toast container -->
@@ -975,6 +978,7 @@
   // Populate form from config object
   function populateForm(cfg) {
     document.getElementById('gateway_src').value = cfg.gateway?.src || 'sync_gateway';
+    onGatewaySrcChange();
     document.getElementById('gateway_url').value = cfg.gateway?.url || '';
     document.getElementById('gateway_database').value = cfg.gateway?.database || '';
     document.getElementById('gateway_scope').value = cfg.gateway?.scope || '';
@@ -1340,6 +1344,19 @@
   };
   var consoleLogKeysTagify = new Tagify(document.getElementById('logging_console_log_keys'), logKeyTagifySettings);
   var fileLogKeysTagify = new Tagify(document.getElementById('logging_file_log_keys'), logKeyTagifySettings);
+
+  // ── Source type visibility ────────────────────────────────
+  function onGatewaySrcChange() {
+    var src = document.getElementById('gateway_src').value;
+    var isCouchDB = src === 'couchdb';
+    // Hide scope/collection for CouchDB
+    document.getElementById('gateway_scope_wrap').classList.toggle('hidden', isCouchDB);
+    document.getElementById('gateway_collection_wrap').classList.toggle('hidden', isCouchDB);
+    // Hide active_only for CouchDB (not supported)
+    document.getElementById('active_only_wrap').classList.toggle('hidden', isCouchDB);
+    // Hide channels for CouchDB (SG-specific)
+    document.getElementById('channels_wrap').classList.toggle('hidden', isCouchDB);
+  }
 
   // Load on page init
   loadConfig();

@@ -18,7 +18,7 @@ This document describes the internal architecture of the changes_worker, how dat
 
 | Stage | What it does |
 |---|---|
-| **LEFT** | Consume `_changes` on SG / App Services / Edge Server via longpoll, continuous (2-phase: batched catch-up → streaming), websocket (SG / App Services only), or SSE (Edge Server only). Returns a batch of changes with `last_seq`. |
+| **LEFT** | Consume `_changes` on SG / App Services / Edge Server / CouchDB via longpoll, continuous (2-phase: batched catch-up → streaming), websocket (SG / App Services only), SSE (Edge Server only), or eventsource (CouchDB). Returns a batch of changes with `last_seq`. |
 | **MIDDLE** | Filter (skip deletes/removes), optionally fetch full docs via `_bulk_get`, serialize to the output format, manage checkpoints. |
 | **RIGHT** | Forward each doc to the output: configurable HTTP method (`PUT`/`POST`/`PATCH`/`DELETE`) to a REST endpoint with URL templating, write to stdout, or write to an RDBMS via the `db/` module (UPSERT/DELETE with optional multi-table transactions). Track success/failure per doc. Periodic heartbeat monitors endpoint health. |
 
@@ -275,6 +275,8 @@ When the output mode is `db`, failures come from the database instead of an HTTP
 | **Type mismatch** (e.g., string in INT column) | Stop batch, hold checkpoint | DLQ, skip |
 
 For multi-table writes (one document → multiple tables), all SQL operations are wrapped in a single transaction. If any statement fails, the entire transaction rolls back — no partial writes. See [`RDBMS_IMPLEMENTATION.md`](RDBMS_IMPLEMENTATION.md) for details on single-table vs. multi-table patterns, transaction handling, and the full-record-replace upsert strategy.
+
+PostgreSQL is the first implemented RDBMS engine (`db/db_postgres.py`). It uses `asyncpg` with a connection pool and wraps all operations in a transaction. See [`RDBMS_PLAN.md`](RDBMS_PLAN.md) for the implementation template used for adding MySQL, MSSQL, and Oracle.
 
 **Batch summary is always logged:**
 ```

@@ -77,9 +77,9 @@ One document → three tables. Arrays become child tables with a foreign key bac
 
 ```
 schema/
-├── __init__.py        # Public API: load_schema(), SchemaMapper
-├── mapper.py          # Core mapper: reads a mapping def, produces SQL ops per doc
-└── validator.py       # Validates a mapping def against a sample doc or table DDL
+├── __init__.py
+├── mapper.py      ✅ Core mapper: SchemaMapper, SqlOperation, resolve_path, apply_transform
+└── validator.py   ✅ Validates mapping defs: validate_schema(), validate_file()
 ```
 
 ---
@@ -447,6 +447,8 @@ The editor provides:
 - **Relationship diagram** -- ECharts force-directed graph showing parent/child tables and foreign keys
 - **Mapping coverage stats** -- Live source coverage (% of source fields mapped) and target coverage (% of target columns filled) with progress bars and unmapped field lists
 - **Sample templates** -- Pre-built mappings for both Tables (Orders, Profiles, Products) and JSON (Orders, Events, Sensors) output modes, demonstrating date format conversion (epoch vs ISO-8601), transform chaining, and type coercion
+- **Import from Database** -- Connect to a live RDBMS (auto-detected drivers), introspect `information_schema`, select tables, import column definitions with PKs and FKs pre-populated
+- **Upload DDL** -- Paste `CREATE TABLE` statements, parsed server-side, columns imported with types and PKs
 - **Save / Download / Delete** -- Full CRUD via `/api/mappings` REST endpoints
 
 When CBL is available, mappings are stored as CBL documents (`mapping:{filename}`). Otherwise they are stored as JSON files in the `mappings/` directory. See [`CBL_DATABASE.md`](CBL_DATABASE.md#mappingfilename) for the CBL document schema.
@@ -460,24 +462,20 @@ The schema mapping files are referenced from `config.json`:
 ```jsonc
 {
   "output": {
-    "mode": "db",
-    "db": {
-      "engine": "postgres",
+    "mode": "postgres",
+    "postgres": {
       "host": "localhost",
       "port": 5432,
       "database": "mydb",
-      "username": "app_user",
+      "user": "app_user",
       "password": "secret",
-      "table": "couchbase_docs",       // fallback for unmapped doc types (jsonb mode)
-
-      "schema_mappings": {
-        "enabled": true,
-        "path": "mappings/",           // folder containing .json mapping files
-        "default_mode": "jsonb",       // what to do with docs that don't match any mapping
-        "strict": false                // false = unmapped docs go to fallback table
-                                       // true  = unmapped docs are rejected (error)
-      }
-    }
+      "schema": "public",
+      "ssl": false,
+      "pool_min": 2,
+      "pool_max": 10
+    },
+    "mapping_file": "mappings/order.json",
+    "halt_on_failure": true
   }
 }
 ```
@@ -576,13 +574,13 @@ python -m schema.validator mappings/order.yaml --sample sample_order.json
 
 ## Implementation Order
 
-1. **Mapping definition format** — finalize the JSON schema (this document).
-2. **`schema/mapper.py`** — core mapper: load JSON, extract values by JSONPath, generate SQL.
-3. **`schema/validator.py`** — validate mapping files at startup.
-4. **PostgreSQL integration** — end-to-end: `_changes` → mapper → Postgres transaction.
-5. **MySQL / MS SQL / Oracle** — add engine-specific upsert SQL generation.
-6. **`columns` mapping mode enhancements** — type coercion, defaults, rev checks.
-7. **`relationalize` integration** — optional auto-mapping mode for unknown doc structures.
+1. ✅ **Mapping definition format** — finalized.
+2. ✅ **`schema/mapper.py`** — implemented.
+3. ✅ **`schema/validator.py`** — implemented.
+4. ✅ **PostgreSQL integration** — `db/db_postgres.py` implemented with asyncpg.
+5. ⬜ **MySQL / MS SQL / Oracle** — engine-specific SQL generation.
+6. ⬜ **`columns` mapping mode enhancements** — type coercion, defaults, rev checks.
+7. ⬜ **`relationalize` integration** — optional auto-mapping mode for unknown doc structures.
 
 ---
 

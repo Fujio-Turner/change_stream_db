@@ -10,7 +10,7 @@ bulk_get fallback, async parallel or sequential processing, and
 forwarding results via stdout or HTTP.
 """
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 import argparse
 import asyncio
@@ -332,7 +332,7 @@ def _ensure_full_logging_config(cfg: dict) -> None:
         CBLStore().save_config(cfg)
 
 
-VALID_SOURCES = ("sync_gateway", "app_services", "edge_server")
+VALID_SOURCES = ("sync_gateway", "app_services", "edge_server", "couchdb")
 
 
 def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
@@ -372,6 +372,13 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
             "gateway.url starts with http://, verify this is correct"
         )
 
+    # CouchDB does not have scopes/collections
+    if src == "couchdb" and (gw.get("scope") or gw.get("collection")):
+        warnings.append(
+            "CouchDB does not support scopes or collections – "
+            "gateway.scope and gateway.collection will be ignored"
+        )
+
     # -- auth ------------------------------------------------------------------
     auth_method = auth_cfg.get("method", "basic")
 
@@ -379,6 +386,12 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
         errors.append(
             "auth.method=bearer is not supported by Edge Server – "
             "use 'basic' or 'session' instead"
+        )
+
+    if auth_method == "session" and src == "couchdb":
+        errors.append(
+            "auth.method=session is not supported by CouchDB – "
+            "use 'basic' or 'bearer' instead"
         )
 
     if auth_method == "basic":
@@ -400,6 +413,12 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
     # -- changes_feed ----------------------------------------------------------
     feed_type = feed_cfg.get("feed_type", "longpoll")
 
+    if feed_type == "websocket" and src == "couchdb":
+        errors.append(
+            "changes_feed.feed_type=websocket is not supported by CouchDB – "
+            "use 'longpoll', 'continuous', or 'eventsource'"
+        )
+
     if feed_type == "websocket" and src == "edge_server":
         errors.append(
             "changes_feed.feed_type=websocket is not supported by Edge Server – "
@@ -416,6 +435,7 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
         "sync_gateway": ("longpoll", "continuous", "websocket", "normal"),
         "app_services": ("longpoll", "continuous", "websocket", "normal"),
         "edge_server": ("longpoll", "continuous", "sse", "normal"),
+        "couchdb": ("longpoll", "continuous", "eventsource", "normal"),
     }
     if feed_type not in valid_feeds_by_src.get(src, ()):
         errors.append(
@@ -428,6 +448,11 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
         errors.append(
             f"changes_feed.version_type='{version_type}' is not supported by Edge Server – "
             "Edge Server does not support the version_type parameter"
+        )
+    if version_type != "rev" and src == "couchdb":
+        errors.append(
+            f"changes_feed.version_type='{version_type}' is not supported by CouchDB – "
+            "CouchDB does not support the version_type parameter"
         )
     if version_type not in ("rev", "cv"):
         errors.append(
@@ -447,6 +472,11 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
             "changes_feed.include_docs=false with Edge Server – "
             "Edge Server has no _bulk_get endpoint, docs will be fetched "
             "individually via GET /{keyspace}/{docid} (slower for large batches)"
+        )
+    if not include_docs and src == "couchdb":
+        warnings.append(
+            "changes_feed.include_docs=false with CouchDB – "
+            "docs will be fetched via POST /{db}/_bulk_get"
         )
 
     heartbeat_ms = feed_cfg.get("heartbeat_ms", 0)
@@ -550,6 +580,10 @@ def build_base_url(gw: dict) -> str:
     """Build the keyspace URL: {url}/{db}.{scope}.{collection}"""
     base = gw["url"].rstrip("/")
     db = gw["database"]
+    src = gw.get("src", "sync_gateway")
+    # CouchDB has no scopes/collections concept
+    if src == "couchdb":
+        return f"{base}/{db}"
     scope = gw.get("scope", "")
     collection = gw.get("collection", "")
     if scope and collection:
@@ -579,7 +613,10 @@ def build_auth_headers(auth_cfg: dict, src: str = "sync_gateway") -> dict:
         else:
             headers["Authorization"] = f"Bearer {auth_cfg['bearer_token']}"
     elif method == "session":
-        headers["Cookie"] = f"SyncGatewaySession={auth_cfg['session_cookie']}"
+        if src == "couchdb":
+            logger.warning("Session cookie auth is not supported by CouchDB – falling back to basic")
+        else:
+            headers["Cookie"] = f"SyncGatewaySession={auth_cfg['session_cookie']}"
     return headers
 
 
@@ -963,14 +1000,16 @@ def _build_changes_params(feed_cfg: dict, src: str, since: str,
         "heartbeat": str(feed_cfg.get("heartbeat_ms", 30000)),
         "timeout": str(timeout_ms),
     }
-    if feed_cfg.get("active_only"):
+    # active_only is a Couchbase-specific parameter (not supported by CouchDB)
+    if feed_cfg.get("active_only") and src != "couchdb":
         params["active_only"] = "true"
     if feed_cfg.get("include_docs"):
         params["include_docs"] = "true"
     if limit > 0:
         params["limit"] = str(limit)
+    # Channels filter is SG/App Services specific (not CouchDB)
     channels = feed_cfg.get("channels", [])
-    if channels:
+    if channels and src != "couchdb":
         params["filter"] = "sync_gateway/bychannel"
         params["channels"] = ",".join(channels)
     if src in ("sync_gateway", "app_services"):
@@ -1476,6 +1515,12 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
         if src != "edge_server" and feed_type == "sse":
             logger.warning("SSE feed is only supported by Edge Server, falling back to longpoll")
             feed_type = "longpoll"
+        if src == "couchdb" and feed_type == "websocket":
+            logger.warning("CouchDB does not support feed=websocket, falling back to longpoll")
+            feed_type = "longpoll"
+        if src == "couchdb" and feed_type == "sse":
+            logger.warning("CouchDB does not support feed=sse, use feed=eventsource instead")
+            feed_type = "eventsource"
 
         # Edge Server caps timeout at 900000ms (15 min)
         timeout_ms = feed_cfg.get("timeout_ms", 60000)

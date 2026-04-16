@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Changes Worker -- Setup Wizard</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <script src="/static/js/tailwind.js"></script>
+  <script>
+    (function(){
+      var t = localStorage.getItem('cw_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <style>
+    .field-item { cursor: grab; padding: 2px 8px; border-radius: 6px; font-size: 13px; font-family: monospace; }
+    .field-item:hover { background: oklch(var(--p) / 0.15); }
+    .step-card { display: none; }
+    .step-card.active { display: block; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col bg-base-200">
+
+  <!-- Navbar -->
+  <nav class="navbar bg-base-100 shadow-sm px-4">
+    <div class="flex-1">
+      <a href="/" class="text-xl font-bold">Changes Worker Admin</a>
+    </div>
+    <div class="flex-none">
+      <ul class="menu menu-horizontal px-1 gap-1">
+        <li><a href="/">Dashboard</a></li>
+        <li><a href="/config">Config</a></li>
+        <li><a href="/schema">Schema Mappings</a></li>
+        <li><a href="/transforms">Transforms</a></li>
+        <li><a href="/wizard" class="active">Wizard</a></li>
+      </ul>
+      <label class="label cursor-pointer gap-2 ml-4">
+        <span class="label-text text-sm">Dark</span>
+        <input type="checkbox" id="themeToggle" class="toggle toggle-sm" />
+        <span class="label-text text-sm">Light</span>
+      </label>
+    </div>
+  </nav>
+
+  <main class="flex-1 container mx-auto p-6 max-w-5xl">
+
+    <!-- Step Indicators -->
+    <ul class="steps steps-horizontal w-full mb-6">
+      <li class="step step-primary" id="stepInd1">Connect Source</li>
+      <li class="step" id="stepInd2">Configure Output</li>
+      <li class="step" id="stepInd3">Map Fields</li>
+    </ul>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- STEP 1: Source Connection                              -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div class="step-card active" id="step1">
+      <div class="card bg-base-100 shadow-sm rounded-2xl">
+        <div class="card-body">
+          <h2 class="text-xl font-bold mb-1">Step 1: Connect to Source</h2>
+          <p class="text-sm opacity-60 mb-4">Connect to a Sync Gateway, Capella App Services, or Edge Server <code>_changes</code> feed and verify the connection.</p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Source Type -->
+            <div>
+              <label class="label label-text text-xs font-semibold">Source Type</label>
+              <select id="srcType" class="select select-bordered select-sm w-full" onchange="onSrcTypeChange()">
+                <option value="sync_gateway">Sync Gateway</option>
+                <option value="app_services">Capella App Services</option>
+                <option value="edge_server">Edge Server</option>
+                <option value="couchdb">CouchDB</option>
+              </select>
+            </div>
+            <!-- URL -->
+            <div>
+              <label class="label label-text text-xs font-semibold">URL</label>
+              <input id="srcUrl" type="text" class="input input-bordered input-sm w-full" placeholder="http://localhost:4984" />
+            </div>
+            <!-- Database -->
+            <div>
+              <label class="label label-text text-xs font-semibold">Database</label>
+              <input id="srcDatabase" type="text" class="input input-bordered input-sm w-full" placeholder="db" />
+            </div>
+            <!-- Scope -->
+            <div id="srcScopeWrap">
+              <label class="label label-text text-xs font-semibold">Scope</label>
+              <input id="srcScope" type="text" class="input input-bordered input-sm w-full" value="_default" />
+            </div>
+            <!-- Collection -->
+            <div id="srcCollectionWrap">
+              <label class="label label-text text-xs font-semibold">Collection</label>
+              <input id="srcCollection" type="text" class="input input-bordered input-sm w-full" value="_default" />
+            </div>
+            <!-- Self-signed certs -->
+            <div class="flex items-end">
+              <label class="label cursor-pointer gap-2">
+                <span class="label-text text-xs font-semibold">Accept Self-Signed Certs</span>
+                <input id="srcSelfSigned" type="checkbox" class="toggle toggle-sm toggle-success" />
+              </label>
+            </div>
+          </div>
+
+          <!-- Auth -->
+          <div class="divider text-xs opacity-60">Authentication</div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="label label-text text-xs font-semibold">Auth Method</label>
+              <select id="srcAuthMethod" class="select select-bordered select-sm w-full" onchange="onSrcAuthChange()">
+                <option value="basic">Basic</option>
+                <option value="bearer">Bearer Token</option>
+                <option value="session">Session Cookie</option>
+                <option value="none">None</option>
+              </select>
+            </div>
+            <div></div>
+            <div id="srcAuthBasic">
+              <label class="label label-text text-xs">Username</label>
+              <input id="srcUsername" type="text" class="input input-bordered input-sm w-full" />
+              <label class="label label-text text-xs mt-1">Password</label>
+              <input id="srcPassword" type="password" class="input input-bordered input-sm w-full" />
+            </div>
+            <div id="srcAuthBearer" class="hidden">
+              <label class="label label-text text-xs">Bearer Token</label>
+              <input id="srcBearerToken" type="text" class="input input-bordered input-sm w-full" />
+            </div>
+            <div id="srcAuthSession" class="hidden">
+              <label class="label label-text text-xs">Session Cookie</label>
+              <input id="srcSessionCookie" type="text" class="input input-bordered input-sm w-full" />
+            </div>
+          </div>
+
+          <!-- Test buttons -->
+          <div class="flex items-center gap-3 mt-4">
+            <button class="btn btn-primary btn-sm" id="btnTestSource" onclick="testSource()">🔌 Test Connection</button>
+            <button class="btn btn-accent btn-sm" id="btnFetchSample" onclick="fetchSample()">🎲 Fetch Random Sample</button>
+            <span id="srcStatus" class="text-sm"></span>
+          </div>
+
+          <!-- Sample doc preview -->
+          <div id="srcSampleWrap" class="mt-4 hidden">
+            <label class="label label-text text-xs font-semibold">Sample Document</label>
+            <textarea id="srcSampleDoc" class="textarea textarea-bordered w-full font-mono text-sm" rows="10" readonly></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- STEP 2: Output Destination                             -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div class="step-card" id="step2">
+      <div class="card bg-base-100 shadow-sm rounded-2xl">
+        <div class="card-body">
+          <h2 class="text-xl font-bold mb-1">Step 2: Configure Output</h2>
+          <p class="text-sm opacity-60 mb-4">Choose where processed documents are sent.</p>
+
+          <!-- Output Mode Tabs -->
+          <div class="tabs tabs-boxed mb-4">
+            <a class="tab tab-active" id="outTabStdout" onclick="switchOutputTab('stdout')">Stdout</a>
+            <a class="tab" id="outTabHttp" onclick="switchOutputTab('http')">HTTP</a>
+            <a class="tab" id="outTabDb" onclick="switchOutputTab('db')">RDBMS</a>
+          </div>
+
+          <!-- Stdout panel -->
+          <div id="outPanelStdout">
+            <div class="alert alert-info shadow-sm">
+              <span>Documents will be printed to stdout (console / logs). No additional configuration required.</span>
+            </div>
+          </div>
+
+          <!-- HTTP panel -->
+          <div id="outPanelHttp" class="hidden">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="label label-text text-xs font-semibold">Target URL</label>
+                <input id="outTargetUrl" type="text" class="input input-bordered input-sm w-full" placeholder="http://localhost:8000/api/docs" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Output Format</label>
+                <select id="outFormat" class="select select-bordered select-sm w-full">
+                  <option value="json">JSON</option>
+                  <option value="xml">XML</option>
+                  <option value="form">Form</option>
+                  <option value="msgpack">MessagePack</option>
+                  <option value="csv">CSV</option>
+                </select>
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Write Method</label>
+                <select id="outWriteMethod" class="select select-bordered select-sm w-full">
+                  <option value="PUT">PUT</option>
+                  <option value="POST">POST</option>
+                </select>
+              </div>
+              <div class="flex items-end">
+                <label class="label cursor-pointer gap-2">
+                  <span class="label-text text-xs font-semibold">Accept Self-Signed Certs</span>
+                  <input id="outSelfSigned" type="checkbox" class="toggle toggle-sm toggle-success" />
+                </label>
+              </div>
+            </div>
+
+            <!-- Output Auth -->
+            <div class="divider text-xs opacity-60">Output Authentication</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="label label-text text-xs font-semibold">Auth Method</label>
+                <select id="outAuthMethod" class="select select-bordered select-sm w-full" onchange="onOutAuthChange()">
+                  <option value="none">None</option>
+                  <option value="basic">Basic</option>
+                  <option value="bearer">Bearer Token</option>
+                </select>
+              </div>
+              <div></div>
+              <div id="outAuthBasic" class="hidden">
+                <label class="label label-text text-xs">Username</label>
+                <input id="outUsername" type="text" class="input input-bordered input-sm w-full" />
+                <label class="label label-text text-xs mt-1">Password</label>
+                <input id="outPassword" type="password" class="input input-bordered input-sm w-full" />
+              </div>
+              <div id="outAuthBearer" class="hidden">
+                <label class="label label-text text-xs">Bearer Token</label>
+                <input id="outBearerToken" type="text" class="input input-bordered input-sm w-full" />
+              </div>
+            </div>
+
+            <div class="flex items-center gap-3 mt-4">
+              <button class="btn btn-primary btn-sm" id="btnTestOutput" onclick="testOutput()">🔌 Test Output</button>
+              <span id="outHttpStatus" class="text-sm"></span>
+            </div>
+          </div>
+
+          <!-- RDBMS panel -->
+          <div id="outPanelDb" class="hidden">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="label label-text text-xs font-semibold">Database Type</label>
+                <select id="outDbType" class="select select-bordered select-sm w-full" onchange="onOutDbTypeChange()">
+                  <option value="">Loading drivers...</option>
+                </select>
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Host</label>
+                <input id="outDbHost" type="text" class="input input-bordered input-sm w-full" value="localhost" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Port</label>
+                <input id="outDbPort" type="number" class="input input-bordered input-sm w-full" value="5432" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Database</label>
+                <input id="outDbName" type="text" class="input input-bordered input-sm w-full" placeholder="mydb" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">User</label>
+                <input id="outDbUser" type="text" class="input input-bordered input-sm w-full" value="postgres" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Password</label>
+                <input id="outDbPassword" type="password" class="input input-bordered input-sm w-full" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Schema</label>
+                <input id="outDbSchema" type="text" class="input input-bordered input-sm w-full" value="public" />
+              </div>
+              <div class="flex items-end">
+                <label class="label cursor-pointer gap-2">
+                  <span class="label-text text-xs font-semibold">SSL</span>
+                  <input id="outDbSSL" type="checkbox" class="checkbox checkbox-sm" />
+                </label>
+              </div>
+            </div>
+            <div class="flex items-center gap-3 mt-4">
+              <button class="btn btn-primary btn-sm" id="btnTestDb" onclick="testDbConn()">🔌 Test Connection</button>
+              <button class="btn btn-success btn-sm" id="btnFetchTables" onclick="fetchDbTables()">📥 Fetch Tables</button>
+              <span id="outDbStatus" class="text-sm"></span>
+            </div>
+            <!-- Fetched tables list -->
+            <div id="outDbTableList" class="mt-4 hidden">
+              <div class="divider text-xs">Discovered Tables</div>
+              <div id="outDbTablesContainer" class="max-h-64 overflow-y-auto space-y-1"></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- STEP 3: Mapping                                        -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div class="step-card" id="step3">
+      <div class="card bg-base-100 shadow-sm rounded-2xl">
+        <div class="card-body">
+          <h2 class="text-xl font-bold mb-1">Step 3: Map Source → Output</h2>
+          <p class="text-sm opacity-60 mb-4">Map your source document fields to the output format. Drag fields from the left panel onto the target mappings.</p>
+
+          <div class="flex gap-4" style="min-height: 450px;">
+            <!-- LEFT: Source Doc + Fields -->
+            <div class="w-[45%] flex flex-col gap-3">
+              <div class="card bg-base-200 rounded-xl flex-1 flex flex-col">
+                <div class="card-body p-3 flex-1 flex flex-col">
+                  <h4 class="text-sm font-semibold mb-2">Source Document</h4>
+                  <textarea id="wizSampleEditor" class="textarea textarea-bordered w-full font-mono text-sm flex-1"
+                            style="min-height: 180px; resize: vertical;" readonly
+                            placeholder="Fetch a sample doc in Step 1..."></textarea>
+                  <div class="divider my-1 text-xs opacity-60">Source Fields</div>
+                  <div id="wizSourceFields" class="overflow-y-auto" style="max-height: 220px;">
+                    <p class="text-sm opacity-50 p-2">No sample document loaded. Go to Step 1 to fetch one.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- RIGHT: Target Mapping -->
+            <div class="w-[55%] flex flex-col gap-3">
+              <div class="card bg-base-200 rounded-xl flex-1 flex flex-col">
+                <div class="card-body p-3 flex-1 flex flex-col">
+
+                  <!-- Source match -->
+                  <div class="flex items-center gap-2 mb-3">
+                    <h4 class="text-sm font-semibold">Source Match</h4>
+                    <div class="tooltip tooltip-right" data-tip="Match documents where a field equals a value.">
+                      <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                    </div>
+                  </div>
+                  <div class="flex gap-2 mb-3">
+                    <input id="wizMatchField" type="text" placeholder="field (e.g. type)" class="input input-bordered input-sm flex-1" />
+                    <input id="wizMatchValue" type="text" placeholder="value (e.g. order)" class="input input-bordered input-sm flex-1" />
+                  </div>
+
+                  <!-- JSON mapping mode (for stdout / HTTP) -->
+                  <div id="wizJsonMode" class="flex-1 flex flex-col">
+                    <div class="flex items-center gap-2 mb-2">
+                      <h4 class="text-sm font-semibold">JSON Field Mappings</h4>
+                      <button class="btn btn-primary btn-xs ml-auto" onclick="wizAddJsonField()">+ Field</button>
+                    </div>
+                    <div id="wizJsonFieldRows" class="space-y-1">
+                      <div class="flex gap-1 mb-1">
+                        <span class="w-[22%] text-xs font-semibold opacity-60">Target Key</span>
+                        <span class="w-[28%] text-xs font-semibold opacity-60">Source Path</span>
+                        <span class="w-[25%] text-xs font-semibold opacity-60">Transform ▾</span>
+                        <span class="w-[20%] text-xs font-semibold opacity-60">Transform (edit)</span>
+                        <span class="w-[5%]"></span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Tables mapping mode (for RDBMS) -->
+                  <div id="wizTablesMode" class="flex-1 flex-col hidden">
+                    <div class="flex items-center gap-2 mb-3">
+                      <div class="tabs tabs-boxed flex-1" id="wizTableTabs"></div>
+                      <button class="btn btn-primary btn-sm" onclick="wizAddTable()">+ Table</button>
+                    </div>
+                    <div id="wizTableEditor" class="flex-1 flex flex-col overflow-y-auto">
+                      <p class="text-sm opacity-50 p-2">Click "+ Table" to add your first target table, or tables will be pre-populated from Step 2.</p>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Generated Config -->
+          <div class="collapse collapse-arrow bg-base-100 shadow-sm rounded-2xl mt-4">
+            <input type="checkbox" />
+            <div class="collapse-title font-semibold text-base">Generated config.json</div>
+            <div class="collapse-content">
+              <pre id="wizConfigPreview" class="bg-base-200 p-4 rounded-xl font-mono text-sm overflow-x-auto whitespace-pre-wrap"></pre>
+            </div>
+          </div>
+
+          <!-- Save button -->
+          <div class="flex items-center gap-3 mt-4">
+            <button class="btn btn-success" onclick="saveWizardConfig()">💾 Save &amp; Apply Config</button>
+            <button class="btn btn-secondary btn-sm" onclick="saveWizardMapping()">💾 Save Mapping</button>
+            <span id="wizSaveStatus" class="text-sm"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Navigation Buttons -->
+    <div class="flex justify-between mt-6">
+      <button class="btn btn-ghost" id="btnPrev" onclick="prevStep()" disabled>← Back</button>
+      <button class="btn btn-primary" id="btnNext" onclick="nextStep()">Next →</button>
+    </div>
+
+  </main>
+
+  <footer class="footer footer-center p-4 bg-base-100 text-base-content">
+    <p>Changes Worker v1.4.0</p>
+  </footer>
+
+<script>
+// ── Theme toggle ─────────────────────────────────────────────
+var themeToggle = document.getElementById('themeToggle');
+themeToggle.checked = (localStorage.getItem('cw_theme') || 'dark') === 'light';
+themeToggle.addEventListener('change', function() {
+  var theme = themeToggle.checked ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('cw_theme', theme);
+});
+
+// ── Utility ──────────────────────────────────────────────────
+function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+// ── Wizard State ─────────────────────────────────────────────
+var currentStep = 1;
+var wizardSampleDoc = null;
+var wizSourceFieldsList = [];
+var wizOutputMode = 'stdout';   // 'stdout', 'http', 'db'
+var wizJsonFields = [];         // [{key, path, transform}]
+var wizTables = [];
+var wizActiveTableIdx = 0;
+var wizDbDrivers = {};
+var wizIntrospectedTables = [];
+var DEFAULT_PORTS = { postgres: 5432, mysql: 3306, mssql: 1433, oracle: 1521 };
+
+// ── Step Navigation ──────────────────────────────────────────
+function goToStep(n) {
+  currentStep = n;
+  for (var i = 1; i <= 3; i++) {
+    document.getElementById('step' + i).classList.toggle('active', i === n);
+    var ind = document.getElementById('stepInd' + i);
+    ind.classList.toggle('step-primary', i <= n);
+  }
+  document.getElementById('btnPrev').disabled = (n === 1);
+  var nextBtn = document.getElementById('btnNext');
+  if (n === 3) {
+    nextBtn.style.display = 'none';
+    populateStep3();
+  } else {
+    nextBtn.style.display = '';
+  }
+}
+
+function nextStep() {
+  if (currentStep < 3) goToStep(currentStep + 1);
+}
+
+function prevStep() {
+  if (currentStep > 1) goToStep(currentStep - 1);
+}
+
+// ── Step 1: Source Auth Toggle ────────────────────────────────
+function onSrcAuthChange() {
+  var m = document.getElementById('srcAuthMethod').value;
+  document.getElementById('srcAuthBasic').classList.toggle('hidden', m !== 'basic');
+  document.getElementById('srcAuthBearer').classList.toggle('hidden', m !== 'bearer');
+  document.getElementById('srcAuthSession').classList.toggle('hidden', m !== 'session');
+}
+
+function onSrcTypeChange() {
+  var src = document.getElementById('srcType').value;
+  var isCouchDB = src === 'couchdb';
+  // Hide scope/collection for CouchDB
+  document.getElementById('srcScopeWrap').classList.toggle('hidden', isCouchDB);
+  document.getElementById('srcCollectionWrap').classList.toggle('hidden', isCouchDB);
+  // Hide session cookie auth for CouchDB (not supported)
+  var authSel = document.getElementById('srcAuthMethod');
+  var sessionOpt = authSel.querySelector('option[value="session"]');
+  if (sessionOpt) sessionOpt.disabled = isCouchDB;
+  if (isCouchDB && authSel.value === 'session') {
+    authSel.value = 'basic';
+    onSrcAuthChange();
+  }
+}
+
+function getSrcConfig() {
+  return {
+    gateway: {
+      src: document.getElementById('srcType').value,
+      url: document.getElementById('srcUrl').value.trim(),
+      database: document.getElementById('srcDatabase').value.trim(),
+      scope: document.getElementById('srcScope').value.trim() || '_default',
+      collection: document.getElementById('srcCollection').value.trim() || '_default',
+      accept_self_signed_certs: document.getElementById('srcSelfSigned').checked
+    },
+    auth: {
+      method: document.getElementById('srcAuthMethod').value,
+      username: document.getElementById('srcUsername').value.trim(),
+      password: document.getElementById('srcPassword').value,
+      bearer_token: document.getElementById('srcBearerToken').value.trim(),
+      session_cookie: document.getElementById('srcSessionCookie').value.trim()
+    }
+  };
+}
+
+// ── Step 1: Test Connection / Fetch Sample ───────────────────
+async function testSource() {
+  var btn = document.getElementById('btnTestSource');
+  var status = document.getElementById('srcStatus');
+  btn.classList.add('loading');
+  status.textContent = 'Connecting...';
+  status.className = 'text-sm';
+  try {
+    var res = await fetch('/api/wizard/test-source', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(getSrcConfig())
+    });
+    var data = await res.json();
+    if (data.error) {
+      status.textContent = '❌ ' + (data.detail || data.error);
+      status.className = 'text-sm text-error';
+    } else {
+      status.textContent = '✅ Connected! Got ' + (data.pool_size || 1) + ' docs';
+      status.className = 'text-sm text-success';
+      if (data.doc) {
+        wizardSampleDoc = data.doc;
+        showSampleDoc(data.doc);
+      }
+    }
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+    status.className = 'text-sm text-error';
+  }
+  btn.classList.remove('loading');
+}
+
+async function fetchSample() {
+  var btn = document.getElementById('btnFetchSample');
+  var status = document.getElementById('srcStatus');
+  btn.classList.add('loading');
+  status.textContent = 'Fetching...';
+  status.className = 'text-sm';
+  try {
+    var res = await fetch('/api/wizard/test-source', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(getSrcConfig())
+    });
+    var data = await res.json();
+    if (data.error) {
+      status.textContent = '❌ ' + (data.detail || data.error);
+      status.className = 'text-sm text-error';
+    } else {
+      wizardSampleDoc = data.doc;
+      showSampleDoc(data.doc);
+      status.textContent = '🎲 Random pick from ' + (data.pool_size || 1) + ' docs';
+      status.className = 'text-sm text-success';
+    }
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+    status.className = 'text-sm text-error';
+  }
+  btn.classList.remove('loading');
+}
+
+function showSampleDoc(doc) {
+  document.getElementById('srcSampleWrap').classList.remove('hidden');
+  document.getElementById('srcSampleDoc').value = JSON.stringify(doc, null, 2);
+}
+
+// ── Step 2: Output Tab Switching ─────────────────────────────
+function switchOutputTab(mode) {
+  wizOutputMode = mode;
+  document.getElementById('outTabStdout').classList.toggle('tab-active', mode === 'stdout');
+  document.getElementById('outTabHttp').classList.toggle('tab-active', mode === 'http');
+  document.getElementById('outTabDb').classList.toggle('tab-active', mode === 'db');
+  document.getElementById('outPanelStdout').classList.toggle('hidden', mode !== 'stdout');
+  document.getElementById('outPanelHttp').classList.toggle('hidden', mode !== 'http');
+  document.getElementById('outPanelDb').classList.toggle('hidden', mode !== 'db');
+  if (mode === 'db') loadWizDbDrivers();
+}
+
+// ── Step 2: Output Auth Toggle ───────────────────────────────
+function onOutAuthChange() {
+  var m = document.getElementById('outAuthMethod').value;
+  document.getElementById('outAuthBasic').classList.toggle('hidden', m !== 'basic');
+  document.getElementById('outAuthBearer').classList.toggle('hidden', m !== 'bearer');
+}
+
+// ── Step 2: Test HTTP Output ─────────────────────────────────
+async function testOutput() {
+  var btn = document.getElementById('btnTestOutput');
+  var status = document.getElementById('outHttpStatus');
+  btn.classList.add('loading');
+  status.textContent = 'Testing...';
+  status.className = 'text-sm';
+  try {
+    var res = await fetch('/api/wizard/test-output', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        target_url: document.getElementById('outTargetUrl').value.trim(),
+        accept_self_signed_certs: document.getElementById('outSelfSigned').checked,
+        auth: {
+          method: document.getElementById('outAuthMethod').value,
+          username: document.getElementById('outUsername').value.trim(),
+          password: document.getElementById('outPassword').value,
+          bearer_token: document.getElementById('outBearerToken').value.trim()
+        }
+      })
+    });
+    var data = await res.json();
+    if (data.ok) {
+      status.textContent = '✅ Reachable! HTTP ' + (data.status || '200');
+      status.className = 'text-sm text-success';
+    } else {
+      status.textContent = '❌ ' + (data.error || 'Unreachable');
+      status.className = 'text-sm text-error';
+    }
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+    status.className = 'text-sm text-error';
+  }
+  btn.classList.remove('loading');
+}
+
+// ── Step 2: RDBMS Drivers & Connection ───────────────────────
+async function loadWizDbDrivers() {
+  if (Object.keys(wizDbDrivers).length) return;
+  try {
+    var res = await fetch('/api/db/drivers');
+    var data = await res.json();
+    wizDbDrivers = data.drivers || {};
+    var sel = document.getElementById('outDbType');
+    var keys = Object.keys(wizDbDrivers);
+    if (!keys.length) {
+      sel.innerHTML = '<option value="">No RDBMS drivers installed</option>';
+      return;
+    }
+    sel.innerHTML = keys.map(function(k) {
+      return '<option value="' + k + '">' + wizDbDrivers[k].name + ' (' + wizDbDrivers[k].driver + ')</option>';
+    }).join('');
+    onOutDbTypeChange();
+  } catch (e) {
+    document.getElementById('outDbType').innerHTML = '<option value="">Failed to detect</option>';
+  }
+}
+
+function onOutDbTypeChange() {
+  var t = document.getElementById('outDbType').value;
+  if (DEFAULT_PORTS[t]) document.getElementById('outDbPort').value = DEFAULT_PORTS[t];
+  if (t === 'postgres') document.getElementById('outDbSchema').value = 'public';
+  else if (t === 'mssql') document.getElementById('outDbSchema').value = 'dbo';
+  else document.getElementById('outDbSchema').value = '';
+}
+
+function getOutDbConfig() {
+  return {
+    db_type: document.getElementById('outDbType').value,
+    host: document.getElementById('outDbHost').value.trim(),
+    port: parseInt(document.getElementById('outDbPort').value) || 5432,
+    database: document.getElementById('outDbName').value.trim(),
+    user: document.getElementById('outDbUser').value.trim(),
+    password: document.getElementById('outDbPassword').value,
+    schema: document.getElementById('outDbSchema').value.trim() || 'public',
+    ssl: document.getElementById('outDbSSL').checked
+  };
+}
+
+async function testDbConn() {
+  var btn = document.getElementById('btnTestDb');
+  var status = document.getElementById('outDbStatus');
+  btn.classList.add('loading');
+  status.textContent = 'Connecting...';
+  status.className = 'text-sm';
+  try {
+    var res = await fetch('/api/db/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(getOutDbConfig())
+    });
+    var data = await res.json();
+    if (data.ok) {
+      status.textContent = '✅ Connected! ' + (data.version || '').substring(0, 60);
+      status.className = 'text-sm text-success';
+    } else {
+      status.textContent = '❌ ' + (data.error || 'Connection failed');
+      status.className = 'text-sm text-error';
+    }
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+    status.className = 'text-sm text-error';
+  }
+  btn.classList.remove('loading');
+}
+
+async function fetchDbTables() {
+  var btn = document.getElementById('btnFetchTables');
+  var status = document.getElementById('outDbStatus');
+  btn.classList.add('loading');
+  status.textContent = 'Fetching schema...';
+  status.className = 'text-sm';
+  try {
+    var res = await fetch('/api/db/introspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(getOutDbConfig())
+    });
+    var data = await res.json();
+    if (data.error) {
+      status.textContent = '❌ ' + (data.detail || data.error);
+      status.className = 'text-sm text-error';
+      btn.classList.remove('loading');
+      return;
+    }
+    wizIntrospectedTables = data.tables || [];
+    status.textContent = '✅ Found ' + wizIntrospectedTables.length + ' table(s)';
+    status.className = 'text-sm text-success';
+    renderWizDbTableList(wizIntrospectedTables);
+    document.getElementById('outDbTableList').classList.remove('hidden');
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+    status.className = 'text-sm text-error';
+  }
+  btn.classList.remove('loading');
+}
+
+function renderWizDbTableList(tbls) {
+  var container = document.getElementById('outDbTablesContainer');
+  container.innerHTML = tbls.map(function(t, i) {
+    var pkBadge = t.primary_key && t.primary_key.length ? ' <span class="badge badge-xs badge-info">PK: ' + t.primary_key.join(', ') + '</span>' : '';
+    var fkBadges = (t.foreign_keys || []).map(function(fk) {
+      return ' <span class="badge badge-xs badge-warning">FK: ' + fk.column + ' → ' + fk.references_table + '</span>';
+    }).join('');
+    var colList = t.columns.map(function(c) {
+      return '<span class="text-xs font-mono opacity-60">' + c.name + '<span class="opacity-40">:' + c.display_type + '</span></span>';
+    }).join(', ');
+    return '<label class="flex items-start gap-2 p-2 rounded-lg hover:bg-base-300 cursor-pointer">' +
+      '<input type="checkbox" class="checkbox checkbox-sm checkbox-primary mt-0.5 wiz-table-check" data-idx="' + i + '" checked />' +
+      '<div class="flex-1">' +
+        '<div class="font-semibold text-sm">' + esc(t.table_name) + pkBadge + fkBadges + '</div>' +
+        '<div class="mt-0.5">' + colList + '</div>' +
+      '</div>' +
+    '</label>';
+  }).join('');
+}
+
+// ── Step 3: Populate on entry ────────────────────────────────
+function populateStep3() {
+  // Show sample doc
+  if (wizardSampleDoc) {
+    document.getElementById('wizSampleEditor').value = JSON.stringify(wizardSampleDoc, null, 2);
+    wizSourceFieldsList = extractPaths(wizardSampleDoc);
+    renderWizSourceFields(wizSourceFieldsList);
+  }
+
+  // Show correct mapping mode based on output mode
+  if (wizOutputMode === 'db') {
+    document.getElementById('wizJsonMode').classList.add('hidden');
+    document.getElementById('wizJsonMode').classList.remove('flex');
+    document.getElementById('wizTablesMode').classList.remove('hidden');
+    document.getElementById('wizTablesMode').classList.add('flex');
+    // Pre-populate tables from introspected tables
+    if (wizIntrospectedTables.length && !wizTables.length) {
+      var checks = document.querySelectorAll('.wiz-table-check:checked');
+      var selectedIdxs = [];
+      checks.forEach(function(cb) { selectedIdxs.push(parseInt(cb.getAttribute('data-idx'))); });
+      if (!selectedIdxs.length) {
+        selectedIdxs = wizIntrospectedTables.map(function(_, i) { return i; });
+      }
+      selectedIdxs.forEach(function(i) {
+        var t = wizIntrospectedTables[i];
+        if (!t) return;
+        var pk = (t.primary_key && t.primary_key.length) ? t.primary_key[0] : '';
+        var parent = '';
+        var fk = { column: '', references: '' };
+        if (t.foreign_keys && t.foreign_keys.length) {
+          parent = t.foreign_keys[0].references_table || '';
+          fk = { column: t.foreign_keys[0].column, references: t.foreign_keys[0].references_column || '' };
+        }
+        var columns = {};
+        t.columns.forEach(function(c) { columns[c.name] = ''; });
+        wizTables.push({
+          name: t.table_name, primary_key: pk, parent: parent,
+          foreign_key: fk, source_array: '', replace_strategy: parent ? 'delete_insert' : '',
+          on_delete: 'delete', columns: columns
+        });
+      });
+    }
+    wizActiveTableIdx = 0;
+    wizRenderTableTabs();
+    wizRenderTableEditor();
+  } else {
+    document.getElementById('wizTablesMode').classList.add('hidden');
+    document.getElementById('wizTablesMode').classList.remove('flex');
+    document.getElementById('wizJsonMode').classList.remove('hidden');
+    document.getElementById('wizJsonMode').classList.add('flex');
+  }
+
+  updateConfigPreview();
+}
+
+// ── Extract Paths (from schema.html) ─────────────────────────
+function extractPaths(obj, prefix, results) {
+  if (!prefix) prefix = '$';
+  if (!results) results = [];
+  if (obj === null || obj === undefined) return results;
+  if (Array.isArray(obj)) {
+    results.push({ path: prefix, type: 'array', sample: '[' + obj.length + ' items]' });
+    if (obj.length > 0 && typeof obj[0] === 'object' && obj[0] !== null) {
+      extractPaths(obj[0], prefix + '[]', results);
+    }
+    return results;
+  }
+  if (typeof obj === 'object') {
+    var keys = Object.keys(obj);
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      var v = obj[k];
+      var p = prefix + '.' + k;
+      if (v === null) {
+        results.push({ path: p, type: 'null', sample: 'null' });
+      } else if (Array.isArray(v)) {
+        results.push({ path: p, type: 'array', sample: '[' + v.length + ' items]' });
+        if (v.length > 0 && typeof v[0] === 'object' && v[0] !== null) {
+          extractPaths(v[0], p + '[]', results);
+        }
+      } else if (typeof v === 'object') {
+        results.push({ path: p, type: 'object', sample: '{...}' });
+        extractPaths(v, p, results);
+      } else {
+        var t = typeof v;
+        var sample = String(v);
+        if (sample.length > 30) sample = sample.substring(0, 30) + '…';
+        results.push({ path: p, type: t, sample: sample });
+      }
+    }
+  }
+  return results;
+}
+
+function renderWizSourceFields(fields) {
+  var el = document.getElementById('wizSourceFields');
+  if (!fields || !fields.length) {
+    el.innerHTML = '<p class="text-sm opacity-50 p-2">No fields extracted.</p>';
+    return;
+  }
+  var typeColors = { string: 'badge-success', number: 'badge-info', boolean: 'badge-warning', array: 'badge-secondary', object: 'badge-ghost', null: 'badge-ghost' };
+  el.innerHTML = fields.map(function(f) {
+    var depth = (f.path.match(/\./g) || []).length;
+    var indent = depth * 12;
+    var bc = typeColors[f.type] || 'badge-ghost';
+    return '<div class="field-item flex items-center gap-2" style="padding-left:' + indent + 'px" draggable="true" ondragstart="wizDragField(event,\'' + f.path.replace(/'/g, "\\'") + '\')">' +
+      '<span class="badge badge-xs ' + bc + '">' + f.type + '</span>' +
+      '<span>' + f.path + '</span>' +
+      (f.sample && f.type !== 'object' && f.type !== 'array' ? '<span class="opacity-40 text-xs ml-auto truncate max-w-[120px]">' + f.sample + '</span>' : '') +
+      '</div>';
+  }).join('');
+}
+
+function wizDragField(ev, path) {
+  ev.dataTransfer.setData('text/plain', path);
+}
+
+// ── Transforms ───────────────────────────────────────────────
+var TRANSFORMS = [
+  '', 'trim()', 'ltrim()', 'rtrim()', 'uppercase()', 'lowercase()', 'camelcase()', 'propercase()',
+  'concat(,"")', 'replace(,"","")', 'replace_regex(,"","")', 'strip_chars(,"")',
+  'pad_left(,8,"0")', 'pad_right(,8," ")', 'substr(,0,10)', 'split(,",")[0]', 'join(,",")',
+  'length()', 'urlencode()', 'urldecode()',
+  'to_int()', 'to_float()', 'to_decimal(,2)', 'to_string()', 'round()', 'ceil()', 'floor()',
+  'abs()', 'coalesce(,"")',
+  'to_iso8601()', 'to_epoch()', 'from_epoch()', 'format_date(,"yyyy-MM-dd")', 'parse_date(,"MM/dd/yyyy")',
+  'date_add(,"days",1)', 'date_diff(,"days")', 'truncate_date(,"month")', 'now()',
+  'flatten()', 'slice(,0,5)', 'keys()', 'values()',
+  'json_safe()', 'json_parse()', 'json_stringify()', 'base64_encode()', 'base64_decode()',
+  'md5()', 'sha256()', 'uuid()',
+  'if(,!= "",$.value,"N/A")'
+];
+
+function transformOptions(selected) {
+  var html = '<option value=""' + (!selected ? ' selected' : '') + '>-- none --</option>';
+  var group = '';
+  for (var i = 0; i < TRANSFORMS.length; i++) {
+    var t = TRANSFORMS[i];
+    if (!t) continue;
+    var newGroup = '';
+    if (i <= 19) newGroup = 'String';
+    else if (i <= 28) newGroup = 'Numeric';
+    else if (i <= 37) newGroup = 'Date / Time';
+    else if (i <= 41) newGroup = 'Array / Object';
+    else if (i <= 49) newGroup = 'Encoding / Hash';
+    else newGroup = 'Conditional';
+    if (newGroup !== group) {
+      if (group) html += '</optgroup>';
+      html += '<optgroup label="' + newGroup + '">';
+      group = newGroup;
+    }
+    html += '<option value="' + esc(t) + '"' + (t === selected ? ' selected' : '') + '>' + t + '</option>';
+  }
+  if (group) html += '</optgroup>';
+  return html;
+}
+
+// ── JSON Field Mapping (Step 3 JSON mode) ────────────────────
+function wizJsonFieldRow(key, path, transform) {
+  return '<div class="flex gap-1 items-center wiz-jf-row">' +
+    '<input type="text" class="input input-bordered input-xs w-[22%] wiz-jf-key" placeholder="target_key" value="' + esc(key) + '" oninput="updateConfigPreview()" />' +
+    '<input type="text" class="input input-bordered input-xs w-[28%] wiz-jf-path" placeholder="$.path" value="' + esc(path) + '" ' +
+      'ondrop="this.value=event.dataTransfer.getData(\'text/plain\');event.preventDefault();updateConfigPreview()" ondragover="event.preventDefault()" oninput="updateConfigPreview()" />' +
+    '<select class="select select-bordered select-xs w-[25%] wiz-jf-transform-sel" onchange="wizOnTransformSelect(this)">' + transformOptions(transform) + '</select>' +
+    '<input type="text" class="input input-bordered input-xs w-[20%] wiz-jf-transform" placeholder="transform" value="' + esc(transform) + '" oninput="updateConfigPreview()" />' +
+    '<button class="btn btn-ghost btn-xs text-error w-[5%]" onclick="this.parentElement.remove();updateConfigPreview()">×</button>' +
+    '</div>';
+}
+
+function wizOnTransformSelect(sel) {
+  var row = sel.closest('.wiz-jf-row') || sel.closest('.wiz-col-row');
+  var transformInput = row.querySelector('.wiz-jf-transform') || row.querySelector('.wiz-col-transform');
+  var pathInput = row.querySelector('.wiz-jf-path') || row.querySelector('.wiz-col-path');
+  if (transformInput && sel.value) {
+    var fn = sel.value;
+    var path = pathInput ? pathInput.value.trim() : '';
+    if (path && fn.indexOf('(') > 0) {
+      transformInput.value = fn.replace('(', '(' + path);
+    } else {
+      transformInput.value = fn;
+    }
+  } else if (transformInput) {
+    transformInput.value = '';
+  }
+  updateConfigPreview();
+}
+
+function wizAddJsonField() {
+  document.getElementById('wizJsonFieldRows').insertAdjacentHTML('beforeend', wizJsonFieldRow('', '', ''));
+}
+
+// ── Table Mapping (Step 3 Tables mode) ───────────────────────
+function wizAddTable() {
+  var name = 'table_' + (wizTables.length + 1);
+  wizTables.push({
+    name: name, primary_key: 'doc_id', parent: '',
+    foreign_key: { column: '', references: '' }, source_array: '',
+    replace_strategy: '', on_delete: 'delete', columns: {}
+  });
+  wizActiveTableIdx = wizTables.length - 1;
+  wizRenderTableTabs();
+  wizRenderTableEditor();
+  updateConfigPreview();
+}
+
+function wizSwitchTable(idx) {
+  wizSaveCurrentTableEdits();
+  wizActiveTableIdx = idx;
+  wizRenderTableTabs();
+  wizRenderTableEditor();
+}
+
+function wizRemoveTable(idx) {
+  if (!confirm('Delete table "' + wizTables[idx].name + '"?')) return;
+  wizTables.splice(idx, 1);
+  if (wizActiveTableIdx >= wizTables.length) wizActiveTableIdx = Math.max(0, wizTables.length - 1);
+  wizRenderTableTabs();
+  wizRenderTableEditor();
+  updateConfigPreview();
+}
+
+function wizRenderTableTabs() {
+  var el = document.getElementById('wizTableTabs');
+  el.innerHTML = wizTables.map(function(t, i) {
+    return '<a class="tab' + (i === wizActiveTableIdx ? ' tab-active' : '') + '" onclick="wizSwitchTable(' + i + ')">' +
+      t.name +
+      (wizTables.length > 1 ? ' <span class="text-error text-xs ml-1 cursor-pointer" onclick="event.stopPropagation(); wizRemoveTable(' + i + ')">&times;</span>' : '') +
+      '</a>';
+  }).join('');
+}
+
+function wizColRow(name, colDef) {
+  var path = typeof colDef === 'object' ? (colDef.path || '') : (colDef || '');
+  var transform = typeof colDef === 'object' ? (colDef.transform || '') : '';
+  return '<div class="flex gap-1 items-center wiz-col-row">' +
+    '<input type="text" class="input input-bordered input-xs w-[22%] wiz-col-name" placeholder="column" value="' + esc(name) + '" oninput="updateConfigPreview()" />' +
+    '<input type="text" class="input input-bordered input-xs w-[28%] wiz-col-path" placeholder="$.path" value="' + esc(path) + '" ' +
+      'ondrop="this.value=event.dataTransfer.getData(\'text/plain\');event.preventDefault();updateConfigPreview()" ondragover="event.preventDefault()" oninput="updateConfigPreview()" />' +
+    '<select class="select select-bordered select-xs w-[25%] wiz-col-transform-sel" onchange="wizOnTransformSelect(this)">' + transformOptions(transform) + '</select>' +
+    '<input type="text" class="input input-bordered input-xs w-[20%] wiz-col-transform" placeholder="transform" value="' + esc(transform) + '" oninput="updateConfigPreview()" />' +
+    '<button class="btn btn-ghost btn-xs text-error w-[5%]" onclick="this.parentElement.remove();updateConfigPreview()">×</button>' +
+    '</div>';
+}
+
+function wizAddColRow() {
+  document.getElementById('wizColRows').insertAdjacentHTML('beforeend', wizColRow('', ''));
+}
+
+function wizSaveCurrentTableEdits() {
+  if (!wizTables.length) return;
+  var t = wizTables[wizActiveTableIdx];
+  var nameEl = document.getElementById('wizTblName');
+  if (nameEl) {
+    t.name = nameEl.value.trim() || t.name;
+    t.primary_key = document.getElementById('wizTblPK').value.trim();
+    t.parent = document.getElementById('wizTblParent').value.trim();
+    t.foreign_key.column = document.getElementById('wizTblFKCol').value.trim();
+    t.foreign_key.references = document.getElementById('wizTblFKRef').value.trim();
+    t.source_array = document.getElementById('wizTblSourceArray').value.trim();
+    t.replace_strategy = document.getElementById('wizTblReplaceStrategy').value.trim();
+    t.on_delete = document.getElementById('wizTblOnDelete').value;
+    t.columns = {};
+    document.querySelectorAll('.wiz-col-row').forEach(function(row) {
+      var colName = row.querySelector('.wiz-col-name').value.trim();
+      var colPath = row.querySelector('.wiz-col-path').value.trim();
+      var colTransform = row.querySelector('.wiz-col-transform') ? row.querySelector('.wiz-col-transform').value.trim() : '';
+      if (colName && colPath) {
+        t.columns[colName] = colTransform ? { path: colPath, transform: colTransform } : colPath;
+      }
+    });
+  }
+}
+
+function wizRenderTableEditor() {
+  var el = document.getElementById('wizTableEditor');
+  if (!wizTables.length) {
+    el.innerHTML = '<p class="text-sm opacity-50 p-2">Click "+ Table" to add your first target table.</p>';
+    return;
+  }
+  var t = wizTables[wizActiveTableIdx];
+  var parentOptions = '<option value="">-- none --</option>' +
+    wizTables.filter(function(_, i) { return i !== wizActiveTableIdx; })
+      .map(function(pt) { return '<option value="' + pt.name + '"' + (t.parent === pt.name ? ' selected' : '') + '>' + pt.name + '</option>'; }).join('');
+  var colRows = Object.keys(t.columns).map(function(colName) { return wizColRow(colName, t.columns[colName]); }).join('');
+
+  el.innerHTML =
+    '<div class="space-y-3">' +
+    '<div class="grid grid-cols-3 gap-2">' +
+      '<div><label class="label label-text text-xs">Table Name</label><input id="wizTblName" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.name) + '" oninput="updateConfigPreview()"></div>' +
+      '<div><label class="label label-text text-xs">Primary Key</label><input id="wizTblPK" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.primary_key) + '" oninput="updateConfigPreview()"></div>' +
+      '<div><label class="label label-text text-xs">On Delete</label><select id="wizTblOnDelete" class="select select-bordered select-sm w-full" onchange="updateConfigPreview()"><option' + (t.on_delete === 'delete' ? ' selected' : '') + '>delete</option><option' + (t.on_delete === 'ignore' ? ' selected' : '') + '>ignore</option></select></div>' +
+    '</div>' +
+    '<div class="grid grid-cols-2 gap-2">' +
+      '<div><label class="label label-text text-xs">Parent Table</label><select id="wizTblParent" class="select select-bordered select-sm w-full" onchange="updateConfigPreview()">' + parentOptions + '</select></div>' +
+      '<div><label class="label label-text text-xs">Source Array</label><input id="wizTblSourceArray" type="text" class="input input-bordered input-sm w-full" placeholder="$.items" value="' + esc(t.source_array) + '" oninput="updateConfigPreview()"></div>' +
+      '<div><label class="label label-text text-xs">FK Column</label><input id="wizTblFKCol" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.column) + '" oninput="updateConfigPreview()"></div>' +
+      '<div><label class="label label-text text-xs">FK References</label><input id="wizTblFKRef" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.references) + '" oninput="updateConfigPreview()"></div>' +
+      '<div><label class="label label-text text-xs">Replace Strategy</label><input id="wizTblReplaceStrategy" type="text" class="input input-bordered input-sm w-full" placeholder="delete_insert" value="' + esc(t.replace_strategy) + '" oninput="updateConfigPreview()"></div>' +
+    '</div>' +
+    '<div class="divider my-1 text-xs opacity-60">Column Mappings</div>' +
+    '<div class="flex gap-1 mb-1">' +
+      '<span class="w-[22%] text-xs font-semibold opacity-60">Column</span>' +
+      '<span class="w-[28%] text-xs font-semibold opacity-60">Source Path</span>' +
+      '<span class="w-[25%] text-xs font-semibold opacity-60">Transform ▾</span>' +
+      '<span class="w-[20%] text-xs font-semibold opacity-60">Transform (edit)</span>' +
+      '<span class="w-[5%]"></span>' +
+    '</div>' +
+    '<div id="wizColRows" class="space-y-1">' + colRows + '</div>' +
+    '<button class="btn btn-primary btn-xs mt-2" onclick="wizAddColRow()">+ Column</button>' +
+    '</div>';
+}
+
+// ── Config Builder ───────────────────────────────────────────
+function buildConfig() {
+  var srcCfg = getSrcConfig();
+  var config = {
+    gateway: srcCfg.gateway,
+    auth: srcCfg.auth,
+    changes_feed: {
+      feed_type: 'longpoll',
+      poll_interval_seconds: 10,
+      active_only: true,
+      include_docs: true,
+      since: '0',
+      channels: [],
+      limit: 0,
+      heartbeat_ms: 30000,
+      timeout_ms: 60000,
+      http_timeout_seconds: 300,
+      throttle_feed: 0,
+      continuous_catchup_limit: 10000
+    },
+    processing: {
+      ignore_delete: false,
+      ignore_remove: false,
+      sequential: false,
+      max_concurrent: 20,
+      dry_run: false,
+      get_batch_number: 100
+    },
+    checkpoint: {
+      enabled: true,
+      client_id: 'changes_worker',
+      file: 'checkpoint.json',
+      every_n_docs: 0
+    },
+    output: { mode: wizOutputMode },
+    retry: {
+      max_retries: 5,
+      backoff_base_seconds: 1,
+      backoff_max_seconds: 60,
+      retry_on_status: [500, 502, 503, 504]
+    },
+    metrics: { enabled: true, host: '0.0.0.0', port: 9090 },
+    logging: {
+      redaction_level: 'partial',
+      console: { enabled: true, log_level: 'info', log_keys: ['*'], key_levels: {}, color_enabled: false },
+      file: { enabled: true, path: 'logs/changes_worker.log', log_level: 'debug', log_keys: ['*'], key_levels: {},
+              rotation: { max_size: 100, max_age: 7, rotated_logs_size_limit: 1024 } }
+    }
+  };
+
+  // Output-specific config
+  if (wizOutputMode === 'stdout') {
+    config.output = { mode: 'stdout', output_format: 'json' };
+  } else if (wizOutputMode === 'http') {
+    var outAuth = document.getElementById('outAuthMethod').value;
+    config.output = {
+      mode: 'http',
+      target_url: document.getElementById('outTargetUrl').value.trim(),
+      url_template: '{target_url}/{doc_id}',
+      write_method: document.getElementById('outWriteMethod').value,
+      delete_method: 'DELETE',
+      output_format: document.getElementById('outFormat').value,
+      accept_self_signed_certs: document.getElementById('outSelfSigned').checked,
+      request_timeout_seconds: 30,
+      halt_on_failure: true,
+      log_response_times: true,
+      dead_letter_path: 'failed_docs.jsonl',
+      target_auth: {
+        method: outAuth,
+        username: outAuth === 'basic' ? document.getElementById('outUsername').value.trim() : '',
+        password: outAuth === 'basic' ? document.getElementById('outPassword').value : '',
+        bearer_token: outAuth === 'bearer' ? document.getElementById('outBearerToken').value.trim() : ''
+      },
+      retry: { max_retries: 3, backoff_base_seconds: 1, backoff_max_seconds: 30, retry_on_status: [500, 502, 503, 504] },
+      health_check: { enabled: true, interval_seconds: 30 }
+    };
+  } else if (wizOutputMode === 'db') {
+    var dbCfg = getOutDbConfig();
+    config.output = {
+      mode: 'db',
+      db: {
+        engine: dbCfg.db_type,
+        host: dbCfg.host,
+        port: dbCfg.port,
+        database: dbCfg.database,
+        user: dbCfg.user,
+        password: dbCfg.password,
+        schema: dbCfg.schema,
+        ssl: dbCfg.ssl,
+        pool_size: 5
+      },
+      halt_on_failure: true
+    };
+  }
+
+  return config;
+}
+
+function buildMapping() {
+  var mapping = {
+    source: {
+      match: {
+        field: document.getElementById('wizMatchField').value.trim(),
+        value: document.getElementById('wizMatchValue').value.trim()
+      }
+    }
+  };
+
+  if (wizOutputMode === 'db') {
+    mapping.output_format = 'tables';
+    wizSaveCurrentTableEdits();
+    mapping.tables = wizTables.map(function(t) {
+      var tbl = { name: t.name, primary_key: t.primary_key, columns: t.columns, on_delete: t.on_delete };
+      if (t.parent) {
+        tbl.parent = t.parent;
+        tbl.foreign_key = t.foreign_key;
+        tbl.source_array = t.source_array;
+        tbl.replace_strategy = t.replace_strategy;
+      }
+      return tbl;
+    });
+  } else {
+    mapping.output_format = 'json';
+    mapping.mapping = {};
+    document.querySelectorAll('.wiz-jf-row').forEach(function(row) {
+      var key = row.querySelector('.wiz-jf-key').value.trim();
+      var path = row.querySelector('.wiz-jf-path').value.trim();
+      var transform = row.querySelector('.wiz-jf-transform').value.trim();
+      if (key && path) {
+        mapping.mapping[key] = transform ? { path: path, transform: transform } : path;
+      }
+    });
+  }
+
+  return mapping;
+}
+
+function updateConfigPreview() {
+  var el = document.getElementById('wizConfigPreview');
+  if (el) el.textContent = JSON.stringify(buildConfig(), null, 2);
+}
+
+// ── Save Config & Mapping ────────────────────────────────────
+async function saveWizardConfig() {
+  var status = document.getElementById('wizSaveStatus');
+  status.textContent = 'Saving...';
+  status.className = 'text-sm';
+  try {
+    var res = await fetch('/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildConfig())
+    });
+    var data = await res.json();
+    if (data.ok) {
+      status.textContent = '✅ Config saved!';
+      status.className = 'text-sm text-success';
+    } else {
+      status.textContent = '❌ ' + (data.error || 'Save failed');
+      status.className = 'text-sm text-error';
+    }
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+    status.className = 'text-sm text-error';
+  }
+}
+
+async function saveWizardMapping() {
+  var status = document.getElementById('wizSaveStatus');
+  var mapping = buildMapping();
+  var matchVal = mapping.source.match.value || 'default';
+  var filename = matchVal + '_mapping.json';
+  status.textContent = 'Saving mapping...';
+  status.className = 'text-sm';
+  try {
+    var res = await fetch('/api/mappings/' + encodeURIComponent(filename), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(mapping, null, 2)
+    });
+    var data = await res.json();
+    if (data.ok) {
+      status.textContent = '✅ Mapping saved as ' + filename;
+      status.className = 'text-sm text-success';
+    } else {
+      status.textContent = '❌ ' + (data.error || 'Save failed');
+      status.className = 'text-sm text-error';
+    }
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+    status.className = 'text-sm text-error';
+  }
+}
+
+// ── Init ─────────────────────────────────────────────────────
+goToStep(1);
+</script>
+
+</body>
+</html>
