@@ -1688,15 +1688,32 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
 
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         http = RetryableHTTP(session, retry_cfg)
-        output = OutputForwarder(session, out_cfg, dry_run, metrics=metrics,
-                                        build_basic_auth_fn=build_basic_auth,
-                                        build_auth_headers_fn=build_auth_headers,
-                                        retryable_http_cls=RetryableHTTP)
+
+        output_mode = out_cfg.get("mode", "stdout")
+        db_output = None  # track DB forwarder for cleanup
+
+        if output_mode == "db":
+            db_engine = out_cfg.get("db", {}).get("engine", "postgres")
+            if db_engine == "postgres":
+                from db.db_postgres import PostgresOutputForwarder
+                output = PostgresOutputForwarder(out_cfg, dry_run, metrics=metrics)
+            else:
+                raise ValueError(f"Unsupported db engine: {db_engine}")
+            await output.connect()
+            db_output = output
+            log_event(logger, "info", "OUTPUT",
+                      f"database output ready (engine={db_engine})")
+        else:
+            output = OutputForwarder(session, out_cfg, dry_run, metrics=metrics,
+                                            build_basic_auth_fn=build_basic_auth,
+                                            build_auth_headers_fn=build_auth_headers,
+                                            retryable_http_cls=RetryableHTTP)
+
         dlq = DeadLetterQueue(out_cfg.get("dead_letter_path", ""))
         every_n_docs = cfg.get("checkpoint", {}).get("every_n_docs", 0)
 
         # If output is HTTP, verify the endpoint is reachable before starting
-        if out_cfg.get("mode") == "http":
+        if output_mode == "http":
             if not await output.test_reachable():
                 if out_cfg.get("halt_on_failure", True):
                     log_event(logger, "error", "OUTPUT",
@@ -1856,6 +1873,8 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
         finally:
             watcher_task.cancel()
             await output.stop_heartbeat() if hasattr(output, 'stop_heartbeat') else None
+            if db_output is not None:
+                await db_output.close()
 
 
 async def _sleep_or_shutdown(seconds: float, event: asyncio.Event) -> None:
@@ -2080,8 +2099,7 @@ def main() -> None:
         while not shutdown_event.is_set():
             restart_event.clear()
             log_event(logger, "info", "PROCESSING",
-                      "starting changes feed (feed_type=%s)",
-                      cfg.get("changes_feed", {}).get("feed_type", "longpoll"))
+                      f"starting changes feed (feed_type={cfg.get('changes_feed', {}).get('feed_type', 'longpoll')})")
 
             loop.run_until_complete(poll_changes(
                 cfg, src, shutdown_event, metrics=metrics,

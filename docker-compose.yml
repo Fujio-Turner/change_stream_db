@@ -3,6 +3,8 @@ services:
     build: .
     ports:
       - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - cbl-data:/app/data
       - ./logs:/app/logs
@@ -16,6 +18,8 @@ services:
       - "8080:8080"
     environment:
       - METRICS_HOST=changes-worker
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - cbl-data:/app/data
     restart: unless-stopped

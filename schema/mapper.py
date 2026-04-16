@@ -112,6 +112,14 @@ def apply_transform(value: Any, transform: str) -> Any:
         if value is not None:
             return value
         return args[0] if args else None
+    if func == "to_date":
+        if value is None:
+            return None
+        try:
+            from datetime import date
+            return date.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return None
     if func == "json_stringify":
         return json.dumps(value) if value is not None else None
 

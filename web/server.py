@@ -6,7 +6,10 @@ from pathlib import Path
 
 from aiohttp import web
 
+import datetime
+
 from cbl_store import USE_CBL, CBLStore
+from schema.mapper import SchemaMapper
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -684,6 +687,46 @@ async def wizard_test_output(request):
         return json_response({"ok": False, "error": str(exc)}, status=200)
 
 
+# --- Validate Mapping ---
+
+async def validate_mapping(request):
+    try:
+        body = await request.json()
+    except Exception:
+        return error_response("Invalid JSON body")
+
+    mapping = body.get("mapping")
+    doc = body.get("doc")
+    if mapping is None or doc is None:
+        return error_response("Both 'mapping' and 'doc' are required")
+
+    try:
+        mapper = SchemaMapper(mapping)
+        matched = mapper.matches(doc)
+        if not matched:
+            return json_response({"matches": False, "ops": []})
+
+        ops = mapper.map_document(doc)
+        result_ops = []
+        for op in ops:
+            sql, params = op.to_sql()
+            safe_params = []
+            for p in params:
+                if isinstance(p, (datetime.date, datetime.datetime)):
+                    safe_params.append(str(p))
+                else:
+                    safe_params.append(p)
+            result_ops.append({
+                "type": op.op_type,
+                "table": op.table,
+                "sql": sql,
+                "params": safe_params,
+            })
+        return json_response({"matches": True, "ops": result_ops})
+    except Exception as exc:
+        return error_response(str(exc), status=500)
+
+
 # --- App factory ---
 
 def create_app():
@@ -706,6 +749,7 @@ def create_app():
     app.router.add_get("/api/mappings/{name}", get_mapping)
     app.router.add_put("/api/mappings/{name}", put_mapping)
     app.router.add_delete("/api/mappings/{name}", delete_mapping)
+    app.router.add_post("/api/mappings/validate", validate_mapping)
 
     # DLQ API
     app.router.add_get("/api/dlq", list_dlq)

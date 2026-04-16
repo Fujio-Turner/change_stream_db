@@ -1,0 +1,40 @@
+{
+  "source": {
+    "match": {
+      "field": "type",
+      "value": "order"
+    }
+  },
+  "tables": [
+    {
+      "name": "orders",
+      "primary_key": "doc_id",
+      "on_delete": "delete",
+      "columns": {
+        "doc_id": "$._id",
+        "rev": "$._rev",
+        "status": "$.status",
+        "customer_id": "$.customer_id",
+        "order_date": {"path": "$.order_date", "transform": "to_date($.order_date)"},
+        "total": "$.total"
+      }
+    },
+    {
+      "name": "order_items",
+      "parent": "orders",
+      "source_array": "$.items",
+      "replace_strategy": "delete_insert",
+      "on_delete": "delete",
+      "foreign_key": {
+        "column": "order_doc_id",
+        "references": "doc_id"
+      },
+      "columns": {
+        "order_doc_id": "$._id",
+        "product_id": "$.product_id",
+        "qty": "$.qty",
+        "price": "$.price"
+      }
+    }
+  ]
+}
