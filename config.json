@@ -43,7 +43,18 @@
     "every_n_docs": 0
   },
   "output": {
-    "mode": "stdout",
+    "mode": "postgres",
+    "postgres": {
+      "host": "host.docker.internal",
+      "port": 5432,
+      "database": "YOUR_DB_NAME",
+      "user": "YOUR_USER",
+      "password": "YOUR_PASSWORD",
+      "schema": "public",
+      "ssl": false,
+      "pool_min": 2,
+      "pool_max": 10
+    },
     "target_url": "",
     "url_template": "{target_url}/{doc_id}",
     "write_method": "PUT",

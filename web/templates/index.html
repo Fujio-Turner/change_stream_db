@@ -550,29 +550,49 @@ function loadCBLStatus() {
 var cachedCfg = null;
 function loadConfig() {
   dbg('loadConfig: fetching /api/config');
-  fetch('/api/config')
-    .then(function(r) { return r.json(); })
-    .then(function(cfg) {
-      dbg('loadConfig: got config', cfg);
-      cachedCfg = cfg;
-      var rows = [
-        ['Source', cfg.gateway?.src ?? '--'],
-        ['Database', cfg.gateway?.database ?? '--'],
-        ['Keyspace', (cfg.gateway?.scope || '--') + '.' + (cfg.gateway?.collection || '--')],
-        ['Output', cfg.output?.mode ?? '--'],
-        ['Format', cfg.output?.output_format ?? 'json'],
-        ['Sequential', cfg.processing?.sequential ? 'Yes' : 'No'],
-        ['Halt on Fail', cfg.output?.halt_on_failure !== false ? 'Yes' : 'No']
-      ];
-      document.querySelector('#configTable tbody').innerHTML = rows
-        .map(function(r) { return '<tr><td class="font-medium">' + r[0] + '</td><td class="text-right">' + r[1] + '</td></tr>'; })
-        .join('');
-    })
-    .catch(function(e) {
-      dbg('loadConfig: ERROR', e);
-      document.querySelector('#configTable tbody').innerHTML =
-        '<tr><td colspan="2" class="text-center text-error">Failed to load</td></tr>';
-    });
+  Promise.all([
+    fetch('/api/config').then(function(r) { return r.json(); }),
+    fetch('/api/mappings').then(function(r) { return r.json(); }).catch(function() { return []; })
+  ]).then(function(results) {
+    var cfg = results[0];
+    var mappings = results[1];
+    var mappingFiles = (mappings.files || mappings || []);
+    dbg('loadConfig: got config', cfg);
+    cachedCfg = cfg;
+
+    // Build output details
+    var outMode = cfg.output?.mode ?? '--';
+    var outDetail = outMode;
+    if (outMode === 'db') {
+      var engine = cfg.output?.db?.engine ?? '';
+      if (engine) outDetail = 'db (' + engine + ')';
+    }
+
+    // Mappings info
+    var mapCount = mappingFiles.length;
+    var mapNames = mappingFiles.map(function(f) { return typeof f === 'string' ? f : f.name || f.filename; });
+    var mapDisplay = mapCount === 0
+      ? '<span class="text-error">None</span>'
+      : '<span class="text-success">' + mapCount + '</span> <span class="opacity-50 text-xs">(' + mapNames.join(', ') + ')</span>';
+
+    var rows = [
+      ['Source', cfg.gateway?.src ?? '--'],
+      ['Database', cfg.gateway?.database ?? '--'],
+      ['Keyspace', (cfg.gateway?.scope || '--') + '.' + (cfg.gateway?.collection || '--')],
+      ['Output', outDetail],
+      ['Format', cfg.output?.output_format ?? 'json'],
+      ['Schema Mappings', mapDisplay],
+      ['Sequential', cfg.processing?.sequential ? 'Yes' : 'No'],
+      ['Halt on Fail', cfg.output?.halt_on_failure !== false ? 'Yes' : 'No']
+    ];
+    document.querySelector('#configTable tbody').innerHTML = rows
+      .map(function(r) { return '<tr><td class="font-medium">' + r[0] + '</td><td class="text-right">' + r[1] + '</td></tr>'; })
+      .join('');
+  }).catch(function(e) {
+    dbg('loadConfig: ERROR', e);
+    document.querySelector('#configTable tbody').innerHTML =
+      '<tr><td colspan="2" class="text-center text-error">Failed to load</td></tr>';
+  });
 }
 
 // ── Fetch & Render Metrics ───────────────────────────────────

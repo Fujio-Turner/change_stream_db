@@ -1578,5 +1578,225 @@ class TestRespTimesDeque(unittest.TestCase):
         self.assertEqual(m._output_resp_times.maxlen, 10000)
 
 
+# ===================================================================
+# _consume_websocket_stream
+# ===================================================================
+
+def _ws_msg(msg_type, data=None):
+    """Create a mock WebSocket message."""
+    m = MagicMock()
+    m.type = msg_type
+    m.data = data
+    return m
+
+
+def _make_ws_params(**overrides):
+    """Return minimal kwargs dict for _consume_websocket_stream."""
+    shutdown = asyncio.Event()
+    params = dict(
+        since="0",
+        changes_url="http://localhost:4984/db/_changes",
+        feed_cfg={"include_docs": True, "heartbeat_ms": 30000},
+        proc_cfg={},
+        retry_cfg={"backoff_base_seconds": 0.01, "backoff_max_seconds": 0.05},
+        src="sync_gateway",
+        http=MagicMock(),
+        session=MagicMock(),
+        basic_auth=None,
+        auth_headers={},
+        base_url="http://localhost:4984/db",
+        output=MagicMock(),
+        dlq=MagicMock(),
+        checkpoint=MagicMock(),
+        semaphore=asyncio.Semaphore(5),
+        shutdown_event=shutdown,
+        metrics=None,
+        every_n_docs=100,
+        max_concurrent=5,
+        timeout_ms=60000,
+    )
+    params.update(overrides)
+    return params
+
+
+class TestConsumeWebsocketStream(unittest.TestCase):
+    """Tests for _consume_websocket_stream()."""
+
+    # ---- helpers ----
+
+    def _make_mock_ws(self, messages):
+        """Return a mock WebSocket whose receive() yields *messages* in order."""
+        ws = AsyncMock()
+        ws.receive = AsyncMock(side_effect=messages)
+        ws.send_json = AsyncMock()
+        ws.closed = False
+        ws.close = AsyncMock()
+        return ws
+
+    # ---- tests ----
+
+    @patch("main._sleep_with_backoff", new_callable=AsyncMock)
+    @patch("main._process_changes_batch", new_callable=AsyncMock)
+    def test_websocket_processes_single_dict_message(self, mock_batch, mock_sleep):
+        """Single dict change row followed by last_seq → calls _process_changes_batch."""
+        change_msg = _ws_msg(
+            aiohttp.WSMsgType.TEXT,
+            json.dumps({"seq": "50", "id": "doc1", "changes": [{"rev": "1-abc"}]}),
+        )
+        last_seq_msg = _ws_msg(
+            aiohttp.WSMsgType.TEXT,
+            json.dumps({"last_seq": "50"}),
+        )
+
+        mock_batch.return_value = ("50", False)
+
+        ws = self._make_mock_ws([change_msg, last_seq_msg])
+        params = _make_ws_params()
+        call_count = 0
+
+        async def _connect(*a, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ws
+            params["shutdown_event"].set()
+            return self._make_mock_ws([])
+
+        params["session"].ws_connect = AsyncMock(side_effect=_connect)
+
+        result = asyncio.run(cw._consume_websocket_stream(**params))
+
+        mock_batch.assert_called_once()
+        args = mock_batch.call_args
+        self.assertEqual(args[0][0], [{"seq": "50", "id": "doc1", "changes": [{"rev": "1-abc"}]}])
+        self.assertEqual(args[0][1], "50")  # last_seq
+        self.assertEqual(result, "50")
+
+    @patch("main._sleep_with_backoff", new_callable=AsyncMock)
+    @patch("main._process_changes_batch", new_callable=AsyncMock)
+    def test_websocket_processes_array_message(self, mock_batch, mock_sleep):
+        """Array of change rows → _process_changes_batch gets both rows."""
+        rows = [
+            {"seq": "50", "id": "doc1", "changes": [{"rev": "1-abc"}]},
+            {"seq": "51", "id": "doc2", "changes": [{"rev": "1-def"}]},
+        ]
+        change_msg = _ws_msg(aiohttp.WSMsgType.TEXT, json.dumps(rows))
+        last_seq_msg = _ws_msg(aiohttp.WSMsgType.TEXT, json.dumps({"last_seq": "51"}))
+
+        mock_batch.return_value = ("51", False)
+
+        ws = self._make_mock_ws([change_msg, last_seq_msg])
+
+        params = _make_ws_params()
+        call_count = 0
+
+        async def _connect(*a, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                params["shutdown_event"].set()
+                return self._make_mock_ws([])
+            return ws
+
+        params["session"].ws_connect = AsyncMock(side_effect=_connect)
+
+        result = asyncio.run(cw._consume_websocket_stream(**params))
+
+        mock_batch.assert_called_once()
+        args = mock_batch.call_args
+        self.assertEqual(args[0][0], rows)
+        self.assertEqual(args[0][1], "51")
+        self.assertEqual(result, "51")
+
+    @patch("main._sleep_with_backoff", new_callable=AsyncMock)
+    @patch("main._process_changes_batch", new_callable=AsyncMock)
+    def test_websocket_last_seq_ends_loop(self, mock_batch, mock_sleep):
+        """A last_seq-only message returns since without calling _process_changes_batch."""
+        last_seq_msg = _ws_msg(aiohttp.WSMsgType.TEXT, json.dumps({"last_seq": "99"}))
+
+        ws = self._make_mock_ws([last_seq_msg])
+
+        params = _make_ws_params()
+        call_count = 0
+
+        async def _connect(*a, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                params["shutdown_event"].set()
+                return self._make_mock_ws([])
+            return ws
+
+        params["session"].ws_connect = AsyncMock(side_effect=_connect)
+
+        result = asyncio.run(cw._consume_websocket_stream(**params))
+
+        mock_batch.assert_not_called()
+        self.assertEqual(result, "99")
+
+    @patch("main._sleep_with_backoff", new_callable=AsyncMock)
+    @patch("main._process_changes_batch", new_callable=AsyncMock)
+    def test_websocket_reconnects_on_close(self, mock_batch, mock_sleep):
+        """CLOSED on first connection → reconnect; second has change + last_seq."""
+        ws1 = self._make_mock_ws([_ws_msg(aiohttp.WSMsgType.CLOSED)])
+
+        change_msg = _ws_msg(
+            aiohttp.WSMsgType.TEXT,
+            json.dumps({"seq": "10", "id": "d1", "changes": [{"rev": "1-x"}]}),
+        )
+        last_seq_msg = _ws_msg(aiohttp.WSMsgType.TEXT, json.dumps({"last_seq": "10"}))
+        ws2 = self._make_mock_ws([change_msg, last_seq_msg])
+
+        mock_batch.return_value = ("10", False)
+
+        params = _make_ws_params()
+        call_count = 0
+
+        async def _connect(*a, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ws1
+            if call_count == 2:
+                return ws2
+            params["shutdown_event"].set()
+            return self._make_mock_ws([])
+
+        params["session"].ws_connect = AsyncMock(side_effect=_connect)
+
+        result = asyncio.run(cw._consume_websocket_stream(**params))
+
+        self.assertGreaterEqual(params["session"].ws_connect.call_count, 2)
+        self.assertEqual(result, "10")
+
+    @patch("main._sleep_with_backoff", new_callable=AsyncMock)
+    @patch("main._process_changes_batch", new_callable=AsyncMock)
+    def test_websocket_connect_failure_retries(self, mock_batch, mock_sleep):
+        """First ws_connect raises ClientError, second succeeds with last_seq."""
+        last_seq_msg = _ws_msg(aiohttp.WSMsgType.TEXT, json.dumps({"last_seq": "5"}))
+        ws = self._make_mock_ws([last_seq_msg])
+
+        params = _make_ws_params()
+        call_count = 0
+
+        async def _connect(*a, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise aiohttp.ClientError("connection refused")
+            if call_count == 2:
+                return ws
+            params["shutdown_event"].set()
+            return self._make_mock_ws([])
+
+        params["session"].ws_connect = AsyncMock(side_effect=_connect)
+
+        result = asyncio.run(cw._consume_websocket_stream(**params))
+
+        self.assertEqual(result, "5")
+        mock_sleep.assert_called()
+        self.assertGreaterEqual(params["session"].ws_connect.call_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

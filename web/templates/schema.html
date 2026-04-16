@@ -83,6 +83,7 @@
         </div>
         <button class="btn btn-info btn-sm" onclick="document.getElementById('dbImportModal').showModal()">🗄️ Import from Database</button>
         <button class="btn btn-warning btn-sm" onclick="document.getElementById('ddlModal').showModal()">📄 Upload DDL</button>
+        <button class="btn btn-primary btn-sm" onclick="validateMapping()">🧪 Validate Mapping</button>
         <span id="statusMsg" class="text-sm ml-auto"></span>
       </div>
     </div>
@@ -181,6 +182,18 @@ CREATE TABLE order_items (
       <form method="dialog" class="modal-backdrop"><button>close</button></form>
     </dialog>
 
+    <!-- Validate Result Modal -->
+    <dialog id="validateModal" class="modal">
+      <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">🧪 Mapping Validation Result</h3>
+        <div id="validateResultContent"></div>
+        <div class="modal-action">
+          <form method="dialog"><button class="btn">Close</button></form>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
     <!-- Split pane: Source (left) | Target Tables (right) -->
     <div class="flex gap-4 flex-1" style="min-height: 500px;">
 
@@ -191,7 +204,7 @@ CREATE TABLE order_items (
             <div class="tabs tabs-boxed mb-3">
               <a class="tab tab-active" id="tabPaste" onclick="switchSourceTab('paste')">Paste JSON</a>
               <a class="tab" id="tabSchema" onclick="switchSourceTab('schema')">JSON Schema</a>
-              <a class="tab" id="tabLive" onclick="switchSourceTab('live')">Live Sample</a>
+              <a class="tab" id="tabLive" onclick="fetchLiveSample()">Live Sample</a>
             </div>
 
             <!-- Paste JSON panel -->
@@ -210,18 +223,14 @@ CREATE TABLE order_items (
                         oninput="onSchemaChange()"></textarea>
             </div>
 
-            <!-- Live Sample panel -->
+            <!-- Live Sample panel (populated via fetchLiveSample into sourceEditor) -->
             <div id="panelLive" class="flex-1 flex-col hidden">
               <div class="flex items-center gap-2 mb-3">
                 <button class="btn btn-primary btn-sm" onclick="fetchLiveSample()" id="btnFetchSample">
-                  🎲 Random Sample from _changes Feed
+                  🎲 Fetch Another Random Sample
                 </button>
                 <span id="liveSampleStatus" class="text-sm opacity-60"></span>
               </div>
-              <textarea id="liveEditor" class="textarea textarea-bordered w-full font-mono text-sm flex-1"
-                        style="min-height: 200px; resize: vertical;"
-                        placeholder="Click the button above to fetch a live document..."
-                        readonly></textarea>
             </div>
 
             <!-- Extracted Fields -->
@@ -388,6 +397,7 @@ var TRANSFORMS = [
   'coalesce(,"")',
   'coalesce(,0)',
   // ── Date / Time ──
+  'to_date()',
   'to_iso8601()',
   'to_epoch()',
   'from_epoch()',
@@ -666,6 +676,13 @@ function switchSourceTab(tab) {
     if (t === tab) { panel.classList.remove('hidden'); panel.classList.add('flex'); }
     else { panel.classList.add('hidden'); panel.classList.remove('flex'); }
   });
+  // Always show the main source editor (paste panel uses it directly,
+  // live/schema populate it)
+  var pastePanel = document.getElementById('panelPaste');
+  if (tab !== 'paste') {
+    pastePanel.classList.remove('hidden');
+    pastePanel.classList.add('flex');
+  }
 }
 
 // ── Extract JSON paths from an object ────────────────────────
@@ -760,11 +777,33 @@ function onSchemaChange() {
   try {
     var schema = JSON.parse(text);
     renderSourceFields(extractFromSchema(schema));
+    // Generate sample JSON from schema and populate source editor
+    var sample = generateSampleFromSchema(schema);
+    if (sample) {
+      document.getElementById('sourceEditor').value = JSON.stringify(sample, null, 2);
+    }
   } catch (e) { renderSourceFields([]); }
+}
+
+function generateSampleFromSchema(schema) {
+  if (!schema || !schema.properties) return null;
+  var obj = {};
+  Object.keys(schema.properties).forEach(function(k) {
+    var prop = schema.properties[k];
+    var t = prop.type || 'string';
+    if (t === 'string') obj[k] = prop.example || prop.default || '';
+    else if (t === 'number' || t === 'integer') obj[k] = prop.example || prop.default || 0;
+    else if (t === 'boolean') obj[k] = prop.example || prop.default || false;
+    else if (t === 'array') obj[k] = prop.example || [];
+    else if (t === 'object' && prop.properties) obj[k] = generateSampleFromSchema(prop) || {};
+    else obj[k] = null;
+  });
+  return obj;
 }
 
 // ── Live sample fetch ────────────────────────────────────────
 async function fetchLiveSample() {
+  switchSourceTab('live');
   var btn = document.getElementById('btnFetchSample');
   var status = document.getElementById('liveSampleStatus');
   btn.classList.add('loading');
@@ -774,8 +813,8 @@ async function fetchLiveSample() {
     var data = await res.json();
     if (data.error) { status.textContent = data.detail || data.error; btn.classList.remove('loading'); return; }
     var pretty = JSON.stringify(data.doc, null, 2);
-    document.getElementById('liveEditor').value = pretty;
-    renderSourceFields(extractPaths(data.doc));
+    document.getElementById('sourceEditor').value = pretty;
+    onSourceChange();
     var pool = data.pool_size || 1;
     status.textContent = 'Random pick from ' + pool + ' docs — ' + (data.doc._id || 'unknown');
   } catch (e) {
@@ -1294,7 +1333,7 @@ function downloadMapping() {
   URL.revokeObjectURL(a.href);
 }
 
-async function loadFileList() {
+async function loadFileList(autoLoadFirst) {
   try {
     var res = await fetch('/api/mappings');
     var data = await res.json();
@@ -1306,6 +1345,11 @@ async function loadFileList() {
       return '<li class="flex"><a class="flex-1" onclick="openFile(\'' + name + '\')">' + name + '</a>' +
         '<button class="btn btn-ghost btn-xs text-error" onclick="event.stopPropagation(); deleteFile(\'' + name + '\')">×</button></li>';
     }).join('');
+    // Auto-load first file on page load
+    if (autoLoadFirst && !currentFile && files.length) {
+      var firstName = typeof files[0] === 'string' ? files[0] : files[0].name || files[0].filename;
+      openFile(firstName);
+    }
   } catch (e) {
     document.getElementById('fileListDropdown').innerHTML = '<li><a class="text-error">Failed to load</a></li>';
   }
@@ -1367,6 +1411,48 @@ async function deleteFile(name) {
     showStatus('Deleted ' + name, 'success');
     loadFileList();
   } catch (e) { showStatus('Delete failed: ' + e.message, 'error'); }
+}
+
+async function validateMapping() {
+  saveCurrentTableEdits();
+  var mapping = buildMapping();
+  var sourceText = document.getElementById('sourceEditor').value.trim();
+  if (!sourceText) { showStatus('Paste a source JSON document first', 'error'); return; }
+  var doc;
+  try { doc = JSON.parse(sourceText); } catch (e) { showStatus('Source JSON is invalid', 'error'); return; }
+  try {
+    var res = await fetch('/api/mappings/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mapping: mapping, doc: doc })
+    });
+    var data = await res.json();
+    if (data.error) { showStatus('Validate error: ' + data.error, 'error'); return; }
+    // Build result display
+    var html = '<div class="space-y-3">';
+    html += '<div class="flex items-center gap-2"><span class="badge ' + (data.matches ? 'badge-success' : 'badge-error') + '">' + (data.matches ? '✓ Matches' : '✗ No Match') + '</span></div>';
+    if (data.ops && data.ops.length) {
+      html += '<div class="text-sm font-semibold mt-2">' + data.ops.length + ' SQL operation(s):</div>';
+      data.ops.forEach(function(op, i) {
+        html += '<div class="bg-base-200 rounded-lg p-3">';
+        html += '<div class="text-xs opacity-60 mb-1">#' + (i+1) + ' ' + op.type + ' → ' + op.table + '</div>';
+        html += '<pre class="text-xs font-mono whitespace-pre-wrap break-all">' + escapeHtml(op.sql) + '</pre>';
+        if (op.params && op.params.length) {
+          html += '<div class="text-xs opacity-60 mt-1">Params: ' + escapeHtml(JSON.stringify(op.params)) + '</div>';
+        }
+        html += '</div>';
+      });
+    } else if (data.matches) {
+      html += '<div class="text-sm opacity-60">No SQL operations generated</div>';
+    }
+    html += '</div>';
+    document.getElementById('validateResultContent').innerHTML = html;
+    document.getElementById('validateModal').showModal();
+  } catch (e) { showStatus('Validate failed: ' + e.message, 'error'); }
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function showStatus(msg, type) {
@@ -1735,7 +1821,7 @@ async function parseDDL() {
 }
 
 // ── Init ─────────────────────────────────────────────────────
-loadFileList();
+loadFileList(true);
 loadDbDrivers();
 </script>
 

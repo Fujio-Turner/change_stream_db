@@ -9,4 +9,4 @@ icecream>=2.1,<3
 #   pip install pyyaml      # for output_format=yaml
 
 # RDBMS output drivers (install the one you need):
-#   pip install asyncpg    # for PostgreSQL output
+asyncpg                    # for PostgreSQL output

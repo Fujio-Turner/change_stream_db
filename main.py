@@ -254,14 +254,43 @@ async def _metrics_handler(request: aiohttp.web.Request) -> aiohttp.web.Response
     )
 
 
-async def start_metrics_server(metrics: MetricsCollector, host: str, port: int) -> aiohttp.web.AppRunner:
+async def _restart_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """POST /_restart — signal the changes feed to restart with fresh config."""
+    restart_event: asyncio.Event | None = request.app.get("restart_event")
+    if restart_event is None:
+        return aiohttp.web.json_response({"error": "restart not supported"}, status=500)
+    log_event(logger, "info", "CONTROL", "restart requested via /_restart endpoint")
+    restart_event.set()
+    return aiohttp.web.json_response({"ok": True, "message": "restart signal sent"})
+
+
+async def _shutdown_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """POST /_shutdown — graceful shutdown: stop feed, finish outputs, exit."""
+    shutdown_event: asyncio.Event | None = request.app.get("shutdown_event")
+    if shutdown_event is None:
+        return aiohttp.web.json_response({"error": "shutdown not supported"}, status=500)
+    log_event(logger, "info", "CONTROL", "graceful shutdown requested via /_shutdown endpoint")
+    shutdown_event.set()
+    return aiohttp.web.json_response({"ok": True, "message": "shutdown signal sent"})
+
+
+async def start_metrics_server(metrics: MetricsCollector, host: str, port: int,
+                               restart_event: asyncio.Event | None = None,
+                               shutdown_event: asyncio.Event | None = None,
+                               ) -> aiohttp.web.AppRunner:
     """Start a lightweight HTTP server that serves /_metrics in Prometheus format."""
     from aiohttp import web
 
     app = web.Application()
     app["metrics"] = metrics
+    if restart_event is not None:
+        app["restart_event"] = restart_event
+    if shutdown_event is not None:
+        app["shutdown_event"] = shutdown_event
     app.router.add_get("/_metrics", _metrics_handler)
     app.router.add_get("/metrics", _metrics_handler)
+    app.router.add_post("/_restart", _restart_handler)
+    app.router.add_post("/_shutdown", _shutdown_handler)
 
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
@@ -1440,12 +1469,176 @@ async def _consume_continuous_stream(
     return since
 
 
+async def _consume_websocket_stream(
+    *,
+    since: str,
+    changes_url: str,
+    feed_cfg: dict,
+    proc_cfg: dict,
+    retry_cfg: dict,
+    src: str,
+    http: RetryableHTTP,
+    session: aiohttp.ClientSession,
+    basic_auth: aiohttp.BasicAuth | None,
+    auth_headers: dict,
+    base_url: str,
+    output: "OutputForwarder",
+    dlq: "DeadLetterQueue",
+    checkpoint: Checkpoint,
+    semaphore: asyncio.Semaphore,
+    shutdown_event: asyncio.Event,
+    metrics: MetricsCollector | None,
+    every_n_docs: int,
+    max_concurrent: int,
+    timeout_ms: int,
+) -> str:
+    """
+    WebSocket mode: open a real WebSocket connection to the _changes
+    endpoint and read change rows as messages.
+
+    Sync Gateway expects:
+      1. ws:// (or wss://) connection to {keyspace}/_changes?feed=websocket
+      2. After connection, send a JSON payload with parameters (since, etc.)
+      3. Server streams back one JSON message per change row, ending with
+         a final message containing only "last_seq".
+    """
+    # Build ws:// URL from http:// URL
+    ws_url = changes_url.replace("https://", "wss://").replace("http://", "ws://")
+    ws_url += "?feed=websocket"
+
+    # Build the JSON payload to send after connection (mirrors sg_websocket_feed.py)
+    payload: dict = {"since": since}
+    if feed_cfg.get("include_docs"):
+        payload["include_docs"] = True
+    if feed_cfg.get("active_only") and src != "couchdb":
+        payload["active_only"] = True
+    channels = feed_cfg.get("channels", [])
+    if channels and src != "couchdb":
+        payload["filter"] = "sync_gateway/bychannel"
+        payload["channels"] = ",".join(channels)
+
+    # Build WebSocket headers for auth
+    ws_headers = dict(auth_headers) if auth_headers else {}
+    if basic_auth:
+        import base64
+        credentials = f"{basic_auth.login}:{basic_auth.password}"
+        ws_headers["Authorization"] = "Basic " + base64.b64encode(
+            credentials.encode("utf-8")
+        ).decode("utf-8")
+
+    logger.info("WEBSOCKET stream: connecting from since=%s", since)
+    ic(ws_url, payload, since, "websocket stream")
+
+    failure_count = 0
+
+    while not shutdown_event.is_set():
+        try:
+            ws = await session.ws_connect(
+                ws_url,
+                headers=ws_headers,
+                heartbeat=None,  # SG does not respond to WS ping/pong
+                timeout=aiohttp.ClientWSTimeout(ws_close=timeout_ms / 1000.0),
+            )
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            failure_count += 1
+            logger.error("WebSocket connect failed (attempt #%d): %s", failure_count, exc)
+            if metrics:
+                metrics.inc("poll_errors_total")
+            await _sleep_with_backoff(retry_cfg, failure_count, shutdown_event)
+            continue
+
+        logger.info("WEBSOCKET stream: connected, sending payload")
+        failure_count = 0
+
+        try:
+            # Send the request payload
+            await ws.send_json(payload)
+
+            while not shutdown_event.is_set():
+                msg = await ws.receive()
+
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    # SG sends empty frames as heartbeats – skip them
+                    if not msg.data or not msg.data.strip():
+                        continue
+
+                    if metrics:
+                        metrics.inc("bytes_received_total", len(msg.data))
+
+                    try:
+                        parsed = json.loads(msg.data)
+                    except json.JSONDecodeError:
+                        logger.warning("WebSocket: unparseable message (length=%d)", len(msg.data))
+                        continue
+
+                    # SG may send a single dict or an array of change rows
+                    rows = parsed if isinstance(parsed, list) else [parsed]
+
+                    # Check for final message: dict with "last_seq" and no "id"
+                    if isinstance(parsed, dict) and "last_seq" in parsed and "id" not in parsed:
+                        since = str(parsed["last_seq"])
+                        ic(since, "websocket last_seq received")
+                        payload["since"] = since
+                        break
+
+                    # Filter out any last_seq-only sentinel dicts in an array
+                    change_rows = [r for r in rows if isinstance(r, dict) and "id" in r]
+                    if not change_rows:
+                        continue
+
+                    last_seq = str(change_rows[-1].get("seq", since))
+                    ic(
+                        len(change_rows), last_seq, "websocket batch",
+                        [{k: r.get(k) for k in ("_id", "_rev", "_deleted", "_removed", "seq") if k in r}
+                         for r in change_rows],
+                    )
+
+                    since, output_failed = await _process_changes_batch(
+                        change_rows, last_seq, since,
+                        feed_cfg=feed_cfg, proc_cfg=proc_cfg, output=output, dlq=dlq,
+                        checkpoint=checkpoint, http=http, base_url=base_url,
+                        basic_auth=basic_auth, auth_headers=auth_headers,
+                        semaphore=semaphore, src=src, metrics=metrics,
+                        every_n_docs=every_n_docs, max_concurrent=max_concurrent,
+                    )
+                    payload["since"] = since
+
+                    if output_failed:
+                        logger.warning("Output failed during WebSocket stream – reconnecting")
+                        break
+
+                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSING):
+                    logger.warning("WebSocket stream closed by server")
+                    break
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    logger.warning("WebSocket stream error: %s", ws.exception())
+                    break
+
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            failure_count += 1
+            logger.warning("WebSocket stream read error: %s", exc)
+            if metrics:
+                metrics.inc("poll_errors_total")
+        finally:
+            if not ws.closed:
+                await ws.close()
+
+        if failure_count > 0:
+            await _sleep_with_backoff(retry_cfg, failure_count, shutdown_event)
+        else:
+            # Clean close – reconnect immediately for more changes
+            continue
+
+    return since
+
+
 # ---------------------------------------------------------------------------
 # Core: changes feed loop
 # ---------------------------------------------------------------------------
 
 async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
-                       metrics: MetricsCollector | None = None) -> None:
+                       metrics: MetricsCollector | None = None,
+                       restart_event: asyncio.Event | None = None) -> None:
     gw = cfg["gateway"]
     auth_cfg = cfg["auth"]
     feed_cfg = cfg["changes_feed"]
@@ -1454,6 +1647,21 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
     retry_cfg = cfg.get("retry", {})
 
     log_event(logger, "info", "PROCESSING", "source type: %s" % src)
+
+    # Combine shutdown + restart into a single stop_event so all inner loops
+    # (catch-up, continuous, websocket, longpoll) break on either signal.
+    stop_event = asyncio.Event()
+
+    async def _watch_events() -> None:
+        waiters = [asyncio.ensure_future(shutdown_event.wait())]
+        if restart_event is not None:
+            waiters.append(asyncio.ensure_future(restart_event.wait()))
+        done, pending = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+        stop_event.set()
+        for f in pending:
+            f.cancel()
+
+    watcher_task = asyncio.create_task(_watch_events())
 
     base_url = build_base_url(gw)
     ssl_ctx = build_ssl_context(gw)
@@ -1480,15 +1688,32 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
 
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         http = RetryableHTTP(session, retry_cfg)
-        output = OutputForwarder(session, out_cfg, dry_run, metrics=metrics,
-                                        build_basic_auth_fn=build_basic_auth,
-                                        build_auth_headers_fn=build_auth_headers,
-                                        retryable_http_cls=RetryableHTTP)
+
+        output_mode = out_cfg.get("mode", "stdout")
+        db_output = None  # track DB forwarder for cleanup
+
+        if output_mode == "db":
+            db_engine = out_cfg.get("db", {}).get("engine", "postgres")
+            if db_engine == "postgres":
+                from db.db_postgres import PostgresOutputForwarder
+                output = PostgresOutputForwarder(out_cfg, dry_run, metrics=metrics)
+            else:
+                raise ValueError(f"Unsupported db engine: {db_engine}")
+            await output.connect()
+            db_output = output
+            log_event(logger, "info", "OUTPUT",
+                      f"database output ready (engine={db_engine})")
+        else:
+            output = OutputForwarder(session, out_cfg, dry_run, metrics=metrics,
+                                            build_basic_auth_fn=build_basic_auth,
+                                            build_auth_headers_fn=build_auth_headers,
+                                            retryable_http_cls=RetryableHTTP)
+
         dlq = DeadLetterQueue(out_cfg.get("dead_letter_path", ""))
         every_n_docs = cfg.get("checkpoint", {}).get("every_n_docs", 0)
 
         # If output is HTTP, verify the endpoint is reachable before starting
-        if out_cfg.get("mode") == "http":
+        if output_mode == "http":
             if not await output.test_reachable():
                 if out_cfg.get("halt_on_failure", True):
                     log_event(logger, "error", "OUTPUT",
@@ -1498,7 +1723,7 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
                     log_event(logger, "warn", "OUTPUT",
                               "output endpoint unreachable at startup – continuing (halt_on_failure=false)")
             # Start periodic heartbeat if configured
-            await output.start_heartbeat(shutdown_event)
+            await output.start_heartbeat(stop_event)
 
         # Load checkpoint from SG _local doc (CBL-style)
         since = feed_cfg.get("since", "0")
@@ -1539,89 +1764,117 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
             every_n_docs=every_n_docs, max_concurrent=max_concurrent,
         )
 
-        # ── Continuous mode: 2-phase catch-up then stream ────────────────
-        if feed_type == "continuous":
-            log_event(logger, "info", "CHANGES", "feed mode: continuous (catch-up → stream)")
-            while not shutdown_event.is_set():
+        try:
+            # ── Continuous mode: 2-phase catch-up then stream ────────────────
+            if feed_type == "continuous":
+                log_event(logger, "info", "CHANGES", "feed mode: continuous (catch-up → stream)")
+                while not stop_event.is_set():
+                    since = await _catch_up_normal(
+                        since=since, changes_url=changes_url,
+                        retry_cfg=retry_cfg, shutdown_event=stop_event,
+                        timeout_ms=timeout_ms,
+                        changes_http_timeout=changes_http_timeout,
+                        **batch_kwargs,
+                    )
+                    if stop_event.is_set():
+                        break
+                    since = await _consume_continuous_stream(
+                        since=since, changes_url=changes_url,
+                        retry_cfg=retry_cfg, session=session,
+                        shutdown_event=stop_event,
+                        timeout_ms=timeout_ms,
+                        **batch_kwargs,
+                    )
+                return
+
+            # ── WebSocket mode: catch-up then stream via ws:// ───────────────
+            if feed_type == "websocket":
+                log_event(logger, "info", "CHANGES", "feed mode: websocket (catch-up → ws stream)")
+                # Phase 1: catch up using normal HTTP requests
                 since = await _catch_up_normal(
                     since=since, changes_url=changes_url,
-                    retry_cfg=retry_cfg, shutdown_event=shutdown_event,
+                    retry_cfg=retry_cfg, shutdown_event=stop_event,
                     timeout_ms=timeout_ms,
                     changes_http_timeout=changes_http_timeout,
                     **batch_kwargs,
                 )
-                if shutdown_event.is_set():
+                if not stop_event.is_set():
+                    # Phase 2: switch to WebSocket stream
+                    since = await _consume_websocket_stream(
+                        since=since, changes_url=changes_url,
+                        retry_cfg=retry_cfg, session=session,
+                        shutdown_event=stop_event,
+                        timeout_ms=timeout_ms,
+                        **batch_kwargs,
+                    )
+                return
+
+            # ── Polled mode (longpoll / normal / sse) ────────────────────────
+            while not stop_event.is_set():
+                params = _build_changes_params(feed_cfg, src, since, feed_type, timeout_ms)
+                # throttle_feed overrides limit – eat the feed one bite at a time
+                if throttle > 0:
+                    params["limit"] = str(throttle)
+                elif feed_cfg.get("limit", 0) > 0:
+                    params["limit"] = str(feed_cfg["limit"])
+
+                ic(changes_url, params, since)
+
+                try:
+                    resp = await http.request("GET", changes_url, params=params,
+                                              auth=basic_auth, headers=auth_headers,
+                                              timeout=changes_http_timeout)
+                    raw_body = await resp.read()
+                    body = json.loads(raw_body)
+                    if metrics:
+                        metrics.inc("bytes_received_total", len(raw_body))
+                    resp.release()
+                except (ClientHTTPError, RedirectHTTPError) as exc:
+                    logger.error("Non-retryable error polling _changes: %s", exc)
+                    if metrics:
+                        metrics.inc("poll_errors_total")
                     break
-                since = await _consume_continuous_stream(
-                    since=since, changes_url=changes_url,
-                    retry_cfg=retry_cfg, session=session,
-                    shutdown_event=shutdown_event,
-                    timeout_ms=timeout_ms,
+                except (ConnectionError, ServerHTTPError) as exc:
+                    logger.error("Retries exhausted polling _changes: %s", exc)
+                    if metrics:
+                        metrics.inc("poll_errors_total")
+                    await _sleep_or_shutdown(feed_cfg.get("poll_interval_seconds", 10), stop_event)
+                    continue
+
+                results = body.get("results", [])
+                last_seq = body.get("last_seq", since)
+                ic(len(results), last_seq)
+
+                since, output_failed = await _process_changes_batch(
+                    results, str(last_seq), since,
                     **batch_kwargs,
                 )
-            return
 
-        # ── Polled mode (longpoll / normal / sse / websocket) ────────────
-        while not shutdown_event.is_set():
-            params = _build_changes_params(feed_cfg, src, since, feed_type, timeout_ms)
-            # throttle_feed overrides limit – eat the feed one bite at a time
-            if throttle > 0:
-                params["limit"] = str(throttle)
-            elif feed_cfg.get("limit", 0) > 0:
-                params["limit"] = str(feed_cfg["limit"])
+                if output_failed:
+                    logger.warning(
+                        "Waiting %ds before retrying (checkpoint held at since=%s)",
+                        feed_cfg.get("poll_interval_seconds", 10), since,
+                    )
+                    await _sleep_or_shutdown(feed_cfg.get("poll_interval_seconds", 10), stop_event)
+                    continue
 
-            ic(changes_url, params, since)
+                if not results:
+                    await _sleep_or_shutdown(feed_cfg.get("poll_interval_seconds", 10), stop_event)
+                    continue
 
-            try:
-                resp = await http.request("GET", changes_url, params=params,
-                                          auth=basic_auth, headers=auth_headers,
-                                          timeout=changes_http_timeout)
-                raw_body = await resp.read()
-                body = json.loads(raw_body)
-                if metrics:
-                    metrics.inc("bytes_received_total", len(raw_body))
-                resp.release()
-            except (ClientHTTPError, RedirectHTTPError) as exc:
-                logger.error("Non-retryable error polling _changes: %s", exc)
-                if metrics:
-                    metrics.inc("poll_errors_total")
-                break
-            except (ConnectionError, ServerHTTPError) as exc:
-                logger.error("Retries exhausted polling _changes: %s", exc)
-                if metrics:
-                    metrics.inc("poll_errors_total")
-                await _sleep_or_shutdown(feed_cfg.get("poll_interval_seconds", 10), shutdown_event)
-                continue
+                # When throttling: if we got a full batch there are more rows
+                # waiting — loop immediately for the next bite. Only sleep once
+                # we get a partial batch (caught up).
+                if throttle > 0 and len(results) >= throttle:
+                    logger.info("Throttle: got full batch (%d), fetching next bite immediately", len(results))
+                    continue
 
-            results = body.get("results", [])
-            last_seq = body.get("last_seq", since)
-            ic(len(results), last_seq)
-
-            since, output_failed = await _process_changes_batch(
-                results, str(last_seq), since,
-                **batch_kwargs,
-            )
-
-            if output_failed:
-                logger.warning(
-                    "Waiting %ds before retrying (checkpoint held at since=%s)",
-                    feed_cfg.get("poll_interval_seconds", 10), since,
-                )
-                await _sleep_or_shutdown(feed_cfg.get("poll_interval_seconds", 10), shutdown_event)
-                continue
-
-            if not results:
-                await _sleep_or_shutdown(feed_cfg.get("poll_interval_seconds", 10), shutdown_event)
-                continue
-
-            # When throttling: if we got a full batch there are more rows
-            # waiting — loop immediately for the next bite. Only sleep once
-            # we get a partial batch (caught up).
-            if throttle > 0 and len(results) >= throttle:
-                logger.info("Throttle: got full batch (%d), fetching next bite immediately", len(results))
-                continue
-
-            await _sleep_or_shutdown(feed_cfg.get("poll_interval_seconds", 10), shutdown_event)
+                await _sleep_or_shutdown(feed_cfg.get("poll_interval_seconds", 10), stop_event)
+        finally:
+            watcher_task.cancel()
+            await output.stop_heartbeat() if hasattr(output, 'stop_heartbeat') else None
+            if db_output is not None:
+                await db_output.close()
 
 
 async def _sleep_or_shutdown(seconds: float, event: asyncio.Event) -> None:
@@ -1798,6 +2051,7 @@ def main() -> None:
         sys.exit(0 if ok else 1)
 
     shutdown_event = asyncio.Event()
+    restart_event = asyncio.Event()
 
     def _signal_handler() -> None:
         logger.info("Shutdown signal received")
@@ -1836,10 +2090,40 @@ def main() -> None:
             metrics_host = metrics_cfg.get("host", "0.0.0.0")
             metrics_port = metrics_cfg.get("port", 9090)
             metrics_runner = loop.run_until_complete(
-                start_metrics_server(metrics, metrics_host, metrics_port)
+                start_metrics_server(metrics, metrics_host, metrics_port,
+                                     restart_event=restart_event,
+                                     shutdown_event=shutdown_event)
             )
 
-        loop.run_until_complete(poll_changes(cfg, src, shutdown_event, metrics=metrics))
+        # ── Restart loop: reload config & re-enter poll_changes ──────
+        while not shutdown_event.is_set():
+            restart_event.clear()
+            log_event(logger, "info", "PROCESSING",
+                      f"starting changes feed (feed_type={cfg.get('changes_feed', {}).get('feed_type', 'longpoll')})")
+
+            loop.run_until_complete(poll_changes(
+                cfg, src, shutdown_event, metrics=metrics,
+                restart_event=restart_event,
+            ))
+
+            if shutdown_event.is_set():
+                break
+
+            # restart_event was set — reload config and restart
+            log_event(logger, "info", "CONTROL", "reloading config for restart")
+            cfg = load_config(args.config)
+            _ensure_full_logging_config(cfg)
+            configure_logging(cfg.get("logging", {}))
+            src, warnings, errors = validate_config(cfg)
+            if errors:
+                for e in errors:
+                    logger.error("CONFIG ERROR: %s", e)
+                logger.error("Config has errors – keeping previous feed running would have stopped; shutting down")
+                break
+            for w in warnings:
+                logger.warning("CONFIG WARNING: %s", w)
+            log_event(logger, "info", "CONTROL", "config reloaded – restarting feed")
+
     except KeyboardInterrupt:
         logger.info("Interrupted")
     finally:

@@ -32,11 +32,12 @@ class PostgresOutputForwarder:
             raise RuntimeError("asyncpg library not installed – pip install asyncpg")
 
         self._mode = "postgres"
-        pg_cfg = out_cfg.get("postgres", {})
+        # Support both output.db.{host,…} (UI config) and output.postgres.{host,…}
+        pg_cfg = out_cfg.get("db", None) or out_cfg.get("postgres", {})
         self._host = pg_cfg.get("host", "localhost")
         self._port = pg_cfg.get("port", 5432)
         self._database = pg_cfg.get("database", "")
-        self._user = pg_cfg.get("user", "postgres")
+        self._user = pg_cfg.get("username", pg_cfg.get("user", "postgres"))
         self._password = pg_cfg.get("password", "")
         self._schema = pg_cfg.get("schema", "public")
         self._ssl = pg_cfg.get("ssl", False)
@@ -48,8 +49,11 @@ class PostgresOutputForwarder:
         self._metrics = metrics
 
         self._pool: asyncpg.Pool | None = None
-        self._mapper = None  # SchemaMapper, loaded lazily
+        self._mappers: list = []  # List of SchemaMapper instances
+        # Support mapping_file (single file) or schema_mappings.path (directory)
         self._mapping_file = out_cfg.get("mapping_file", "")
+        sm = pg_cfg.get("schema_mappings", {})
+        self._mappings_dir = sm.get("path", "") if sm.get("enabled") else ""
 
         # Response time tracking
         self._resp_times: deque[float] = deque(maxlen=10000)
@@ -78,11 +82,22 @@ class PostgresOutputForwarder:
                      self._host, self._port, self._database,
                      self._pool_min, self._pool_max)
 
-        # Load mapping
+        # Load mappings from filesystem (bind-mounted, shared with admin-ui)
+        from schema.mapper import SchemaMapper
+        from pathlib import Path
+
+        if self._mappings_dir:
+            mdir = Path(self._mappings_dir)
+            if mdir.is_dir():
+                for f in sorted(mdir.glob("*.json")):
+                    self._mappers.append(SchemaMapper.from_file(f))
+                    logger.info("Loaded schema mapping from %s", f)
         if self._mapping_file:
-            from schema.mapper import SchemaMapper
-            self._mapper = SchemaMapper.from_file(self._mapping_file)
+            self._mappers.append(SchemaMapper.from_file(self._mapping_file))
             logger.info("Loaded schema mapping from %s", self._mapping_file)
+
+        if not self._mappers:
+            logger.warning("No schema mappings loaded – documents will be skipped")
 
     async def close(self) -> None:
         """Close the connection pool."""
@@ -98,15 +113,21 @@ class PostgresOutputForwarder:
         doc_id = doc.get("_id", doc.get("id", "unknown"))
         is_delete = method == "DELETE"
 
-        if not self._mapper:
+        if not self._mappers:
             logger.warning("No schema mapping loaded – skipping doc %s", doc_id)
             return {"ok": False, "doc_id": doc_id, "error": "no_mapping"}
 
-        if not self._mapper.matches(doc):
-            logger.debug("Doc %s does not match mapping filter – skipping", doc_id)
+        # Find the first matching mapper
+        mapper = None
+        for m in self._mappers:
+            if m.matches(doc):
+                mapper = m
+                break
+        if not mapper:
+            logger.debug("Doc %s does not match any mapping filter – skipping", doc_id)
             return {"ok": True, "doc_id": doc_id, "skipped": True}
 
-        ops = self._mapper.map_document(doc, is_delete=is_delete)
+        ops = mapper.map_document(doc, is_delete=is_delete)
         if not ops:
             return {"ok": True, "doc_id": doc_id, "ops": 0}
 
