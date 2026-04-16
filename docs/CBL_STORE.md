@@ -28,60 +28,63 @@ What **stays the same:**
 
 ## CBL Database Layout
 
-One database: `changes_worker_db`, stored at `/app/data/changes_worker_db/`.
+One database: `changes_worker_db`, stored at `/app/data/changes_worker_db.cblite2/`.
 
-### Document Schema
+Data is organized into **scoped collections** under the `changes-worker` scope. The Python CBL bindings don't expose the collections API, so `cbl_store.py` calls the raw CFFI functions (`lib.CBLDatabase_CreateCollection`, `lib.CBLCollection_SaveDocument`, etc.) directly.
+
+### Scope & Collection Schema
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  CBL Database: changes_worker_db                             │
 │                                                              │
-│  doc_id: "config"                                            │
-│  ├── type: "config"                                          │
-│  └── data: "{...}"     ← full config JSON as string          │
-│                                                              │
-│  doc_id: "checkpoint:{uuid}"                                 │
-│  ├── type: "checkpoint"                                      │
-│  ├── client_id: "changes_worker"                             │
-│  ├── SGs_Seq: "1500"                                         │
-│  ├── time: 1768521600                                        │
-│  └── remote: 42                                              │
-│                                                              │
-│  doc_id: "mapping:order.yaml"                                │
-│  ├── type: "mapping"                                         │
-│  ├── name: "order.yaml"                                      │
-│  └── content: "source:\n  match:..."  ← YAML as string      │
-│                                                              │
-│  doc_id: "mapping:product.yaml"                              │
-│  ├── type: "mapping"                                         │
-│  ├── name: "product.yaml"                                    │
-│  └── content: "source:\n  match:..."                         │
-│                                                              │
-│  doc_id: "dlq:order::12345:1768521600"                       │
-│  ├── type: "dlq"                                             │
-│  ├── doc_id_original: "order::12345"                         │
-│  ├── seq: "42"                                               │
-│  ├── method: "PUT"                                           │
-│  ├── status: 500                                             │
-│  ├── error: "Internal Server Error"                          │
-│  ├── time: 1768521600                                        │
-│  ├── retried: false                                          │
-│  └── doc_data: "{...}"  ← the failed doc as JSON string     │
-│                                                              │
-│  doc_id: "manifest:mappings"                                 │
-│  ├── type: "manifest"                                        │
-│  └── ids: "[\"mapping:order.yaml\",\"mapping:product.yaml\"]"│
-│                                                              │
-│  doc_id: "manifest:dlq"                                      │
-│  ├── type: "manifest"                                        │
-│  └── ids: "[\"dlq:order::12345:1768521600\",...]"            │
+│  Scope: changes-worker                                       │
+│  ├── Collection: config                                      │
+│  │   └── doc_id: "config"                                    │
+│  │       ├── type: "config"                                  │
+│  │       └── data: "{...}"     ← full config JSON as string  │
+│  │                                                           │
+│  ├── Collection: checkpoints                                 │
+│  │   ├── doc_id: "checkpoint:{uuid}"                         │
+│  │   │   ├── type: "checkpoint"                              │
+│  │   │   ├── client_id: "changes_worker"                     │
+│  │   │   ├── SGs_Seq: "1500"                                 │
+│  │   │   ├── time: 1768521600                                │
+│  │   │   └── remote: 42                                      │
+│  │   └── doc_id: "manifest:checkpoints"                      │
+│  │       ├── type: "manifest"                                │
+│  │       └── ids: "[...]"                                    │
+│  │                                                           │
+│  ├── Collection: mappings                                    │
+│  │   ├── doc_id: "mapping:order.yaml"                        │
+│  │   │   ├── type: "mapping"                                 │
+│  │   │   ├── name: "order.yaml"                              │
+│  │   │   └── content: "source:\n  match:..."                 │
+│  │   └── doc_id: "manifest:mappings"                         │
+│  │       ├── type: "manifest"                                │
+│  │       └── ids: "[\"mapping:order.yaml\",...]"             │
+│  │                                                           │
+│  └── Collection: dlq                                         │
+│      ├── doc_id: "dlq:order::12345:1768521600"               │
+│      │   ├── type: "dlq"                                     │
+│      │   ├── doc_id_original: "order::12345"                 │
+│      │   ├── seq: "42"                                       │
+│      │   ├── method: "PUT"                                   │
+│      │   ├── status: 500                                     │
+│      │   ├── error: "Internal Server Error"                  │
+│      │   ├── time: 1768521600                                │
+│      │   ├── retried: false                                  │
+│      │   └── doc_data: "{...}"                               │
+│      └── doc_id: "manifest:dlq"                              │
+│          ├── type: "manifest"                                │
+│          └── ids: "[\"dlq:order::12345:1768521600\",...]"    │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ### Why Manifests?
 
-CBL CE Python bindings don't expose N1QL queries. To list all mappings or all DLQ entries, we maintain manifest documents that track known doc IDs per type (same pattern as `image_to_lucid`). The manifest is updated atomically whenever a doc is created or deleted.
+CBL CE Python bindings don't expose N1QL queries. To list all documents within a collection, we maintain manifest documents that track known doc IDs per type. The manifest lives in the same collection as the documents it indexes (e.g., `manifest:mappings` lives in the `mappings` collection). The manifest is updated atomically whenever a doc is created or deleted.
 
 ### Value Storage Rules
 
@@ -117,26 +120,19 @@ import json, os, time, logging
 try:
     from CouchbaseLite.Database import Database, DatabaseConfiguration
     from CouchbaseLite.Document import MutableDocument
+    from CouchbaseLite._PyCBL import ffi, lib
+    from CouchbaseLite.common import stringParam, sliceToString, gError as _cbl_gError
     USE_CBL = True
 except ImportError:
     USE_CBL = False
 
 CBL_DB_DIR  = os.environ.get("CBL_DB_DIR", "/app/data")
-CBL_DB_NAME = "changes_worker_db"
-
-logger = logging.getLogger("changes_worker")
-
-_db = None  # module-level singleton
-
-def get_db():
-    """Open or return the singleton CBL database handle."""
-    global _db
-    if _db is None:
-        os.makedirs(CBL_DB_DIR, exist_ok=True)
-        config = DatabaseConfiguration(CBL_DB_DIR)
-        _db = Database(CBL_DB_NAME, config)
-        logger.info("CBL database opened: %s/%s", CBL_DB_DIR, CBL_DB_NAME)
-    return _db
+CBL_DB_NAME = os.environ.get("CBL_DB_NAME", "changes_worker_db")
+CBL_SCOPE   = "changes-worker"
+COLL_CONFIG      = "config"
+COLL_CHECKPOINTS = "checkpoints"
+COLL_MAPPINGS    = "mappings"
+COLL_DLQ         = "dlq"
 ```
 
 ### Public API
@@ -173,6 +169,14 @@ class CBLStore:
     def delete_dlq_entry(self, dlq_id: str) -> None:
     def clear_dlq(self) -> None:
     def dlq_count(self) -> int:
+
+    # ── Maintenance ───────────────────────────────────────────
+    def compact(self) -> bool:
+    def reindex(self) -> bool:
+    def integrity_check(self) -> bool:
+    def optimize(self) -> bool:
+    def full_optimize(self) -> bool:
+    def run_all_maintenance(self) -> dict[str, bool]:
 ```
 
 ---
@@ -241,15 +245,14 @@ Create the `CBLStore` class with all CRUD operations. Follow the `image_to_lucid
 - Manifest docs for listing (`manifest:mappings`, `manifest:dlq`)
 
 ```python
-# Upsert pattern (from image_to_lucid)
+# Upsert pattern (using collection helpers)
 def save_config(self, cfg: dict) -> None:
-    doc = self.db.getMutableDocument("config")
+    doc = _coll_get_mutable_doc(self.db, COLL_CONFIG, "config")
     if not doc:
         doc = MutableDocument("config")
     doc["type"] = "config"
     doc["data"] = json.dumps(cfg)
-    doc["updated_at"] = int(time.time())
-    self.db.saveDocument(doc)
+    _coll_save_doc(self.db, COLL_CONFIG, doc)
 ```
 
 **Files changed:** new `cbl_store.py`

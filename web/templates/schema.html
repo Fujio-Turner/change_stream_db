@@ -41,6 +41,7 @@
         <li><a href="/config">Config</a></li>
         <li><a href="/schema" class="active">Schema Mappings</a></li>
         <li><a href="/transforms">Transforms</a></li>
+        <li><a href="/wizard">Wizard</a></li>
         </ul>
       <label class="label cursor-pointer gap-2 ml-4">
         <span class="label-text text-sm">Dark</span>
@@ -80,9 +81,105 @@
             <li><a class="text-base-content/50">Loading...</a></li>
           </ul>
         </div>
+        <button class="btn btn-info btn-sm" onclick="document.getElementById('dbImportModal').showModal()">🗄️ Import from Database</button>
+        <button class="btn btn-warning btn-sm" onclick="document.getElementById('ddlModal').showModal()">📄 Upload DDL</button>
         <span id="statusMsg" class="text-sm ml-auto"></span>
       </div>
     </div>
+
+    <!-- DB Import Modal -->
+    <dialog id="dbImportModal" class="modal">
+      <div class="modal-box w-11/12 max-w-3xl">
+        <h3 class="font-bold text-lg mb-4">🗄️ Import Table Schema from Database</h3>
+        <div class="grid grid-cols-2 gap-3 mb-4">
+          <div>
+            <label class="label label-text text-xs">Database Type</label>
+            <select id="dbType" class="select select-bordered select-sm w-full" onchange="onDbTypeChange()">
+              <option value="">Loading drivers...</option>
+            </select>
+          </div>
+          <div>
+            <label class="label label-text text-xs">Host</label>
+            <input id="dbHost" type="text" class="input input-bordered input-sm w-full" value="localhost" />
+          </div>
+          <div>
+            <label class="label label-text text-xs">Port</label>
+            <input id="dbPort" type="number" class="input input-bordered input-sm w-full" value="5432" />
+          </div>
+          <div>
+            <label class="label label-text text-xs">Database</label>
+            <input id="dbName" type="text" class="input input-bordered input-sm w-full" placeholder="mydb" />
+          </div>
+          <div>
+            <label class="label label-text text-xs">User</label>
+            <input id="dbUser" type="text" class="input input-bordered input-sm w-full" value="postgres" />
+          </div>
+          <div>
+            <label class="label label-text text-xs">Password</label>
+            <input id="dbPassword" type="password" class="input input-bordered input-sm w-full" />
+          </div>
+          <div>
+            <label class="label label-text text-xs">Schema</label>
+            <input id="dbSchema" type="text" class="input input-bordered input-sm w-full" value="public" />
+          </div>
+          <div class="flex items-end">
+            <label class="label cursor-pointer gap-2">
+              <span class="label-text text-xs">SSL</span>
+              <input id="dbSSL" type="checkbox" class="checkbox checkbox-sm" />
+            </label>
+          </div>
+        </div>
+        <div class="flex gap-2 mb-3">
+          <button class="btn btn-primary btn-sm" id="btnTestConn" onclick="testDbConnection()">🔌 Test Connection</button>
+          <button class="btn btn-success btn-sm" id="btnIntrospect" onclick="introspectDb()">📥 Fetch Tables</button>
+          <span id="dbStatus" class="text-sm self-center"></span>
+        </div>
+        <!-- Table list from introspection -->
+        <div id="dbTableList" class="hidden">
+          <div class="divider text-xs">Select tables to import</div>
+          <div id="dbTablesContainer" class="max-h-64 overflow-y-auto space-y-1"></div>
+          <div class="flex gap-2 mt-3">
+            <button class="btn btn-sm" onclick="selectAllDbTables(true)">Select All</button>
+            <button class="btn btn-sm" onclick="selectAllDbTables(false)">Select None</button>
+          </div>
+        </div>
+        <div class="modal-action">
+          <button class="btn btn-success" id="btnImportSelected" onclick="importSelectedTables()" disabled>Import Selected</button>
+          <form method="dialog"><button class="btn">Close</button></form>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- DDL Upload Modal -->
+    <dialog id="ddlModal" class="modal">
+      <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">📄 Import from CREATE TABLE DDL</h3>
+        <p class="text-sm opacity-60 mb-3">Paste one or more CREATE TABLE statements (Postgres, MySQL, MSSQL, or Oracle syntax).</p>
+        <textarea id="ddlInput" class="textarea textarea-bordered w-full font-mono text-sm" rows="12"
+                  placeholder="CREATE TABLE orders (
+  id SERIAL PRIMARY KEY,
+  doc_id VARCHAR(255) NOT NULL,
+  status VARCHAR(50),
+  total NUMERIC(10,2),
+  order_date DATE
+);
+
+CREATE TABLE order_items (
+  id SERIAL PRIMARY KEY,
+  order_doc_id VARCHAR(255) REFERENCES orders(doc_id),
+  product_id VARCHAR(100),
+  qty INTEGER,
+  price NUMERIC(10,2)
+);"></textarea>
+        <div id="ddlStatus" class="text-sm mt-2"></div>
+        <div class="modal-action">
+          <button class="btn btn-success" onclick="parseDDL()">Parse & Import</button>
+          <form method="dialog"><button class="btn">Close</button></form>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
 
     <!-- Split pane: Source (left) | Target Tables (right) -->
     <div class="flex gap-4 flex-1" style="min-height: 500px;">
@@ -229,7 +326,7 @@
   </main>
 
   <footer class="footer footer-center p-4 bg-base-100 text-base-content">
-    <p>Changes Worker v1.1.0</p>
+    <p>Changes Worker v1.4.0</p>
   </footer>
 
 <script>
@@ -1409,8 +1506,237 @@ document.addEventListener('focusout', function(e) {
   }
 });
 
+// ── DB Import & DDL ──────────────────────────────────────────
+var dbDrivers = {};
+var introspectedTables = [];
+var DEFAULT_PORTS = { postgres: 5432, mysql: 3306, mssql: 1433, oracle: 1521 };
+
+async function loadDbDrivers() {
+  try {
+    var res = await fetch('/api/db/drivers');
+    var data = await res.json();
+    dbDrivers = data.drivers || {};
+    var sel = document.getElementById('dbType');
+    var keys = Object.keys(dbDrivers);
+    if (!keys.length) {
+      sel.innerHTML = '<option value="">No RDBMS drivers installed</option>';
+      return;
+    }
+    sel.innerHTML = keys.map(function(k) {
+      return '<option value="' + k + '">' + dbDrivers[k].name + ' (' + dbDrivers[k].driver + ')</option>';
+    }).join('');
+    onDbTypeChange();
+  } catch (e) {
+    document.getElementById('dbType').innerHTML = '<option value="">Failed to detect</option>';
+  }
+}
+
+function onDbTypeChange() {
+  var t = document.getElementById('dbType').value;
+  if (DEFAULT_PORTS[t]) document.getElementById('dbPort').value = DEFAULT_PORTS[t];
+  if (t === 'postgres') document.getElementById('dbSchema').value = 'public';
+  else if (t === 'mssql') document.getElementById('dbSchema').value = 'dbo';
+  else document.getElementById('dbSchema').value = '';
+}
+
+function getDbConfig() {
+  return {
+    db_type: document.getElementById('dbType').value,
+    host: document.getElementById('dbHost').value.trim(),
+    port: parseInt(document.getElementById('dbPort').value) || 5432,
+    database: document.getElementById('dbName').value.trim(),
+    user: document.getElementById('dbUser').value.trim(),
+    password: document.getElementById('dbPassword').value,
+    schema: document.getElementById('dbSchema').value.trim() || 'public',
+    ssl: document.getElementById('dbSSL').checked
+  };
+}
+
+async function testDbConnection() {
+  var btn = document.getElementById('btnTestConn');
+  var status = document.getElementById('dbStatus');
+  btn.classList.add('loading');
+  status.textContent = 'Connecting...';
+  status.className = 'text-sm self-center';
+  try {
+    var res = await fetch('/api/db/test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(getDbConfig())
+    });
+    var data = await res.json();
+    if (data.ok) {
+      status.textContent = '✅ Connected! ' + (data.version || '').substring(0, 60);
+      status.className = 'text-sm self-center text-success';
+    } else {
+      status.textContent = '❌ ' + (data.error || 'Connection failed');
+      status.className = 'text-sm self-center text-error';
+    }
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+    status.className = 'text-sm self-center text-error';
+  }
+  btn.classList.remove('loading');
+}
+
+async function introspectDb() {
+  var btn = document.getElementById('btnIntrospect');
+  var status = document.getElementById('dbStatus');
+  btn.classList.add('loading');
+  status.textContent = 'Fetching schema...';
+  status.className = 'text-sm self-center';
+  try {
+    var res = await fetch('/api/db/introspect', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(getDbConfig())
+    });
+    var data = await res.json();
+    if (data.error) {
+      status.textContent = '❌ ' + (data.detail || data.error);
+      status.className = 'text-sm self-center text-error';
+      btn.classList.remove('loading');
+      return;
+    }
+    introspectedTables = data.tables || [];
+    status.textContent = '✅ Found ' + introspectedTables.length + ' table(s)';
+    status.className = 'text-sm self-center text-success';
+    renderDbTableList(introspectedTables);
+    document.getElementById('dbTableList').classList.remove('hidden');
+    document.getElementById('btnImportSelected').disabled = false;
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+    status.className = 'text-sm self-center text-error';
+  }
+  btn.classList.remove('loading');
+}
+
+function renderDbTableList(tbls) {
+  var container = document.getElementById('dbTablesContainer');
+  container.innerHTML = tbls.map(function(t, i) {
+    var pkBadge = t.primary_key && t.primary_key.length ? ' <span class="badge badge-xs badge-info">PK: ' + t.primary_key.join(', ') + '</span>' : '';
+    var fkBadges = (t.foreign_keys || []).map(function(fk) {
+      return ' <span class="badge badge-xs badge-warning">FK: ' + fk.column + ' → ' + fk.references_table + '</span>';
+    }).join('');
+    var colList = t.columns.map(function(c) {
+      return '<span class="text-xs font-mono opacity-60">' + c.name + '<span class="opacity-40">:' + c.display_type + '</span></span>';
+    }).join(', ');
+    return '<label class="flex items-start gap-2 p-2 rounded-lg hover:bg-base-200 cursor-pointer">' +
+      '<input type="checkbox" class="checkbox checkbox-sm checkbox-primary mt-0.5 db-table-check" data-idx="' + i + '" checked />' +
+      '<div class="flex-1">' +
+        '<div class="font-semibold text-sm">' + esc(t.table_name) + pkBadge + fkBadges + '</div>' +
+        '<div class="mt-0.5">' + colList + '</div>' +
+      '</div>' +
+    '</label>';
+  }).join('');
+}
+
+function selectAllDbTables(checked) {
+  document.querySelectorAll('.db-table-check').forEach(function(cb) { cb.checked = checked; });
+}
+
+function importSelectedTables() {
+  var checks = document.querySelectorAll('.db-table-check:checked');
+  if (!checks.length) { showStatus('No tables selected', 'error'); return; }
+
+  // Switch to tables mode
+  switchOutputMode('tables');
+
+  checks.forEach(function(cb) {
+    var t = introspectedTables[parseInt(cb.getAttribute('data-idx'))];
+    if (!t) return;
+
+    var pk = (t.primary_key && t.primary_key.length) ? t.primary_key[0] : '';
+
+    // Find if any FK references another selected table → set parent
+    var parent = '';
+    var fk = { column: '', references: '' };
+    if (t.foreign_keys && t.foreign_keys.length) {
+      var firstFk = t.foreign_keys[0];
+      parent = firstFk.references_table || '';
+      fk = { column: firstFk.column, references: firstFk.references_column || '' };
+    }
+
+    // Build columns: each column gets an empty source path (user fills from left panel)
+    var columns = {};
+    t.columns.forEach(function(c) {
+      columns[c.name] = '';
+    });
+
+    tables.push({
+      name: t.table_name,
+      primary_key: pk,
+      parent: parent,
+      foreign_key: fk,
+      source_array: '',
+      replace_strategy: parent ? 'delete_insert' : '',
+      on_delete: 'delete',
+      columns: columns
+    });
+  });
+
+  activeTableIdx = Math.max(0, tables.length - 1);
+  renderTableTabs();
+  renderTableEditor();
+  onMappingChange();
+  document.getElementById('dbImportModal').close();
+  showStatus('Imported ' + checks.length + ' table(s)', 'success');
+}
+
+async function parseDDL() {
+  var ddl = document.getElementById('ddlInput').value.trim();
+  var status = document.getElementById('ddlStatus');
+  if (!ddl) { status.textContent = 'Please paste DDL'; status.className = 'text-sm mt-2 text-error'; return; }
+  try {
+    var res = await fetch('/api/db/parse-ddl', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ddl: ddl })
+    });
+    var data = await res.json();
+    if (data.error) {
+      status.textContent = '❌ ' + (data.detail || data.error);
+      status.className = 'text-sm mt-2 text-error';
+      return;
+    }
+    var parsed = data.tables || [];
+    if (!parsed.length) {
+      status.textContent = 'No tables found in DDL';
+      status.className = 'text-sm mt-2 text-warning';
+      return;
+    }
+
+    // Import into the tables editor
+    switchOutputMode('tables');
+    parsed.forEach(function(t) {
+      var pk = (t.primary_key && t.primary_key.length) ? t.primary_key[0] : '';
+      var columns = {};
+      t.columns.forEach(function(c) { columns[c.name] = ''; });
+
+      tables.push({
+        name: t.table_name,
+        primary_key: pk,
+        parent: '',
+        foreign_key: { column: '', references: '' },
+        source_array: '',
+        replace_strategy: '',
+        on_delete: 'delete',
+        columns: columns
+      });
+    });
+
+    activeTableIdx = Math.max(0, tables.length - 1);
+    renderTableTabs();
+    renderTableEditor();
+    onMappingChange();
+    document.getElementById('ddlModal').close();
+    showStatus('Imported ' + parsed.length + ' table(s) from DDL', 'success');
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+    status.className = 'text-sm mt-2 text-error';
+  }
+}
+
 // ── Init ─────────────────────────────────────────────────────
 loadFileList();
+loadDbDrivers();
 </script>
 
 </body>

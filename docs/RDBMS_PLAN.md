@@ -1,6 +1,8 @@
 # RDBMS Output – Design Plan
 
-This document outlines the plan for forwarding Couchbase `_changes` feed documents into relational databases (MS SQL, PostgreSQL, Oracle, MySQL) as an alternative output mode alongside the existing REST/HTTP output.
+This document outlines the design for forwarding Couchbase `_changes` feed documents into relational databases (PostgreSQL, MySQL, MS SQL, Oracle) as an alternative output mode alongside the existing REST/HTTP output.
+
+**PostgreSQL is fully implemented** and serves as the reference implementation. MySQL, MSSQL, and Oracle are placeholders awaiting implementation — use `db_postgres.py` as the template.
 
 **Related docs:**
 - [`RDBMS_IMPLEMENTATION.md`](RDBMS_IMPLEMENTATION.md) -- Implementation guide: single-table vs. multi-table writes, transactions, insert-vs-update strategy
@@ -22,8 +24,9 @@ The changes_worker already consumes the `_changes` feed from Sync Gateway / App 
 │  /{db}.{scope}.      │         │                  │         ┌─────────────────────┐
 │   {collection}/      │         │                  │ ──SQL── │  RDBMS              │
 │   _changes           │         │                  │         │  (db/ module)       │
-└──────────────────────┘         └──────────────────┘         │  PostgreSQL / MySQL │
-                                                              │  MS SQL / Oracle    │
+└──────────────────────┘         └──────────────────┘         │  PostgreSQL ✅      │
+                                                              │  MySQL / MSSQL /    │
+                                                              │  Oracle  ⬜         │
                                                               └─────────────────────┘
 ```
 
@@ -35,47 +38,49 @@ The changes_worker already consumes the `_changes` feed from Sync Gateway / App 
 
 ```
 db/
-├── __init__.py           # Common base class + factory function
-├── db_postgres.py        # PostgreSQL output (asyncpg)
-├── db_mysql.py           # MySQL output (aiomysql)
-├── db_mssql.py           # MS SQL Server output (aioodbc or pymssql)
-└── db_oracle.py          # Oracle output (oracledb)
+├── __init__.py           # Factory function (create_db_output)
+├── db_postgres.py        # PostgreSQL output (asyncpg)  ✅ implemented
+├── db_mysql.py           # MySQL output (placeholder)
+├── db_mssql.py           # MS SQL Server output (placeholder)
+└── db_oracle.py          # Oracle output (placeholder)
 ```
 
-Each `db_*.py` module implements a common interface so the changes_worker can swap output targets via config without changing the core loop.
+Each `db_*.py` module implements a common interface so the changes_worker can swap output targets via config without changing the core loop. PostgreSQL is the first complete implementation and serves as the template for the other engines.
 
 ### Common Interface
 
-Every RDBMS module will implement the same base class:
+The PostgreSQL implementation (`PostgresOutputForwarder` in `db/db_postgres.py`) defines the interface that all RDBMS modules should follow:
 
 ```python
-class DBOutputBase:
-    """Base class for all RDBMS output modules."""
+class PostgresOutputForwarder:
+    """Async PostgreSQL output forwarder."""
+
+    def __init__(self, out_cfg: dict, dry_run: bool = False, metrics=None):
+        """
+        Args:
+            out_cfg:  The full output config dict (contains 'postgres' key, 'mapping_file', etc.)
+            dry_run:  If True, log SQL statements but don't execute.
+            metrics:  MetricsCollector instance (optional).
+        """
 
     async def connect(self) -> None:
-        """Establish the database connection / pool."""
+        """Create the connection pool and load the schema mapping."""
 
     async def send(self, doc: dict, method: str = "PUT") -> dict:
         """
         Write a single document to the database.
 
         - method="PUT"    → UPSERT (insert or update)
-        - method="DELETE" → DELETE the row by doc_id
+        - method="DELETE" → DELETE the row(s)
 
-        Returns: {"ok": bool, "doc_id": str, "method": str, ...}
-        """
-
-    async def send_batch(self, docs: list[dict], methods: list[str]) -> list[dict]:
-        """
-        Write a batch of documents in a single transaction.
-        Falls back to per-doc send() if not overridden.
+        Returns: {"ok": bool, "doc_id": str, ...}
         """
 
     async def test_reachable(self) -> bool:
         """Verify the database is reachable (used by --test)."""
 
     async def close(self) -> None:
-        """Close the connection / pool."""
+        """Close the connection pool."""
 
     def log_stats(self) -> None:
         """Log accumulated write statistics."""
@@ -83,105 +88,59 @@ class DBOutputBase:
 
 This mirrors the `OutputForwarder` interface in `rest/output_http.py` so the changes_worker main loop doesn't need to know which output type is active.
 
+> **Note:** There is no `send_batch()` method yet. Each document is processed individually within its own transaction. Batch support can be added later as an optimization.
+
 ---
 
 ## Config Changes
 
-A new `output.mode` value — `"db"` — selects RDBMS output. Database-specific settings go under `output.db`:
+Each RDBMS engine gets its own `output.mode` value (`"postgres"`, `"mysql"`, `"mssql"`, `"oracle"`) with a corresponding config key. The `mapping_file` points to a JSON mapping definition that controls how documents are mapped to SQL operations.
 
 ```jsonc
 {
   "output": {
-    "mode": "db",                        // "stdout" | "http" | "db"
-    "db": {
-      "engine": "postgres",              // "postgres" | "mysql" | "mssql" | "oracle"
+    "mode": "postgres",                    // "stdout" | "http" | "postgres" | "mysql" | "mssql" | "oracle"
+    "postgres": {
       "host": "localhost",
-      "port": 5432,                      // default per engine
+      "port": 5432,
       "database": "mydb",
-      "username": "app_user",
+      "user": "postgres",
       "password": "secret",
-      "schema": "public",               // optional, default varies by engine
-      "table": "couchbase_docs",         // target table name
-      "ssl": false,                      // use SSL connection
-      "pool_size": 5,                    // connection pool size
-      "connect_timeout_seconds": 10,
-
-      "mapping": {
-        "mode": "jsonb",                 // "jsonb" | "columns"
-        "doc_id_column": "doc_id",       // column for the Couchbase doc _id
-        "rev_column": "rev",             // column for _rev (optional)
-        "body_column": "body",           // column for the full JSON doc (jsonb mode)
-        "timestamp_column": "updated_at" // auto-set on upsert (optional)
-      }
+      "schema": "public",
+      "ssl": false,
+      "pool_min": 2,
+      "pool_max": 10
     },
-
-    // Existing fields still apply:
-    "halt_on_failure": true,
-    "dead_letter_path": "failed_docs.jsonl",
-    "retry": {
-      "max_retries": 3,
-      "backoff_base_seconds": 1,
-      "backoff_max_seconds": 30
-    }
+    "mapping_file": "mappings/orders.json",
+    "halt_on_failure": true
   }
 }
 ```
 
-> **Admin UI:** The config editor at `/config` provides a form-based interface for all DB settings. When `db` is selected as the output mode, the UI dynamically shows the connection, pool, and mapping fields. See [`ADMIN_UI.md`](ADMIN_UI.md#db-output-fields) for details.
+> **Admin UI:** The config editor at `/config` provides a form-based interface for all DB settings. When a DB engine is selected as the output mode, the UI dynamically shows the connection and pool fields. See [`ADMIN_UI.md`](ADMIN_UI.md#db-output-fields) for details.
 
-### Mapping Modes
+### Schema Mapping
 
-#### `jsonb` Mode (default)
+Document-to-table mapping is defined in an external JSON file (referenced by `mapping_file`). The mapping supports JSONPath field extraction, transforms, and multi-table writes. See [`SCHEMA_MAPPING.md`](SCHEMA_MAPPING.md) for the full format.
 
-Store the entire Couchbase document as a single JSON/JSONB column. Simplest approach — no schema migration needed when document fields change.
-
-```sql
-CREATE TABLE couchbase_docs (
-    doc_id   TEXT PRIMARY KEY,
-    rev      TEXT,
-    body     JSONB NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-Operations:
-
-| Change Type | SQL |
-|---|---|
-| PUT (insert/update) | `INSERT INTO couchbase_docs (doc_id, rev, body, updated_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT (doc_id) DO UPDATE SET rev = $2, body = $3, updated_at = NOW()` |
-| DELETE | `DELETE FROM couchbase_docs WHERE doc_id = $1` |
-
-#### `columns` Mode (future)
-
-Map specific document fields to individual table columns. Requires the user to define the mapping and maintain the table schema.
-
-```jsonc
-"mapping": {
-  "mode": "columns",
-  "doc_id_column": "doc_id",
-  "field_map": {
-    "name": "product_name",     // doc.name → table.product_name
-    "price": "unit_price",      // doc.price → table.unit_price
-    "category": "category"      // doc.category → table.category
-  }
-}
-```
-
-This mode is more complex (schema migrations, type mismatches, missing fields) and will be implemented after `jsonb` mode is stable.
+The old `jsonb` / `columns` mapping modes from the original plan have been replaced by the mapping file approach, which is more flexible and supports multi-table writes with foreign key relationships.
 
 ---
 
 ## Engine-Specific Notes
 
-### PostgreSQL (`db_postgres.py`)
+### PostgreSQL (`db_postgres.py`) — ✅ Implemented
 
 - **Library:** `asyncpg` (async, fast, native PostgreSQL protocol)
-- **JSON column type:** `JSONB` (indexable, queryable)
+- **Features:**
+  - Async connection pool (`pool_min` / `pool_max`)
+  - Transactional multi-table writes (all ops for a doc in one transaction)
+  - `dry_run` mode — logs SQL without executing
+  - `introspect_tables()` — queries `information_schema` to import table/column/PK/FK metadata for the Schema UI
 - **Upsert:** `INSERT ... ON CONFLICT DO UPDATE`
-- **Batch support:** `executemany()` or `COPY` for bulk loads
 - **Default port:** `5432`
 
-### MySQL (`db_mysql.py`)
+### MySQL (`db_mysql.py`) — ⬜ Planned
 
 - **Library:** `aiomysql` (async wrapper around PyMySQL)
 - **JSON column type:** `JSON` (MySQL 5.7+)
@@ -189,7 +148,7 @@ This mode is more complex (schema migrations, type mismatches, missing fields) a
 - **Batch support:** `executemany()`
 - **Default port:** `3306`
 
-### MS SQL Server (`db_mssql.py`)
+### MS SQL Server (`db_mssql.py`) — ⬜ Planned
 
 - **Library:** `aioodbc` (async ODBC) or `pymssql` (FreeTDS-based)
 - **JSON column type:** `NVARCHAR(MAX)` with `ISJSON()` check constraint
@@ -198,7 +157,7 @@ This mode is more complex (schema migrations, type mismatches, missing fields) a
 - **Default port:** `1433`
 - **Note:** MS SQL has no native JSON column type. JSON is stored as `NVARCHAR(MAX)` and queried with `JSON_VALUE()` / `OPENJSON()`.
 
-### Oracle (`db_oracle.py`)
+### Oracle (`db_oracle.py`) — ⬜ Planned
 
 - **Library:** `oracledb` (official Oracle async driver, formerly cx_Oracle)
 - **JSON column type:** `JSON` (Oracle 21c+) or `CLOB` (older versions)
@@ -210,13 +169,13 @@ This mode is more complex (schema migrations, type mismatches, missing fields) a
 
 ## How It Plugs Into changes_worker
 
-The main loop in `poll_changes()` currently creates an `OutputForwarder` and calls `output.send(doc, method)` for each change. The RDBMS output will follow the same pattern:
+The main loop in `poll_changes()` currently creates an `OutputForwarder` and calls `output.send(doc, method)` for each change. The RDBMS output follows the same pattern:
 
 ```python
 # In poll_changes():
-if out_cfg.get("mode") == "db":
-    from db import create_db_output
-    output = create_db_output(out_cfg, metrics=metrics)
+if out_cfg.get("mode") == "postgres":
+    from db.db_postgres import PostgresOutputForwarder
+    output = PostgresOutputForwarder(out_cfg, dry_run, metrics=metrics)
     await output.connect()
 elif out_cfg.get("mode") == "http":
     output = OutputForwarder(session, out_cfg, ...)
@@ -226,25 +185,25 @@ The rest of the loop (`process_one()`, checkpoint logic, DLQ, `halt_on_failure`)
 
 ### Factory Function
 
-`db/__init__.py` will expose a factory:
+`db/__init__.py` exposes a factory for creating the right output forwarder based on the configured mode:
 
 ```python
-def create_db_output(out_cfg: dict, metrics=None) -> DBOutputBase:
-    engine = out_cfg.get("db", {}).get("engine", "postgres")
-    if engine == "postgres":
-        from .db_postgres import PostgresOutput
-        return PostgresOutput(out_cfg, metrics=metrics)
-    elif engine == "mysql":
-        from .db_mysql import MySQLOutput
-        return MySQLOutput(out_cfg, metrics=metrics)
-    elif engine == "mssql":
-        from .db_mssql import MSSQLOutput
-        return MSSQLOutput(out_cfg, metrics=metrics)
-    elif engine == "oracle":
-        from .db_oracle import OracleOutput
-        return OracleOutput(out_cfg, metrics=metrics)
+def create_db_output(out_cfg: dict, dry_run: bool = False, metrics=None):
+    mode = out_cfg.get("mode", "")
+    if mode == "postgres":
+        from .db_postgres import PostgresOutputForwarder
+        return PostgresOutputForwarder(out_cfg, dry_run, metrics=metrics)
+    elif mode == "mysql":
+        from .db_mysql import MySQLOutputForwarder
+        return MySQLOutputForwarder(out_cfg, dry_run, metrics=metrics)
+    elif mode == "mssql":
+        from .db_mssql import MSSQLOutputForwarder
+        return MSSQLOutputForwarder(out_cfg, dry_run, metrics=metrics)
+    elif mode == "oracle":
+        from .db_oracle import OracleOutputForwarder
+        return OracleOutputForwarder(out_cfg, dry_run, metrics=metrics)
     else:
-        raise ValueError(f"Unknown db engine: {engine}")
+        raise ValueError(f"Unknown db output mode: {mode}")
 ```
 
 ---
@@ -262,8 +221,7 @@ RDBMS output follows the same failure semantics as HTTP output:
 
 ### Transaction Strategy
 
-- **Per-doc commits (default):** Each `send()` call is an auto-committed upsert. Simple, consistent with the HTTP output model.
-- **Batch commits (future optimization):** Wrap `send_batch()` in a single transaction. All-or-nothing per sub-batch. Faster but more complex rollback handling.
+Each `send()` call wraps all SQL operations for that document in a single transaction. For multi-table mappings, this means all inserts/updates across tables succeed or fail atomically.
 
 ---
 
@@ -284,34 +242,101 @@ New Prometheus metrics for RDBMS output (extending the existing `MetricsCollecto
 
 ## Dependencies (additions to `requirements.txt`)
 
+`asyncpg` is listed in `requirements.txt` (commented, install when needed):
+
 ```txt
-# Install only the driver you need:
-asyncpg          # PostgreSQL
-aiomysql         # MySQL
-aioodbc          # MS SQL Server (requires unixODBC + ODBC driver)
-oracledb         # Oracle
+# RDBMS output drivers (install the one you need):
+#   pip install asyncpg    # for PostgreSQL output  ✅ in requirements.txt
+#   pip install aiomysql   # for MySQL output
+#   pip install aioodbc    # for MS SQL Server (requires unixODBC + ODBC driver)
+#   pip install oracledb   # for Oracle
 ```
 
-Startup validation will check that the required driver is installed for the configured `engine`, just like the serialization library checks for `output_format`.
+Startup validation checks that the required driver is installed. `PostgresOutputForwarder.__init__()` raises `RuntimeError` if `asyncpg` is not importable.
 
 ---
 
 ## Implementation Order
 
-1. **`DBOutputBase`** — abstract base class in `db/__init__.py`
-2. **`db_postgres.py`** — PostgreSQL first (most common target, best async driver)
-3. **`db_mysql.py`** — MySQL second
-4. **`db_mssql.py`** — MS SQL third
-5. **`db_oracle.py`** — Oracle fourth
-6. **Integration into `main.py`** — add `mode=db` routing, config validation, `--test` support
-7. **`columns` mapping mode** — after `jsonb` mode is proven stable
-8. **Admin UI** — Config editor updated with DB output fields, feed type grouping, and Tagify channels input (✅ done)
+- ✅ `schema/mapper.py` — JSON→SQL mapper with JSONPath, transforms, multi-table
+- ✅ `schema/validator.py` — Mapping validation
+- ✅ `db/db_postgres.py` — PostgreSQL output with asyncpg, connection pool, transactions
+- ✅ Schema UI — DB introspection, DDL import, auto-detect drivers
+- ⬜ `db/db_mysql.py` — MySQL output forwarder
+- ⬜ `db/db_mssql.py` — MS SQL Server output forwarder
+- ⬜ `db/db_oracle.py` — Oracle output forwarder
+- ⬜ Integration into `main.py` — routing, config validation, `--test` support
+
+---
+
+## Adding a New RDBMS Engine
+
+Use `db/db_postgres.py` as the starting point for implementing MySQL, MSSQL, or Oracle. The steps are:
+
+### 1. Copy the forwarder class
+
+Copy `db_postgres.py` to `db_<engine>.py` and rename the class (e.g., `MySQLOutputForwarder`). Update the constructor to read from the engine-specific config key (e.g., `out_cfg.get("mysql", {})`).
+
+### 2. Replace the async driver
+
+Swap `asyncpg` for the engine's async driver:
+
+| Engine | Driver | Pool API |
+|---|---|---|
+| MySQL | `aiomysql` | `aiomysql.create_pool(...)` |
+| MSSQL | `aioodbc` | `aioodbc.create_pool(dsn=...)` |
+| Oracle | `oracledb` | `oracledb.create_pool_async(...)` |
+
+Update `connect()`, `close()`, `send()`, and `test_reachable()` to use the new driver's API.
+
+### 3. Engine-specific SQL generation
+
+The `SqlOperation.to_sql()` method in `schema/mapper.py` generates PostgreSQL-flavored SQL (e.g., `INSERT ... ON CONFLICT DO UPDATE`). Each engine needs its own upsert syntax:
+
+| Engine | Upsert Syntax |
+|---|---|
+| PostgreSQL | `INSERT ... ON CONFLICT (pk) DO UPDATE SET ...` |
+| MySQL | `INSERT ... ON DUPLICATE KEY UPDATE ...` |
+| MSSQL | `MERGE ... WHEN MATCHED THEN UPDATE WHEN NOT MATCHED THEN INSERT` |
+| Oracle | `MERGE INTO ... USING DUAL WHEN MATCHED THEN UPDATE WHEN NOT MATCHED THEN INSERT` |
+
+Either add an `engine` parameter to `to_sql()` or override SQL generation in the engine-specific forwarder.
+
+### 4. Add the driver to `requirements.txt`
+
+Add a commented entry following the existing pattern:
+
+```txt
+#   pip install <driver>   # for <Engine> output
+```
+
+### 5. Add driver detection in `web/server.py`
+
+Update `_detect_db_drivers()` so the Admin UI can show which drivers are installed. Add an import check for the new driver.
+
+### 6. Add introspection queries
+
+Implement `introspect_tables()` for the engine. Each database has its own system catalog:
+
+| Engine | Catalog |
+|---|---|
+| PostgreSQL | `information_schema.tables`, `information_schema.columns` |
+| MySQL | `information_schema.tables`, `information_schema.columns` |
+| MSSQL | `INFORMATION_SCHEMA.TABLES`, `sys.columns` |
+| Oracle | `ALL_TABLES`, `ALL_TAB_COLUMNS` |
+
+### 7. Register in `create_db_output()`
+
+Add the new engine to the factory function in `db/__init__.py`.
 
 ---
 
 ## Open Questions
 
-- **Schema auto-creation:** Should the worker auto-create the target table on first run, or require it to exist? Recommendation: require it to exist, but provide example `CREATE TABLE` statements per engine.
 - **Batch size for DB writes:** Should `get_batch_number` also control DB batch size, or add a separate `db.batch_size` setting?
-- **Connection pooling lifecycle:** Pool created once at startup, or reconnect on each poll cycle? Recommendation: pool at startup, with health checks.
 - **Mixed output:** Should the worker support sending to both HTTP and DB simultaneously? Recommendation: not in v1 — one output mode at a time. Multiple outputs can be handled by running multiple worker instances off the same `_changes` feed (each with its own checkpoint `client_id`).
+
+### Resolved
+
+- **Schema auto-creation:** We do **not** auto-create tables. The user creates tables in their database, then uses "Import from Database" or "Upload DDL" in the Schema UI to import the schema into a mapping file.
+- **Connection pooling lifecycle:** Pool is created once at startup via `connect()`. The pool handles reconnection on failure internally (`asyncpg` manages this).

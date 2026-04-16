@@ -2,6 +2,38 @@
 
 ---
 
+## v1.4.0 — 2026-04-16
+
+### New Features
+
+- **Apache CouchDB source** — Added `gateway.src: "couchdb"` as a new input source type. Connects to CouchDB's `_changes` feed with support for `longpoll`, `continuous`, and `eventsource` feed types. CouchDB-specific behavior: skips `active_only`, `channels`, `version_type`, and scope/collection params (not supported by CouchDB). Documents are fetched via CouchDB's `POST /{db}/_bulk_get` (JSON response). Checkpoints are stored as `_local/` docs on CouchDB, same as SG.
+
+- **Setup Wizard** (`/wizard`) — New 3-step guided setup page in the admin UI:
+  1. **Connect Source** — Configure and test SG/App Services/Edge Server/CouchDB connectivity, fetch a sample document
+  2. **Configure Output** — Choose stdout, HTTP, or RDBMS output with connection testing
+  3. **Map Fields** — Drag-and-drop field mapping with transform functions, generates complete `config.json` and mapping file
+
+- **Wizard API endpoints** — `POST /api/wizard/test-source` (test source connectivity with ad-hoc config, returns sample doc) and `POST /api/wizard/test-output` (test HTTP output endpoint reachability).
+
+- **CouchDB-aware UI** — Config editor and wizard auto-hide unsupported fields (scope, collection, channels, active_only) when `couchdb` is selected. Feed type dropdown includes `eventsource (CouchDB only)`. Session cookie auth is disabled for CouchDB.
+
+### Changes
+
+- **Navbar updated** — All pages now include a "Wizard" link in the navigation bar.
+
+- **Version bump** — All footers and version references updated from v1.1.0/v1.3.0 to v1.4.0.
+
+- **Compatibility matrix** — README expanded to 4-column matrix covering Sync Gateway, App Services, Edge Server, and CouchDB with new rows for `active_only`, session auth, and channels support.
+
+### Documentation
+
+- **`docs/WIZARD.md`** — Full wizard documentation: all 3 steps, API payloads, CouchDB notes, typical workflow.
+- **`docs/ADMIN_UI.md`** — Updated with wizard page, wizard API endpoints, and CouchDB-aware field visibility.
+- **`docs/DESIGN.md`** — Updated pipeline description to include CouchDB and eventsource feed type.
+- **`README.md`** — Updated architecture diagram, compatibility matrix, auto-behavior table, admin UI section, and project structure.
+
+---
+
 ## v1.3.0 — 2026-04-16
 
 ### New Features

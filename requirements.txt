@@ -7,3 +7,6 @@ icecream>=2.1,<3
 #   pip install cbor2       # for output_format=cbor
 #   pip install pymongo     # for output_format=bson (provides bson module)
 #   pip install pyyaml      # for output_format=yaml
+
+# RDBMS output drivers (install the one you need):
+#   pip install asyncpg    # for PostgreSQL output

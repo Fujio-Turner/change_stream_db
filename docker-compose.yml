@@ -5,6 +5,7 @@ services:
       - "9090:9090"
     volumes:
       - cbl-data:/app/data
+      - ./logs:/app/logs
     restart: unless-stopped
 
   admin-ui:

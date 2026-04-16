@@ -1,6 +1,6 @@
-# Changes Worker  v1.3.0
+# Changes Worker  v1.4.0
 
-A production-ready, async Python 3 processor for the Couchbase `_changes` feed. It connects to **Sync Gateway**, **Capella App Services**, or **Couchbase Edge Server**, consumes document changes via longpoll or continuous streaming, and forwards them to a downstream consumer — either as standard output or as HTTP requests (PUT/POST/DELETE) to any endpoint.
+A production-ready, async Python 3 processor for the `_changes` feed. It connects to **Sync Gateway**, **Capella App Services**, **Couchbase Edge Server**, or **Apache CouchDB**, consumes document changes via longpoll or continuous streaming, and forwards them to a downstream consumer — stdout, HTTP endpoint, or RDBMS (PostgreSQL, MySQL, MS SQL, Oracle).
 
 Built for real-world workloads: checkpoint management so you never re-process, throttled feed consumption for large datasets, configurable retry with exponential backoff on both the source and destination sides, and full async concurrency control.
 
@@ -21,21 +21,23 @@ Built for real-world workloads: checkpoint management so you never re-process, t
 
 ```
 ┌──────────────────────┐         ┌──────────────────┐         ┌─────────────────────┐
-│  Sync Gateway /      │         │                  │         │  Your downstream    │
-│  App Services /      │ ──GET── │  changes_worker  │ ──PUT── │  service / stdout   │
-│  Edge Server         │ _changes│                  │  POST   │                     │
-│                      │ ◄─JSON─ │  (this script)   │  DELETE │  (any HTTP endpoint │
-│  /{db}.{scope}.      │         │                  │ ──────► │   or pipe to jq,    │
-│   {collection}/      │         │  checkpoint ──►  │         │   another process)  │
-│   _changes           │         │  _local/{uuid}   │         │                     │
+│  Sync Gateway /      │         │                  │         │  HTTP Endpoint      │
+│  App Services /      │ ──GET── │  changes_worker  │ ──PUT── │  (any REST API)     │
+│  Edge Server /       │ _changes│                  │  POST   ├─────────────────────┤
+│  CouchDB             │ ◄─JSON─ │  • Schema Mapping│  DELETE │  RDBMS              │
+│                      │         │  • Serialize     │ ──────► │  (Postgres/MySQL/   │
+│  /{db}/_changes      │         │  • Checkpoint    │         │   MSSQL/Oracle)     │
+│                      │         │  • Dead Letter Q │         ├─────────────────────┤
+│                      │         │  • CBL metadata  │         │  stdout             │
 └──────────────────────┘         └──────────────────┘         └─────────────────────┘
 ```
 
 1. **Consume** — Longpoll `_changes` on a configurable interval, or use continuous mode (batched catch-up → real-time stream with auto-reconnect)
-2. **Filter** — Skip deletes, removes, or limit to specific channels
-3. **Fetch** — If `include_docs=false`, fetch full docs via `_bulk_get` (SG/App Services) or individual `GET` (Edge Server), in batches of `get_batch_number`
-4. **Forward** — Serialize each doc (JSON, XML, msgpack, etc.) and send to stdout or an HTTP endpoint
-5. **Checkpoint** — Save `last_seq` to a `_local/` doc on SG (CBL-style) so restarts resume exactly where they left off
+2. **Filter** — Skip deletes, removes, or limit to specific channels (SG/App Services)
+3. **Fetch** — If `include_docs=false`, fetch full docs via `_bulk_get` (SG/App Services/CouchDB) or individual `GET` (Edge Server), in batches of `get_batch_number`
+4. **Map** — Apply schema mappings to transform JSON documents into table rows, remapped JSON, XML, etc.
+5. **Forward** — Serialize each doc (JSON, XML, msgpack, etc.) and send to stdout, HTTP endpoint, or RDBMS
+6. **Checkpoint** — Save `last_seq` to a `_local/` doc on SG/CouchDB (CBL-style) so restarts resume exactly where they left off
 
 ---
 
@@ -58,7 +60,7 @@ The CBL database (`changes_worker_db`) is stored in a Docker volume at `/app/dat
 
 ## One Process Per Collection
 
-Unlike Couchbase Lite, which can open and sync multiple collections in a single connection, the Sync Gateway / App Services / Edge Server `_changes` API serves **one collection at a time**. This means:
+Unlike Couchbase Lite, which can open and sync multiple collections in a single connection, the Sync Gateway / App Services / Edge Server `_changes` API serves **one collection at a time** (CouchDB serves one database at a time). This means:
 
 - **Each changes_worker process monitors exactly one collection.**
 - To watch multiple collections, run **one container (or process) per collection**, each with its own `config.json` pointing at a different `scope` + `collection`.
@@ -82,7 +84,7 @@ Each instance maintains its own checkpoint, retry state, and metrics independent
 ### Prerequisites
 
 - Python 3.11+
-- A running Sync Gateway, Capella App Services, or Edge Server instance
+- A running Sync Gateway, Capella App Services, Edge Server, or CouchDB instance
 
 ### Install & Run Locally
 
@@ -133,7 +135,7 @@ All settings live in a single `config.json` file. Here is a complete reference w
 ```jsonc
 {
   "gateway": {
-    "src": "sync_gateway",           // "sync_gateway" | "app_services" | "edge_server"
+    "src": "sync_gateway",           // "sync_gateway" | "app_services" | "edge_server" | "couchdb"
     "url": "http://localhost:4984",   // Base URL of the gateway
     "database": "db",                 // Database name
     "scope": "us",                    // Scope (optional — omit for default scope)
@@ -150,7 +152,7 @@ All settings live in a single `config.json` file. Here is a complete reference w
   },
 
   "changes_feed": {
-    "feed_type": "longpoll",         // "longpoll" | "continuous" | "normal" | "sse" (Edge only)
+    "feed_type": "longpoll",         // "longpoll" | "continuous" | "normal" | "sse" (Edge) | "eventsource" (CouchDB)
     "poll_interval_seconds": 10,     // Seconds to wait between longpoll cycles
     "active_only": true,             // Exclude deleted/revoked docs from the feed
     "include_docs": true,            // Inline doc bodies; false = bulk_get after
@@ -508,31 +510,38 @@ If the server disconnects, the worker applies exponential backoff (using `retry`
 
 ## Source Type (`gateway.src`)
 
-The `_changes` APIs are very similar across all three Couchbase products but **not identical**. Set `gateway.src` to tell the worker which product it's talking to.
+The `_changes` APIs are very similar across Couchbase products and CouchDB but **not identical**. Set `gateway.src` to tell the worker which product it's talking to.
 
 ### Compatibility Matrix
 
-| Capability | Sync Gateway | App Services | Edge Server |
-|---|:---:|:---:|:---:|
-| Default public port | `4984` | `4984` | `59840` |
-| Feed types | `longpoll`, **`continuous`** (2-phase), `websocket` | `longpoll`, **`continuous`** (2-phase), `websocket` | `longpoll`, **`continuous`** (2-phase), **`sse`** |
-| `version_type` param (`rev` / `cv`) | ✅ | ✅ | ❌ not supported |
-| Bearer token auth | ✅ | ✅ | ❌ basic / session only |
-| `timeout` max | no hard cap | no hard cap | **900,000 ms** (15 min) |
-| `heartbeat` minimum | none | none | **25,000 ms** |
-| `_bulk_get` endpoint | ✅ | ✅ | ❌ falls back to individual `GET /{keyspace}/{docid}` |
-| `_local/` checkpoint docs | ✅ | ✅ | ✅ |
-| Scoped keyspace (`db.scope.collection`) | ✅ | ✅ | ✅ |
+| Capability | Sync Gateway | App Services | Edge Server | CouchDB |
+|---|:---:|:---:|:---:|:---:|
+| Default public port | `4984` | `4984` | `59840` | `5984` |
+| Feed types | `longpoll`, **`continuous`**, `websocket` | `longpoll`, **`continuous`**, `websocket` | `longpoll`, **`continuous`**, **`sse`** | `longpoll`, **`continuous`**, **`eventsource`** |
+| `active_only` param | ✅ | ✅ | ✅ | ❌ not supported |
+| `version_type` param (`rev` / `cv`) | ✅ | ✅ | ❌ | ❌ |
+| Bearer token auth | ✅ | ✅ | ❌ basic / session only | ✅ |
+| Session cookie auth | ✅ | ✅ | ✅ | ❌ not supported |
+| Channels filter | ✅ | ✅ | ✅ | ❌ use `filter` instead |
+| `timeout` max | no hard cap | no hard cap | **900,000 ms** (15 min) | no hard cap |
+| `heartbeat` minimum | none | none | **25,000 ms** | none |
+| `_bulk_get` endpoint | ✅ | ✅ | ❌ individual `GET` | ✅ (JSON response) |
+| `_local/` checkpoint docs | ✅ | ✅ | ✅ | ✅ |
+| Scoped keyspace (`db.scope.collection`) | ✅ | ✅ | ✅ | ❌ database only |
 
 ### What the Worker Does Automatically
 
 | Situation | Automatic behavior |
 |---|---|
 | `src=edge_server` + `feed_type=websocket` | Falls back to `longpoll` with a warning |
+| `src=couchdb` + `feed_type=websocket` | Falls back to `longpoll` with a warning |
+| `src=couchdb` + `feed_type=sse` | Switches to `eventsource` (CouchDB equivalent) |
 | `src≠edge_server` + `feed_type=sse` | Falls back to `longpoll` with a warning |
 | `src=edge_server` + `auth.method=bearer` | **Blocks startup** with an error |
+| `src=couchdb` + `auth.method=session` | **Blocks startup** with an error |
 | `src=edge_server` + `timeout_ms > 900000` | Clamps to `900000` with a warning |
 | `src=edge_server` | Omits the `version_type` query param |
+| `src=couchdb` | Omits `active_only`, `channels`, `version_type` params; skips scope/collection in URL |
 | `src=edge_server` + `include_docs=false` | Fetches docs individually (no `_bulk_get`), warns about performance |
 | `src=sync_gateway` or `app_services` | Sends `version_type=rev` by default (configurable to `cv`) |
 | `src=app_services` + `http://` URL | Warns that App Services is typically HTTPS |
@@ -541,7 +550,8 @@ The `_changes` APIs are very similar across all three Couchbase products but **n
 
 - **Sync Gateway** and **App Services** share the same API. App Services is the hosted/Capella-managed version — endpoints are always HTTPS.
 - **Edge Server** is a lightweight, embedded gateway. It does **not** support Bearer token auth, `_bulk_get`, or `version_type`. It does add unique features (sub-documents, SQL++ queries) but those are outside the scope of this worker.
-- The `_changes` response schema (`results`, `last_seq`) is the same across all three products.
+- **CouchDB** uses the same `_changes` response format (`results`, `last_seq`) but does not have scopes/collections, channels, or `active_only`. Its `_bulk_get` returns JSON (not multipart) which the worker handles natively. CouchDB's `eventsource` feed type is equivalent to Edge Server's `sse`.
+- The `_changes` response schema (`results`, `last_seq`) is the same across all four products.
 
 ---
 
@@ -550,8 +560,10 @@ The `_changes` APIs are very similar across all three Couchbase products but **n
 A web-based admin dashboard is available at `http://localhost:8080` when running the `admin-ui` service. It provides:
 
 - **Dashboard** (`/`) -- Real-time status indicators (green/yellow/red) for the changes feed, processing, Couchbase Lite, and output. Three-column metrics breakdown with live line charts, auto-refreshing every 5 seconds. Add `?debug=true` for browser console diagnostics.
-- **Config Editor** (`/config`) -- Form-based and raw JSON editing with save/reset. Collapsible sections for gateway, auth, feed, processing, output, checkpoint, metrics, and logging.
-- **Schema Mappings** (`/schema`) -- YAML editor with a live table relationship diagram (ECharts force-directed graph), file list, save/download/delete, and a sample template.
+- **Config Editor** (`/config`) -- Form-based and raw JSON editing with save/reset. Collapsible sections for gateway, auth, feed, processing, output, checkpoint, metrics, and logging. CouchDB-specific fields (scope, collection, channels, active_only) auto-hide when `couchdb` is selected.
+- **Schema Mappings** (`/schema`) -- Visual split-pane editor with drag-and-drop field mapping, transform functions, table relationship diagrams, live sample fetch, DB import, and DDL parsing.
+- **Transforms** (`/transforms`) -- Reference page for all 58 built-in transform functions with descriptions and examples.
+- **Setup Wizard** (`/wizard`) -- 3-step guided setup: connect source → configure output → map fields. Generates a complete `config.json` and mapping file.
 
 Dark/light theme persists across all pages via `localStorage`.
 
@@ -603,7 +615,8 @@ change_stream_db/
 │   ├── CBL_DATABASE.md       # Couchbase Lite database schema reference
 │   ├── CBL_STORE.md          # CBL implementation plan
 │   ├── DESIGN.md             # Architecture, failure modes & trade-offs
-│   └── SCHEMA_MAPPING.md    # Schema mapping documentation
+│   ├── SCHEMA_MAPPING.md    # Schema mapping documentation
+│   └── WIZARD.md            # Setup wizard documentation
 └── README.md                 # This file
 ```
 

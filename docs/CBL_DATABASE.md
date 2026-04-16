@@ -16,29 +16,27 @@ When CBL is not available (e.g., local development on macOS), the system falls b
 
 | Property | Value |
 |---|---|
-| **Database name** | `changes_worker_db` |
-| **Storage directory** | `/app/data` (configurable via `CBL_DB_DIR` env var) |
+| **Database name** | `changes_worker_db` (configurable via `couchbase_lite.db_name` or `CBL_DB_NAME` env var) |
+| **Storage directory** | `/app/data` (configurable via `couchbase_lite.db_dir` or `CBL_DB_DIR` env var) |
 | **On-disk path** | `/app/data/changes_worker_db.cblite2/` |
-| **Scope** | `_default` (CBL CE uses the default scope) |
-| **Collection** | `_default` (CBL CE uses the default collection) |
+| **Scope** | `changes-worker` |
 | **Engine** | Couchbase Lite C 3.2.1 with Python CFFI bindings |
 | **Access pattern** | Module-level singleton — one `Database` handle per process |
 
-> **Note:** CBL CE Python bindings do not expose N1QL queries or multiple scopes/collections. All documents live in `_default._default`. Document types are distinguished by their `type` field and doc ID prefix.
+> **Note:** The Python CBL bindings do not expose the collections API directly. The worker calls the raw CFFI `lib.CBLDatabase_CreateCollection()` and `lib.CBLCollection_*` functions to manage documents in scoped collections. Manifest documents are used instead of N1QL queries to enumerate documents by type.
 
 ---
 
-## Document Types
+## Scopes & Collections
 
-The database stores five types of documents, identified by their `type` field and doc ID naming convention:
+All worker data lives in the `changes-worker` scope, separated into four collections:
 
-| Type | Doc ID pattern | Count | Purpose |
+| Scope | Collection | Document Types | Purpose |
 |---|---|---|---|
-| `config` | `config` | 1 | Full worker configuration |
-| `checkpoint` | `checkpoint:{uuid}` | 1 per connection | Last processed sequence for checkpoint fallback |
-| `mapping` | `mapping:{filename}` | 0–N | Schema mapping YAML/JSON definitions |
-| `dlq` | `dlq:{doc_id}:{timestamp}` | 0–N | Failed output documents (dead letter queue) |
-| `manifest` | `manifest:{type}` | 2 | Index of all doc IDs for a given type (mappings, dlq) |
+| `changes-worker` | `config` | `config` | Full worker configuration |
+| `changes-worker` | `checkpoints` | `checkpoint:{uuid}`, `manifest:checkpoints` | Checkpoint sequence fallback data |
+| `changes-worker` | `mappings` | `mapping:{filename}`, `manifest:mappings` | Schema mapping definitions |
+| `changes-worker` | `dlq` | `dlq:{doc_id}:{timestamp}`, `manifest:dlq` | Failed output documents (dead letter queue) |
 
 ---
 
@@ -280,23 +278,53 @@ The `CBL_DB_DIR` environment variable overrides the default `/app/data` director
 
 ---
 
+## Configuration
+
+CBL storage is configured via the `couchbase_lite` key in `config.json`:
+
+```jsonc
+"couchbase_lite": {
+    "db_dir": "/app/data",           // Storage directory (also CBL_DB_DIR env var)
+    "db_name": "changes_worker_db",  // Database name (also CBL_DB_NAME env var)
+    "maintenance": {
+        "enabled": true,             // Run periodic compact + optimize
+        "interval_hours": 24         // Hours between maintenance runs
+    }
+}
+```
+
+Environment variables (`CBL_DB_DIR`, `CBL_DB_NAME`) take precedence when set. The `configure_cbl()` function in `cbl_store.py` applies config values before the database is opened. The admin UI exposes these settings under the **Couchbase Lite** section in the config editor.
+
+---
+
 ## Migration
 
-On first startup with CBL, the worker auto-imports existing file-based data:
+### File → CBL Migration
+
+On first startup with CBL, the worker auto-imports existing file-based data via `migrate_files_to_cbl()`:
 
 1. If no `"config"` doc exists in CBL and `config.json` is present → imports it
 2. If `mappings/` directory exists → imports all `.yaml`, `.yml`, `.json` files
 3. If `checkpoint.json` exists → logs the migration (checkpoint is loaded by the `Checkpoint` class)
 
-After migration, file-based storage is no longer used. The `--config` CLI flag still works as a one-time import path.
+### Default Collection → Scoped Collection Migration
+
+On startup, `migrate_default_to_collections()` checks if data exists in `_default._default` but not yet in the scoped collections. If so, it copies all documents to their proper `changes-worker.*` collections:
+
+- `config` → `changes-worker.config`
+- `checkpoint:*` + `manifest:checkpoints` → `changes-worker.checkpoints`
+- `mapping:*` + `manifest:mappings` → `changes-worker.mappings`
+- `dlq:*` + `manifest:dlq` → `changes-worker.dlq`
+
+Both migrations are idempotent — they skip if the target already has data. After migration, the `--config` CLI flag still works as a one-time import path.
 
 ---
 
 ## Concurrency
 
-CBL does not support concurrent access from multiple processes. The worker and admin UI share a volume but write to **different doc ID prefixes**:
+CBL does not support concurrent access from multiple processes. The worker and admin UI share a volume but write to **different collections**:
 
-- **Worker writes:** `checkpoint:*`, `dlq:*`, `manifest:dlq`
-- **Admin UI writes:** `config`, `mapping:*`, `manifest:mappings`
+- **Worker writes:** `changes-worker.checkpoints`, `changes-worker.dlq`
+- **Admin UI writes:** `changes-worker.config`, `changes-worker.mappings`
 
-Since they never write to the same document, conflicts are avoided in practice.
+Since they write to different collections (and never the same document), conflicts are avoided in practice.

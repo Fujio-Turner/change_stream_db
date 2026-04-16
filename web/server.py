@@ -62,6 +62,10 @@ async def page_transforms(request):
     return web.FileResponse(WEB / "templates" / "transforms.html")
 
 
+async def page_wizard(request):
+    return web.FileResponse(WEB / "templates" / "wizard.html")
+
+
 # --- Config API ---
 
 async def get_config(request):
@@ -294,6 +298,368 @@ async def get_sample_doc(request):
         return json_response({"error": "fetch_failed", "detail": str(exc)}, status=500)
 
 
+# --- DB Introspection API ---
+
+# Supported RDBMS drivers (auto-detected based on what's installed)
+_DB_DRIVERS = {}
+
+def _detect_db_drivers():
+    """Check which RDBMS drivers are installed."""
+    global _DB_DRIVERS
+    _DB_DRIVERS = {}
+    try:
+        import asyncpg  # noqa: F401
+        _DB_DRIVERS["postgres"] = {"name": "PostgreSQL", "driver": "asyncpg"}
+    except ImportError:
+        pass
+    try:
+        import aiomysql  # noqa: F401
+        _DB_DRIVERS["mysql"] = {"name": "MySQL", "driver": "aiomysql"}
+    except ImportError:
+        pass
+    try:
+        import aioodbc  # noqa: F401
+        _DB_DRIVERS["mssql"] = {"name": "SQL Server", "driver": "aioodbc"}
+    except ImportError:
+        pass
+    try:
+        import cx_Oracle  # noqa: F401
+        _DB_DRIVERS["oracle"] = {"name": "Oracle", "driver": "cx_Oracle"}
+    except ImportError:
+        pass
+    return _DB_DRIVERS
+
+
+_detect_db_drivers()
+
+
+async def list_db_drivers(request):
+    """Return which RDBMS drivers are installed and available."""
+    drivers = _detect_db_drivers()
+    return json_response({"drivers": drivers})
+
+
+async def db_introspect(request):
+    """
+    Connect to an RDBMS and return all tables + columns.
+    POST body: {"db_type": "postgres", "host": "...", "port": 5432, ...}
+    """
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return error_response("Invalid JSON")
+
+    db_type = body.get("db_type", "")
+    if db_type not in _DB_DRIVERS:
+        installed = list(_DB_DRIVERS.keys())
+        return error_response(
+            f"Unknown or unavailable db_type '{db_type}'. "
+            f"Installed drivers: {installed}"
+        )
+
+    try:
+        if db_type == "postgres":
+            from db.db_postgres import introspect_tables
+            tables = await introspect_tables(body)
+            return json_response({"tables": tables})
+        else:
+            return error_response(f"Introspection not yet implemented for {db_type}", 501)
+    except Exception as exc:
+        return json_response(
+            {"error": "introspect_failed", "detail": str(exc)}, status=500
+        )
+
+
+async def db_test_connection(request):
+    """Test connectivity to an RDBMS. POST body same as introspect."""
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return error_response("Invalid JSON")
+
+    db_type = body.get("db_type", "")
+    if db_type not in _DB_DRIVERS:
+        return error_response(f"Driver not installed for '{db_type}'")
+
+    try:
+        if db_type == "postgres":
+            import asyncpg
+            ssl_ctx = None
+            if body.get("ssl"):
+                import ssl as _ssl
+                ssl_ctx = _ssl.create_default_context()
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = _ssl.CERT_NONE
+            conn = await asyncpg.connect(
+                host=body.get("host", "localhost"),
+                port=body.get("port", 5432),
+                database=body.get("database", ""),
+                user=body.get("user", "postgres"),
+                password=body.get("password", ""),
+                ssl=ssl_ctx,
+            )
+            ver = await conn.fetchval("SELECT version()")
+            await conn.close()
+            return json_response({"ok": True, "version": ver})
+        else:
+            return error_response(f"Test not yet implemented for {db_type}", 501)
+    except Exception as exc:
+        return json_response({"ok": False, "error": str(exc)}, status=200)
+
+
+async def parse_ddl(request):
+    """
+    Parse a CREATE TABLE DDL statement and return column definitions.
+    POST body: {"ddl": "CREATE TABLE orders (id INT PRIMARY KEY, ...)"}
+    Supports Postgres/MySQL/MSSQL/Oracle syntax.
+    """
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return error_response("Invalid JSON")
+
+    ddl = body.get("ddl", "").strip()
+    if not ddl:
+        return error_response("No DDL provided")
+
+    try:
+        tables = _parse_create_tables(ddl)
+        return json_response({"tables": tables})
+    except Exception as exc:
+        return json_response(
+            {"error": "parse_failed", "detail": str(exc)}, status=400
+        )
+
+
+def _parse_create_tables(ddl: str) -> list[dict]:
+    """
+    Parse one or more CREATE TABLE statements from DDL text.
+    Returns a list of table definitions compatible with the mapping format.
+    """
+    import re
+
+    results = []
+    # Find CREATE TABLE header, then extract balanced parentheses body
+    header_re = re.compile(
+        r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?'
+        r'(?:`|"|\[)?(\w+)(?:`|"|\])?\s*'          # table name or schema
+        r'(?:\.(?:`|"|\[)?(\w+)(?:`|"|\])?\s*)?'    # optional .table
+        r'\(',
+        re.IGNORECASE,
+    )
+
+    for m in header_re.finditer(ddl):
+        table_name = m.group(2) or m.group(1)
+        # Extract balanced parentheses body starting after the opening '('
+        start = m.end()
+        depth = 1
+        pos = start
+        while pos < len(ddl) and depth > 0:
+            if ddl[pos] == '(':
+                depth += 1
+            elif ddl[pos] == ')':
+                depth -= 1
+            pos += 1
+        body = ddl[start:pos - 1].strip()
+
+        columns = []
+        pk_cols = []
+
+        # Split on commas, but respect parentheses (for types like NUMERIC(10,2))
+        parts = _split_ddl_body(body)
+
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+
+            # Check for PRIMARY KEY constraint
+            pk_match = re.match(
+                r'(?:CONSTRAINT\s+\w+\s+)?PRIMARY\s+KEY\s*\((.+?)\)',
+                part, re.IGNORECASE,
+            )
+            if pk_match:
+                pk_cols = [
+                    c.strip().strip('`"[]')
+                    for c in pk_match.group(1).split(",")
+                ]
+                continue
+
+            # Check for FOREIGN KEY / other constraints — skip
+            if re.match(
+                r'(?:CONSTRAINT|FOREIGN\s+KEY|UNIQUE|CHECK|INDEX)',
+                part, re.IGNORECASE,
+            ):
+                continue
+
+            # Parse column: name type [NOT NULL] [DEFAULT ...] [PRIMARY KEY] ...
+            col_match = re.match(
+                r'(?:`|"|\[)?(\w+)(?:`|"|\])?\s+'
+                r'([\w]+(?:\s*\([^)]*\))?(?:\s+(?:UNSIGNED|VARYING|PRECISION|WITHOUT\s+TIME\s+ZONE|WITH\s+TIME\s+ZONE))*)',
+                part, re.IGNORECASE,
+            )
+            if not col_match:
+                continue
+
+            col_name = col_match.group(1)
+            col_type = col_match.group(2).strip()
+
+            nullable = "NOT NULL" not in part.upper()
+
+            if re.search(r'PRIMARY\s+KEY', part, re.IGNORECASE):
+                pk_cols.append(col_name)
+
+            columns.append({
+                "name": col_name,
+                "type": col_type.lower(),
+                "display_type": col_type.lower(),
+                "nullable": nullable,
+                "default": None,
+            })
+
+        results.append({
+            "table_name": table_name,
+            "columns": columns,
+            "primary_key": pk_cols,
+            "foreign_keys": [],
+        })
+
+    if not results:
+        raise ValueError("No CREATE TABLE statements found in DDL")
+
+    return results
+
+
+def _split_ddl_body(body: str) -> list[str]:
+    """Split DDL column definitions on commas, respecting parentheses."""
+    parts = []
+    depth = 0
+    current = []
+    for ch in body:
+        if ch == '(':
+            depth += 1
+            current.append(ch)
+        elif ch == ')':
+            depth -= 1
+            current.append(ch)
+        elif ch == ',' and depth == 0:
+            parts.append(''.join(current))
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        parts.append(''.join(current))
+    return parts
+
+
+# --- Wizard API ---
+
+async def wizard_test_source(request):
+    """Test connectivity to SG/App Services/Edge Server and return a random sample doc."""
+    import random
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return error_response("Invalid JSON")
+
+    gw = body.get("gateway", {})
+    auth_cfg = body.get("auth", {})
+    url = gw.get("url", "").rstrip("/")
+    db = gw.get("database", "")
+    scope = gw.get("scope", "_default")
+    collection = gw.get("collection", "_default")
+    src = gw.get("src", "sync_gateway")
+
+    if not url or not db:
+        return error_response("URL and database are required")
+
+    if src == "sync_gateway":
+        changes_url = f"{url}/{db}.{scope}.{collection}/_changes"
+    else:
+        changes_url = f"{url}/{db}/_changes"
+
+    params = {"limit": "100", "include_docs": "true", "since": "0"}
+
+    import aiohttp as _aiohttp
+    ssl_ctx = None
+    if gw.get("accept_self_signed_certs"):
+        import ssl
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    headers = {}
+    method = auth_cfg.get("method", "none")
+    basic_auth = None
+    if method == "basic" and auth_cfg.get("username"):
+        basic_auth = _aiohttp.BasicAuth(auth_cfg["username"],
+                                        auth_cfg.get("password", ""))
+    elif method == "bearer" and auth_cfg.get("bearer_token"):
+        headers["Authorization"] = f"Bearer {auth_cfg['bearer_token']}"
+    elif method == "session" and auth_cfg.get("session_cookie"):
+        headers["Cookie"] = f"SyncGatewaySession={auth_cfg['session_cookie']}"
+
+    try:
+        connector = _aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else _aiohttp.TCPConnector()
+        async with _aiohttp.ClientSession(connector=connector) as session:
+            async with session.get(changes_url, params=params, auth=basic_auth,
+                                   headers=headers,
+                                   timeout=_aiohttp.ClientTimeout(total=10)) as resp:
+                data = await resp.json()
+                results = data.get("results", [])
+                if not results:
+                    return json_response({"error": "no_docs", "detail": "No documents in changes feed"})
+                pick = random.choice(results)
+                doc = pick.get("doc", pick)
+                return json_response({"ok": True, "doc": doc, "pool_size": len(results)})
+    except Exception as exc:
+        return json_response({"error": "fetch_failed", "detail": str(exc)}, status=500)
+
+
+async def wizard_test_output(request):
+    """Test connectivity to an HTTP output endpoint."""
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return error_response("Invalid JSON")
+
+    target_url = body.get("target_url", "").strip()
+    if not target_url:
+        return error_response("target_url is required")
+
+    import aiohttp as _aiohttp
+    ssl_ctx = None
+    if body.get("accept_self_signed_certs"):
+        import ssl
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    headers = {}
+    auth_cfg = body.get("auth", {})
+    method = auth_cfg.get("method", "none")
+    basic_auth = None
+    if method == "basic" and auth_cfg.get("username"):
+        basic_auth = _aiohttp.BasicAuth(auth_cfg["username"],
+                                        auth_cfg.get("password", ""))
+    elif method == "bearer" and auth_cfg.get("bearer_token"):
+        headers["Authorization"] = f"Bearer {auth_cfg['bearer_token']}"
+
+    try:
+        connector = _aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else _aiohttp.TCPConnector()
+        async with _aiohttp.ClientSession(connector=connector) as session:
+            async with session.head(target_url, auth=basic_auth, headers=headers,
+                                    timeout=_aiohttp.ClientTimeout(total=10),
+                                    allow_redirects=True) as resp:
+                return json_response({
+                    "ok": True,
+                    "status": resp.status,
+                    "content_type": resp.headers.get("Content-Type", ""),
+                })
+    except Exception as exc:
+        return json_response({"ok": False, "error": str(exc)}, status=200)
+
+
 # --- App factory ---
 
 def create_app():
@@ -305,6 +671,7 @@ def create_app():
     app.router.add_get("/config", page_config)
     app.router.add_get("/schema", page_schema)
     app.router.add_get("/transforms", page_transforms)
+    app.router.add_get("/wizard", page_wizard)
 
     # Config API
     app.router.add_get("/api/config", get_config)
@@ -332,6 +699,16 @@ def create_app():
 
     # Sample Doc API
     app.router.add_get("/api/sample-doc", get_sample_doc)
+
+    # DB Introspection API
+    app.router.add_get("/api/db/drivers", list_db_drivers)
+    app.router.add_post("/api/db/test", db_test_connection)
+    app.router.add_post("/api/db/introspect", db_introspect)
+    app.router.add_post("/api/db/parse-ddl", parse_ddl)
+
+    # Wizard API
+    app.router.add_post("/api/wizard/test-source", wizard_test_source)
+    app.router.add_post("/api/wizard/test-output", wizard_test_output)
 
     # Static files
     app.router.add_static("/static/", WEB / "static", show_index=False)

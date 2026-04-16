@@ -2,7 +2,7 @@
 
 This document covers the practical implementation of writing `_changes` feed documents into RDBMS tables, focusing on three key scenarios: single-table writes, multi-table transactional writes, and insert-vs-update handling.
 
-**Prerequisites:** Read [`RDBMS_PLAN.md`](RDBMS_PLAN.md) (architecture, config, engine-specific notes) and [`SCHEMA_MAPPING.md`](SCHEMA_MAPPING.md) (mapping definition format, transforms, JSONPath syntax) first.
+**Prerequisites:** Read [`RDBMS_PLAN.md`](RDBMS_PLAN.md) (architecture, config, engine-specific notes) and [`SCHEMA_MAPPING.md`](SCHEMA_MAPPING.md) (mapping definition format, transforms, JSONPath syntax) first. Note: `schema/mapper.py` and `schema/validator.py` are now implemented — see the checklist at the bottom for current status.
 
 **Related docs:**
 - [`DESIGN.md`](DESIGN.md) -- Pipeline architecture, failure modes, checkpoint strategy
@@ -59,6 +59,8 @@ Mapping (`mappings/product.json`):
 ```
 
 **SQL generated (PostgreSQL):**
+
+The actual SQL is produced by `SqlOperation.to_sql()` in `schema/mapper.py`, which generates `$1, $2, ...` asyncpg-style positional placeholders:
 
 ```sql
 -- UPSERT (insert or update)
@@ -300,12 +302,12 @@ _changes doc arrives
 
 ### How It Connects to `main.py`
 
-The existing `process_one()` function calls `output.send(doc, method)`. For RDBMS output, the `send()` implementation:
+The existing `process_one()` function calls `output.send(doc, method)`. For RDBMS output, `PostgresOutputForwarder.send(doc, method)`:
 
-1. Looks up the matching mapping definition for the document
-2. Extracts field values using JSONPath and applies transforms
-3. Determines if it's a single-table or multi-table write
-4. Executes the SQL inside a transaction (multi-table) or as a single statement (single-table)
+1. Calls `self._mapper.matches(doc)` to check whether the document matches a mapping definition
+2. Calls `self._mapper.map_document(doc, is_delete=...)` which extracts field values using JSONPath, applies transforms, and returns a list of `SqlOperation` objects
+3. Acquires a connection from the asyncpg pool and iterates the `SqlOperation` list inside `conn.transaction()` — both single-table and multi-table writes use this same transactional path (simple and correct)
+4. In `dry_run` mode, logs the SQL without executing
 5. Returns `{"ok": True/False, "doc_id": ..., "method": ...}` — same interface as the HTTP output
 
 The rest of the pipeline (checkpoint, DLQ, halt_on_failure, metrics) works identically regardless of output mode.
@@ -420,13 +422,12 @@ RDBMS writes follow the same failure semantics as HTTP output (see [`DESIGN.md`]
 
 ## Implementation Checklist
 
-1. [ ] `schema/mapper.py` — Load mapping defs, extract values by JSONPath, apply transforms, generate per-engine SQL ops
-2. [ ] `schema/validator.py` — Validate mapping files at startup (paths, FK consistency, PK exists)
-3. [ ] `db/__init__.py` — Update `DBOutputBase.send()` to accept a mapping and call mapper
-4. [ ] `db/db_postgres.py` — Transaction support for multi-table writes, single-statement for single-table
-5. [ ] `db/db_mysql.py` — Same with MySQL upsert syntax (`ON DUPLICATE KEY UPDATE`)
-6. [ ] `db/db_mssql.py` — Same with MERGE syntax
-7. [ ] `db/db_oracle.py` — Same with Oracle MERGE syntax
-8. [ ] `main.py` — Load mappings at startup, route docs through mapper before DB output
-9. [ ] `mappings/` — Example mapping files (order, product, customer)
-10. [ ] Integration tests — End-to-end: sample doc → mapper → transaction → verify DB state
+1. [x] `schema/mapper.py` — Implemented: `SchemaMapper`, `SqlOperation`, `resolve_path()`, `apply_transform()`, `resolve_column()`
+2. [x] `schema/validator.py` — Implemented: `validate_schema()`, `validate_file()`
+3. [x] `db/db_postgres.py` — Implemented: `PostgresOutputForwarder` with asyncpg pool, transactional multi-table writes
+4. [ ] `db/db_mysql.py` — Placeholder (MySQL upsert syntax `ON DUPLICATE KEY UPDATE`)
+5. [ ] `db/db_mssql.py` — Placeholder (MERGE syntax)
+6. [ ] `db/db_oracle.py` — Placeholder (Oracle MERGE syntax)
+7. [ ] `main.py` — Load mappings at startup, route docs through mapper before DB output (not yet wired)
+8. [ ] `mappings/` — Example mapping files (order, product, customer) (not yet created)
+9. [ ] Integration tests — End-to-end: sample doc → mapper → transaction → verify DB state

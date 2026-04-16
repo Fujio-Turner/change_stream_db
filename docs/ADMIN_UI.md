@@ -13,6 +13,8 @@ The admin UI is a lightweight aiohttp web server (`web/server.py`) that provides
 3. **Schema Mappings** — Visual JSON mapping editor with source/target split-pane, drag-and-drop field mapping, transform functions, and relationship visualization
 4. **Transforms Reference** — Documentation page listing all 58 available transform functions with descriptions and examples
 
+5. **Setup Wizard** — 3-step guided setup for connecting a source, configuring output, and mapping fields
+
 All pages use DaisyUI + Tailwind CSS with a shared dark/light theme toggle that persists across pages via `localStorage`.
 
 ---
@@ -179,6 +181,8 @@ A visual JSON mapping editor with a split-pane layout for mapping source documen
 - **Filename** input, **Save**, **Download** buttons
 - **Sample Templates** dropdown -- Pre-built mappings organized by output mode (Tables: Orders, Profiles, Products; JSON: Orders, Events, Sensors)
 - **Saved Files** dropdown -- Load or delete previously saved mapping files
+- **🗄️ Import from Database** -- Opens a modal to connect to a live RDBMS and import table schemas (see [Import from Database](#import-from-database) below)
+- **📄 Upload DDL** -- Opens a modal to paste CREATE TABLE statements (see [Upload DDL](#upload-ddl) below)
 
 #### Left Panel — Source (45%)
 
@@ -243,6 +247,58 @@ Live coverage indicators show mapping completeness on both sides of the editor:
 
 Both indicators update in real time on every mapping change.
 
+#### Import from Database
+
+Clicking **🗄️ Import from Database** opens a modal that connects to a live RDBMS and imports table schemas directly into the Tables editor.
+
+**Connection Form:**
+
+| Field | Description |
+|---|---|
+| **Database Type** | Dropdown auto-populated from `/api/db/drivers` — only shows RDBMS engines whose Python drivers are installed (e.g., `asyncpg` for PostgreSQL, `aiomysql` for MySQL, `aioodbc` for MS SQL, `cx_Oracle` for Oracle) |
+| **Host** | Database server hostname or IP |
+| **Port** | Auto-set when switching Database Type (PostgreSQL=5432, MySQL=3306, MS SQL=1433, Oracle=1521) |
+| **Database** | Database / service name |
+| **User** | Database username |
+| **Password** | Database password |
+| **Schema** | Schema name (e.g., `public` for PostgreSQL) |
+| **SSL** | Toggle to enable SSL connections |
+
+**Workflow:**
+
+1. Fill in the connection form. The **Database Type** dropdown only lists drivers that are installed on the server.
+2. Click **Test Connection** — calls `POST /api/db/test`. On success, displays the database version string (e.g., "PostgreSQL 16.2"). On failure, shows the connection error.
+3. Click **Fetch Tables** — calls `POST /api/db/introspect`. Displays all discovered tables with checkboxes.
+4. Each table row shows:
+   - Table name
+   - **PK** badge (primary key column name)
+   - **FK** badges (foreign key relationships)
+   - Column list with data types
+5. Use **Select All** / **Select None** buttons to toggle checkboxes.
+6. Click **Import Selected** — adds each checked table to the Tables editor with:
+   - Table name and primary key pre-filled
+   - Parent / FK auto-detected from foreign key constraints
+   - All columns created with correct names and types (source paths left empty for the user to fill from the Source Fields panel)
+   - `replace_strategy: delete_insert` auto-set for child tables (tables with detected foreign keys)
+
+#### Upload DDL
+
+Clicking **📄 Upload DDL** opens a modal with a large textarea for pasting SQL CREATE TABLE statements.
+
+**Supported syntax:**
+- PostgreSQL, MySQL, MS SQL, and Oracle CREATE TABLE syntax
+- Quoted identifiers (double-quoted, backtick-quoted, bracket-quoted)
+- Schema-qualified table names (e.g., `public.orders`)
+- Column types with parentheses (e.g., `NUMERIC(10,2)`, `VARCHAR(255)`)
+- Inline `PRIMARY KEY` on a column definition
+- Constraint-level `PRIMARY KEY (col1, col2)` at the end of the column list
+
+**Workflow:**
+
+1. Paste one or more CREATE TABLE statements into the textarea.
+2. Click **Parse & Import** — calls `POST /api/db/parse-ddl`. The server-side parser extracts table names, columns, types, and primary keys from the DDL text.
+3. Imported tables appear in the Tables editor with columns and primary keys pre-filled (source paths left empty for the user to fill).
+
 #### Generated Mapping JSON
 
 A collapsible section at the bottom shows the complete mapping JSON that will be saved. This is the same format consumed by the worker.
@@ -286,6 +342,51 @@ Each function includes a description, parameter syntax, and example showing inpu
 
 ---
 
+### Setup Wizard (`/wizard`)
+
+A 3-step guided setup that walks through configuring the entire pipeline:
+
+#### Step 1: Connect Source
+
+Connect to a Sync Gateway, Capella App Services, or Edge Server `_changes` feed. The form mirrors the gateway/auth sections from the Config Editor. Two test buttons:
+
+- **Test Connection** — `POST /api/wizard/test-source` with the gateway and auth config. On success, fetches up to 100 docs and returns a random pick.
+- **Fetch Random Sample** — same endpoint, returns a different random doc each time.
+
+The fetched sample document is stored in wizard state for use in Step 3 mapping.
+
+#### Step 2: Configure Output
+
+Three output modes:
+
+| Mode | Description |
+|---|---|
+| **Stdout** | No additional config needed. Documents printed to console/logs. |
+| **HTTP** | Target URL, output format (json/xml/form/msgpack/csv), write method (PUT/POST), authentication, self-signed certs. **Test Output** button calls `POST /api/wizard/test-output` (HTTP HEAD to the target URL). |
+| **RDBMS** | Same DB connection form as the Schema Mappings import modal (database type auto-detected from installed drivers, host, port, credentials, schema, SSL). Reuses `/api/db/test` and `/api/db/introspect` endpoints. Discovered tables are displayed with checkboxes for selection. |
+
+#### Step 3: Map Source → Output
+
+A split-pane view similar to the Schema Mappings page:
+
+- **Left panel (45%)** — Read-only display of the sample document from Step 1 with extracted source fields listed below. Fields are draggable onto mapping inputs.
+- **Right panel (55%)** — Mapping UI that adapts to the output mode:
+  - Stdout / HTTP: JSON field mapping (target key → source path + optional transform)
+  - RDBMS: Table mapping with tabs, column definitions, parent/FK relationships (pre-populated from Step 2 introspection)
+
+Both modes include the full transform function dropdown (58 functions across 6 categories).
+
+At the bottom:
+- **Generated config.json** — collapsible JSON preview of the complete configuration
+- **Save & Apply Config** — `PUT /api/config` with the generated config
+- **Save Mapping** — `PUT /api/mappings/{name}` to save the field mapping as a reusable mapping file
+
+#### Step Navigation
+
+DaisyUI step indicators at the top show progress through the three steps. Back/Next buttons at the bottom navigate between steps. Steps are highlighted as completed.
+
+---
+
 ## API Endpoints
 
 ### Config
@@ -315,6 +416,22 @@ Each function includes a description, parameter syntax, and example showing inpu
 | `DELETE` | `/api/dlq/{id}` | Delete one entry |
 | `DELETE` | `/api/dlq` | Clear all DLQ entries |
 
+### Database Introspection
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/db/drivers` | List installed RDBMS drivers (only engines with installed Python packages) |
+| `POST` | `/api/db/test` | Test RDBMS connection (returns version string on success) |
+| `POST` | `/api/db/introspect` | Introspect tables, columns, primary keys, and foreign keys from a live RDBMS |
+| `POST` | `/api/db/parse-ddl` | Parse CREATE TABLE DDL text and return table/column/PK definitions |
+
+### Wizard
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/wizard/test-source` | Test SG/App Services/Edge Server connectivity with custom gateway+auth config; returns a random sample doc |
+| `POST` | `/api/wizard/test-output` | Test HTTP output endpoint reachability (HEAD request); returns status code |
+
 ### Status & Metrics
 
 | Method | Path | Description |
@@ -333,6 +450,7 @@ The metrics proxy normalizes the bind address (`0.0.0.0` -> `127.0.0.1`) before 
 | `GET` | `/config` | Config editor page |
 | `GET` | `/schema` | Schema mappings page |
 | `GET` | `/transforms` | Transform functions reference page |
+| `GET` | `/wizard` | Setup wizard page |
 | `GET` | `/static/...` | CSS, JS assets (DaisyUI, Tailwind, ECharts) |
 
 ---
@@ -353,9 +471,9 @@ All pages share a consistent theme toggle:
 Every page follows the same layout:
 
 ```
-<nav>   Navbar with title, page links (Dashboard, Config, Schema Mappings, Transforms — active highlight), theme toggle
+<nav>   Navbar with title, page links (Dashboard, Config, Schema Mappings, Transforms, Wizard — active highlight), theme toggle
 <main>  Page-specific content
-<footer> "Changes Worker v1.3.0"
+<footer> "Changes Worker v1.4.0"
 ```
 
 Consistent classes across all pages: `min-h-screen flex flex-col bg-base-200` on `<body>`, `<nav class="navbar bg-base-100 shadow-sm px-4">` for the navbar.
