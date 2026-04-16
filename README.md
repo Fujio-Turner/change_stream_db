@@ -152,7 +152,7 @@ All settings live in a single `config.json` file. Here is a complete reference w
   },
 
   "changes_feed": {
-    "feed_type": "longpoll",         // "longpoll" | "continuous" | "normal" | "sse" (Edge) | "eventsource" (CouchDB)
+    "feed_type": "longpoll",         // "longpoll" | "continuous" | "websocket" (SG/App Services) | "normal" | "sse" (Edge) | "eventsource" (CouchDB)
     "poll_interval_seconds": 10,     // Seconds to wait between longpoll cycles
     "active_only": true,             // Exclude deleted/revoked docs from the feed
     "include_docs": true,            // Inline doc bodies; false = bulk_get after
@@ -468,6 +468,41 @@ All metrics are labeled with `src` (gateway type) and `database` (keyspace name)
 
 📄 **For a complete metrics reference** with types, descriptions, PromQL examples, and charting suggestions, see [`metrics.html`](metrics.html).
 
+### Worker Control Endpoints
+
+The metrics server (port 9090) also exposes control endpoints for managing the worker at runtime:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/_restart` | `POST` | Stop the current changes feed, reload config, and restart with the new settings. In-flight batch processing completes before the feed stops. |
+| `/_shutdown` | `POST` | Graceful shutdown: stop consuming the changes feed, finish all in-flight output operations, save the checkpoint, then exit. |
+| `/_metrics` | `GET` | Prometheus metrics (see above). |
+
+**Restart example** — switch feed type without restarting the container:
+
+```bash
+# 1. Update config (via admin UI or directly)
+curl -X PUT http://localhost:8080/api/config -d @config.json
+
+# 2. Signal the worker to reload (automatic when using the admin UI)
+curl -X POST http://localhost:9090/_restart
+```
+
+The worker will:
+1. Stop the current feed loop (longpoll / continuous / websocket)
+2. Wait for any in-flight `_process_changes_batch` to finish
+3. Reload config from CBL store (or `config.json`)
+4. Validate the new config
+5. Start the feed with the new settings, resuming from the last checkpoint
+
+**Graceful shutdown example:**
+
+```bash
+curl -X POST http://localhost:9090/_shutdown
+```
+
+> **Note:** The admin UI automatically calls `/_restart` on the worker after saving config via `PUT /api/config`, so config changes take effect immediately without manual intervention.
+
 ### Dry Run
 
 Set `processing.dry_run=true` to process the `_changes` feed and log what *would* be sent without actually sending anything:
@@ -505,6 +540,27 @@ If the server disconnects, the worker applies exponential backoff (using `retry`
 ```
 
 📄 **Full design details:** [`docs/DESIGN.md`](docs/DESIGN.md#continuous-feed-mode-feed_type-continuous)
+
+### WebSocket Mode (`feed_type: websocket`)
+
+For Sync Gateway and App Services, the worker supports a **WebSocket feed** that uses a real `ws://` (or `wss://`) connection to the `_changes` endpoint. Like continuous mode, it uses a two-phase approach:
+
+1. **Catch-up** — Batched one-shot `feed=normal` requests drain any backlog
+2. **Stream** — Opens a WebSocket connection to `/_changes?feed=websocket`, sends parameters as a JSON payload, and receives changes as WebSocket messages
+
+On disconnect, the worker applies exponential backoff and returns to catch-up before reconnecting.
+
+```jsonc
+"changes_feed": {
+  "feed_type": "websocket",
+  "include_docs": true,
+  "active_only": true
+}
+```
+
+> **Note:** WebSocket mode is only available on Sync Gateway and App Services. Edge Server and CouchDB do not support it.
+
+📄 **Full design details:** [`docs/DESIGN.md`](docs/DESIGN.md#websocket-feed-mode-feed_type-websocket)
 
 ---
 

@@ -85,9 +85,33 @@ async def put_config(request):
         return error_response("Invalid JSON")
     if USE_CBL:
         CBLStore().save_config(body)
-        return json_response({"ok": True})
-    CONFIG_PATH.write_text(json.dumps(body, indent=2) + "\n")
-    return json_response({"ok": True})
+    else:
+        CONFIG_PATH.write_text(json.dumps(body, indent=2) + "\n")
+
+    # Signal the worker to restart its changes feed with the new config
+    restart_result = await _signal_worker_restart()
+    return json_response({"ok": True, "restart": restart_result})
+
+
+async def _signal_worker_restart() -> str:
+    """POST to the worker's /_restart endpoint to trigger a feed restart."""
+    import os
+    import aiohttp as _aiohttp
+    worker_host = os.environ.get("METRICS_HOST")
+    if not worker_host:
+        return "skipped"  # running locally, no separate worker
+    try:
+        cfg = CBLStore().load_config() if USE_CBL else json.loads(CONFIG_PATH.read_text())
+        port = cfg.get("metrics", {}).get("port", 9090)
+    except Exception:
+        port = 9090
+    url = f"http://{worker_host}:{port}/_restart"
+    try:
+        async with _aiohttp.ClientSession() as session:
+            async with session.post(url, timeout=_aiohttp.ClientTimeout(total=5)) as resp:
+                return "ok" if resp.status == 200 else f"error:{resp.status}"
+    except Exception as exc:
+        return f"error:{exc}"
 
 
 # --- Mappings API ---

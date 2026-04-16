@@ -152,6 +152,87 @@ catch-up → continuous → disconnect → backoff → catch-up → continuous �
 
 ---
 
+## WebSocket Feed Mode (`feed_type: websocket`)
+
+The worker supports a **two-phase WebSocket mode** that follows the same catch-up pattern as continuous mode, but uses a real WebSocket connection for the live streaming phase instead of HTTP chunked streaming.
+
+### Phase 1: Catch-Up (Batched One-Shot Requests)
+
+Identical to continuous mode — the worker uses **batched normal (one-shot) HTTP requests** to drain any backlog before switching to WebSocket streaming:
+
+```
+GET /_changes?feed=normal&limit=10000&since=0
+  → process 10,000 changes, checkpoint
+
+GET /_changes?feed=normal&limit=10000&since=<last_seq>
+  → process 10,000 changes, checkpoint
+
+GET /_changes?feed=normal&limit=10000&since=<last_seq>
+  → 0 results — caught up!
+```
+
+### Phase 2: Live WebSocket Stream
+
+Once catch-up completes, the worker opens a **WebSocket connection** to the `_changes` endpoint:
+
+1. The HTTP URL is converted to a WebSocket URL (`http://` → `ws://`, `https://` → `wss://`)
+2. A real WebSocket protocol connection is established (not an HTTP GET with a `feed=websocket` parameter)
+3. After connecting, the worker sends a JSON payload with parameters:
+
+```json
+{"since": "<last_seq>", "include_docs": true, "active_only": true, "channels": "channel1,channel2"}
+```
+
+4. The server streams change rows as WebSocket messages, each being a JSON array of change objects:
+
+```json
+[{"seq":"1001","id":"doc1","changes":[{"rev":"2-abc"}],"doc":{...}}]
+[{"seq":"1002","id":"doc2","changes":[{"rev":"1-def"}],"doc":{...}}]
+```
+
+5. When the server has sent all current changes, it sends a final message containing only `last_seq` (no `id` field), signaling the end of the current batch:
+
+```json
+{"last_seq": "1002"}
+```
+
+6. The worker then reconnects immediately to wait for new changes.
+
+### Reconnection with Exponential Backoff
+
+Same as continuous mode — if the WebSocket connection drops or the server becomes unreachable:
+
+1. The worker catches the connection error
+2. Applies exponential backoff using the `retry` config (`backoff_base_seconds`, `backoff_max_seconds`)
+3. Returns to **Phase 1 (catch-up)** before reopening the WebSocket stream
+
+```
+catch-up → websocket → disconnect → backoff → catch-up → websocket → ...
+```
+
+### Configuration
+
+```jsonc
+"changes_feed": {
+  "feed_type": "websocket",           // Enable 2-phase WebSocket mode
+  "include_docs": true,               // Applies to both phases
+  "active_only": true,                // Only active (non-deleted) changes
+  "channels": []                      // Channel filter (empty = all channels)
+}
+```
+
+### When to Use WebSocket vs Continuous
+
+| Scenario | Recommendation |
+|---|---|
+| Infrastructure is WebSocket-friendly (no HTTP-only proxies) | `websocket` — binary framing avoids chunked-encoding issues |
+| Target is Sync Gateway or App Services | `websocket` — supported and optimized |
+| Target is Edge Server or CouchDB | `continuous` — WebSocket feed is **not** available |
+| Real-time streaming with reliable framing | `websocket` — message boundaries are explicit, no line-parsing needed |
+| Simpler HTTP-only deployment | `continuous` — no WebSocket upgrade required |
+
+---
+
 ## Checkpoint Strategy
 
 ![Checkpoint Strategies](../img/checkpoint-strategies.png)
