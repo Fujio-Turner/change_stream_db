@@ -28,7 +28,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import aiohttp
-import changes_worker as cw
+import main as cw
+from rest.output_http import _dict_to_xml, _flatten_dict, _ClientHTTPError
 
 
 # ---------------------------------------------------------------------------
@@ -445,37 +446,37 @@ class TestXmlHelper(unittest.TestCase):
 
     def test_nested_dict(self):
         doc = {"a": {"b": "hello"}}
-        xml_bytes = cw._dict_to_xml(doc, "root")
+        xml_bytes = _dict_to_xml(doc, "root")
         self.assertIn(b"<a>", xml_bytes)
         self.assertIn(b"<b>hello</b>", xml_bytes)
 
     def test_list_elements(self):
         doc = {"items": [1, 2]}
-        xml_bytes = cw._dict_to_xml(doc, "root")
+        xml_bytes = _dict_to_xml(doc, "root")
         self.assertIn(b"<item>1</item>", xml_bytes)
         self.assertIn(b"<item>2</item>", xml_bytes)
 
     def test_none_value(self):
         doc = {"empty": None}
-        xml_bytes = cw._dict_to_xml(doc, "root")
+        xml_bytes = _dict_to_xml(doc, "root")
         self.assertIn(b"<empty", xml_bytes)
 
 
 class TestFlattenDict(unittest.TestCase):
 
     def test_flat(self):
-        self.assertEqual(cw._flatten_dict({"a": "1", "b": "2"}), {"a": "1", "b": "2"})
+        self.assertEqual(_flatten_dict({"a": "1", "b": "2"}), {"a": "1", "b": "2"})
 
     def test_nested(self):
-        result = cw._flatten_dict({"a": {"b": 1}})
+        result = _flatten_dict({"a": {"b": 1}})
         self.assertEqual(result, {"a.b": "1"})
 
     def test_list_value(self):
-        result = cw._flatten_dict({"tags": [1, 2]})
+        result = _flatten_dict({"tags": [1, 2]})
         self.assertEqual(result["tags"], "[1, 2]")
 
     def test_none_value(self):
-        result = cw._flatten_dict({"x": None})
+        result = _flatten_dict({"x": None})
         self.assertEqual(result["x"], "")
 
 
@@ -829,7 +830,7 @@ class TestSendReturnsResultDict(unittest.TestCase):
 
     def test_http_send_returns_fail_on_4xx_no_halt(self):
         mock_http = MagicMock()
-        mock_http.request = AsyncMock(side_effect=cw.ClientHTTPError(400, "bad"))
+        mock_http.request = AsyncMock(side_effect=_ClientHTTPError(400, "bad"))
 
         session = MagicMock()
         cfg = {

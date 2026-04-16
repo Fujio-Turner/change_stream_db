@@ -112,12 +112,50 @@ Collapsible sections for each config block:
 |---|---|
 | **Gateway** | Source type, URL, database, scope, collection, self-signed certs toggle |
 | **Auth** | Method selector (basic/session/bearer/none) with conditional field visibility |
-| **Changes Feed** | Feed type, poll interval, active only, include docs, channels, throttle, HTTP timeout |
+| **Changes Feed** | Feed type (grouped: Polling / Continuous with tooltip), poll interval, active only, include docs, channels (Tagify tag input), throttle, HTTP timeout |
 | **Processing** | Ignore delete, ignore remove, sequential, max concurrent, dry run |
-| **Output** | Mode (stdout/http/db), target URL, output format, halt on failure |
+| **Output** | Mode (stdout/http/db) with conditional field visibility: HTTP shows target URL + output format; DB shows engine, host, port, database, credentials, schema, table, pool size, SSL, mapping mode (jsonb/columns) with sub-fields. Halt on failure shown for all modes. |
 | **Checkpoint** | Enabled, client ID, every N docs |
 | **Metrics** | Enabled, host, port |
 | **Logging** | Level (DEBUG/INFO/WARNING/ERROR) |
+
+#### Feed Type Grouping
+
+The Feed Type dropdown organizes options into two `<optgroup>` categories:
+
+| Group | Options | Notes |
+|---|---|---|
+| **Polling** | `longpoll` (default), `normal` | Periodic HTTP request/response cycles |
+| **Continuous** | `continuous`, `websocket`, `sse` | Persistent streaming connections. `websocket` is SG / App Services only. `sse` is Edge Server only. |
+
+A tooltip (ⓘ white circle with `?`) next to the label explains each mode on hover.
+
+#### Channels Tag Input
+
+The Channels field uses [Tagify](https://yaireo.github.io/tagify/) for a tag-based input experience:
+
+- Type a channel name and press **Enter**, **comma**, or **space** to add a tag
+- Click the **×** on a tag to remove it
+- Duplicate channel names are rejected automatically
+- Tags are stored as a JSON array in config (e.g., `["channel1", "channel2"]`)
+
+The Tagify library is bundled locally at `/static/js/tagify.min.js` and `/static/css/tagify.css` — no CDN dependency.
+
+#### Toggle Styling
+
+All toggle switches use the DaisyUI `toggle-success` class: **bright green when ON**, grey when OFF. This makes the on/off state immediately distinguishable.
+
+#### DB Output Fields
+
+When `db` is selected as the output mode, the HTTP-specific fields (Target URL, Output Format) are hidden and replaced with RDBMS configuration fields:
+
+| Field Group | Fields |
+|---|---|
+| **Connection** | Engine (PostgreSQL/MySQL/MS SQL/Oracle), Host, Port, Database, Username, Password, Schema, Table (fallback) |
+| **Pool** | Pool Size, Connect Timeout, SSL toggle |
+| **Mapping** | Mode selector (jsonb / columns). jsonb shows column name fields (doc_id, rev, body, timestamp). columns shows schema mappings config (enabled, path, default mode, strict) + link to Schema Mappings editor. |
+
+Field visibility is driven by the Mode selector — only the relevant fields for the selected output mode are shown.
 
 #### Raw JSON
 
@@ -317,7 +355,7 @@ Every page follows the same layout:
 ```
 <nav>   Navbar with title, page links (Dashboard, Config, Schema Mappings, Transforms — active highlight), theme toggle
 <main>  Page-specific content
-<footer> "Changes Worker v1.2.0"
+<footer> "Changes Worker v1.3.0"
 ```
 
 Consistent classes across all pages: `min-h-screen flex flex-col bg-base-200` on `<body>`, `<nav class="navbar bg-base-100 shadow-sm px-4">` for the navbar.
@@ -332,6 +370,8 @@ Consistent classes across all pages: `min-h-screen flex flex-col bg-base-200` on
 | DaisyUI Themes | CDN (bundled) | `/static/css/themes.css` |
 | Tailwind JS | CDN (bundled) | `/static/js/tailwind.js` |
 | ECharts | CDN (bundled) | `/static/js/echarts.min.js` |
+| Tagify JS | CDN (bundled) | `/static/js/tagify.min.js` |
+| Tagify CSS | CDN (bundled) | `/static/css/tagify.css` |
 | Favicon SVG | Local | `/static/favicon.svg` |
 
 All assets are served locally from `/static/` -- no external CDN calls at runtime. The admin UI works fully offline once the container is built.

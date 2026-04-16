@@ -1,4 +1,4 @@
-# Changes Worker  v1.2.0
+# Changes Worker  v1.3.0
 
 A production-ready, async Python 3 processor for the Couchbase `_changes` feed. It connects to **Sync Gateway**, **Capella App Services**, or **Couchbase Edge Server**, consumes document changes via longpoll or continuous streaming, and forwards them to a downstream consumer — either as standard output or as HTTP requests (PUT/POST/DELETE) to any endpoint.
 
@@ -94,10 +94,10 @@ pip install -r requirements.txt
 # (see Configuration Reference below)
 
 # Test connectivity first
-python changes_worker.py --config config.json --test
+python main.py --config config.json --test
 
 # Run the worker
-python changes_worker.py --config config.json
+python main.py --config config.json
 ```
 
 ### Run with Docker
@@ -247,7 +247,7 @@ Non-fatal issues log warnings but allow the worker to continue.
 
 ### Connection Test (`--test`)
 
-Run `python changes_worker.py --test` to verify everything is reachable before deploying:
+Run `python main.py --test` to verify everything is reachable before deploying:
 
 ```
 ============================================================
@@ -565,15 +565,15 @@ When `mode=stdout`, pipe to other tools:
 
 ```bash
 # Pipe to jq for pretty-printing
-python changes_worker.py | jq '.'
+python main.py | jq '.'
 
 # Pipe to another service
-python changes_worker.py | while IFS= read -r line; do
+python main.py | while IFS= read -r line; do
   curl -s -X PUT http://other-service/ingest -d "$line" -H 'Content-Type: application/json'
 done
 
 # Write to a file
-python changes_worker.py >> changes.jsonl
+python main.py >> changes.jsonl
 ```
 
 ---
@@ -582,7 +582,7 @@ python changes_worker.py >> changes.jsonl
 
 ```
 change_stream_db/
-├── changes_worker.py        # Main worker script (single file, all logic)
+├── main.py                  # Main worker script (single file, all logic)
 ├── cbl_store.py              # Couchbase Lite CE storage layer (CBLStore class)
 ├── config.json               # Configuration (edit this)
 ├── requirements.txt          # Python dependencies

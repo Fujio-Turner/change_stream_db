@@ -35,3 +35,7 @@ docker-compose.override.yaml
 
 # Checkpoint state
 checkpoint.json
+
+# Log files
+logs/*.log
+logs/*.log.*

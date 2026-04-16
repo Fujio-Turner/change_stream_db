@@ -2,6 +2,11 @@
 
 This document describes how the `schema/` module maps Couchbase JSON documents from the `_changes` feed into one or more normalized RDBMS tables or a remapped JSON structure, including the mapping definition format, transform functions, multi-table transaction handling, and the Python libraries that support this.
 
+**Related docs:**
+- [`RDBMS_PLAN.md`](RDBMS_PLAN.md) -- RDBMS output architecture, config, engine-specific notes
+- [`RDBMS_IMPLEMENTATION.md`](RDBMS_IMPLEMENTATION.md) -- Implementation guide: single-table vs. multi-table writes, transactions, insert-vs-update strategy
+- [`ADMIN_UI.md`](ADMIN_UI.md) -- Schema Mappings visual editor with drag-and-drop field mapping
+
 ---
 
 ## The Problem
@@ -585,7 +590,7 @@ python -m schema.validator mappings/order.yaml --sample sample_order.json
 
 ```
 change_stream_db/
-├── changes_worker.py          # Main worker (input: _changes feed)
+├── main.py                    # Main worker (input: _changes feed)
 ├── cbl_store.py               # Couchbase Lite CE storage layer
 ├── config.json                # Configuration
 ├── rest/                      # REST/HTTP output module

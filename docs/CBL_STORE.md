@@ -221,7 +221,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 RUN mkdir -p /app/data
 
-ENTRYPOINT ["python", "changes_worker.py"]
+ENTRYPOINT ["python", "main.py"]
 CMD ["--config", "config.json"]
 ```
 
@@ -259,7 +259,7 @@ def save_config(self, cfg: dict) -> None:
 
 ### Step 3: Config — Replace `config.json` File I/O
 
-Update `changes_worker.py`:
+Update `main.py`:
 
 | Before | After |
 |---|---|
@@ -287,14 +287,14 @@ def load_config(path: str | None = None) -> dict:
         return json.load(f)
 ```
 
-**Files changed:** `changes_worker.py` (`load_config`, `main`)
+**Files changed:** `main.py` (`load_config`, `main`)
 **Test:** start worker with `--config config.json` → verify CBL doc created → restart without `--config` → verify it loads from CBL
 
 ---
 
 ### Step 4: Checkpoint — Replace `checkpoint.json` Fallback
 
-Update the `Checkpoint` class in `changes_worker.py`:
+Update the `Checkpoint` class in `main.py`:
 
 | Before | After |
 |---|---|
@@ -326,7 +326,7 @@ def _save_fallback(self, seq: str) -> None:
     self._fallback_path.write_text(...)
 ```
 
-**Files changed:** `changes_worker.py` (`Checkpoint._load_fallback`, `Checkpoint._save_fallback`)
+**Files changed:** `main.py` (`Checkpoint._load_fallback`, `Checkpoint._save_fallback`)
 **Test:** block SG checkpoint save → verify fallback writes to CBL → restart → verify it loads from CBL
 
 ---
@@ -552,7 +552,7 @@ This is critical for local development on macOS where building CBL-C may not be 
 |---|---|---|
 | `Dockerfile` | **Modify** | Add CBL-C download, CFFI build, `PYTHONPATH` |
 | `cbl_store.py` | **Create** | CBLStore class with all CRUD ops |
-| `changes_worker.py` | **Modify** | `load_config` → CBL, `Checkpoint` fallback → CBL |
+| `main.py` | **Modify** | `load_config` → CBL, `Checkpoint` fallback → CBL |
 | `rest/output_http.py` | **Modify** | `DeadLetterQueue` → CBL |
 | `web/server.py` | **Modify** | API handlers → CBL for config, mappings, DLQ |
 | `web/templates/index.html` | **Modify** | Add DLQ section to dashboard |

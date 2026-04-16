@@ -7,7 +7,9 @@
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/tagify.css" rel="stylesheet" type="text/css" />
   <script src="/static/js/tailwind.js"></script>
+  <script src="/static/js/tagify.min.js"></script>
   <script>
     (function(){
       var t = localStorage.getItem('cw_theme') || 'dark';
@@ -82,7 +84,7 @@
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
               <span class="label-text">Accept self-signed certs</span>
-              <input type="checkbox" id="gateway_accept_self_signed_certs" class="toggle" />
+              <input type="checkbox" id="gateway_accept_self_signed_certs" class="toggle toggle-success" />
             </label>
           </div>
         </div>
@@ -133,13 +135,24 @@
         <div class="collapse-title font-semibold">Changes Feed</div>
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
-            <div class="label"><span class="label-text">Feed Type</span></div>
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Feed Type
+                <div class="tooltip tooltip-right" data-tip="Polling: longpoll (default) – periodic HTTP requests with server-side wait; normal – immediate response, no server wait. &#10;&#10;Continuous: continuous – 2-phase catch-up then real-time HTTP stream; websocket – persistent bi-directional connection, client sends config once then receives changes pushed in real-time (SG &amp; App Services only); SSE – Server-Sent Events (Edge Server only).">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
             <select id="changes_feed_feed_type" class="select select-bordered w-full">
-              <option value="longpoll">longpoll</option>
-              <option value="continuous">continuous</option>
-              <option value="normal">normal</option>
-              <option value="sse">sse</option>
-              <option value="websocket">websocket</option>
+              <optgroup label="Polling">
+                <option value="longpoll">longpoll</option>
+                <option value="normal">normal</option>
+              </optgroup>
+              <optgroup label="Continuous">
+                <option value="continuous">continuous</option>
+                <option value="websocket">websocket (SG / App Services only)</option>
+                <option value="sse">sse (Edge Server only)</option>
+              </optgroup>
             </select>
           </label>
           <label class="form-control w-full">
@@ -149,18 +162,18 @@
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
               <span class="label-text">Active Only</span>
-              <input type="checkbox" id="changes_feed_active_only" class="toggle" />
+              <input type="checkbox" id="changes_feed_active_only" class="toggle toggle-success" />
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
               <span class="label-text">Include Docs</span>
-              <input type="checkbox" id="changes_feed_include_docs" class="toggle" />
+              <input type="checkbox" id="changes_feed_include_docs" class="toggle toggle-success" />
             </label>
           </div>
           <label class="form-control w-full">
-            <div class="label"><span class="label-text">Channels (comma-separated)</span></div>
-            <input type="text" id="changes_feed_channels" class="input input-bordered w-full" placeholder="channel1, channel2" />
+            <div class="label"><span class="label-text">Channels</span></div>
+            <input type="text" id="changes_feed_channels" class="input input-bordered w-full" placeholder="Type a channel and press Enter" />
           </label>
           <label class="form-control w-full">
             <div class="label"><span class="label-text">Throttle Feed</span></div>
@@ -181,19 +194,19 @@
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
               <span class="label-text">Ignore Delete</span>
-              <input type="checkbox" id="processing_ignore_delete" class="toggle" />
+              <input type="checkbox" id="processing_ignore_delete" class="toggle toggle-success" />
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
               <span class="label-text">Ignore Remove</span>
-              <input type="checkbox" id="processing_ignore_remove" class="toggle" />
+              <input type="checkbox" id="processing_ignore_remove" class="toggle toggle-success" />
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
               <span class="label-text">Sequential</span>
-              <input type="checkbox" id="processing_sequential" class="toggle" />
+              <input type="checkbox" id="processing_sequential" class="toggle toggle-success" />
             </label>
           </div>
           <label class="form-control w-full">
@@ -203,7 +216,7 @@
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
               <span class="label-text">Dry Run</span>
-              <input type="checkbox" id="processing_dry_run" class="toggle" />
+              <input type="checkbox" id="processing_dry_run" class="toggle toggle-success" />
             </label>
           </div>
         </div>
@@ -216,32 +229,164 @@
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
             <div class="label"><span class="label-text">Mode</span></div>
-            <select id="output_mode" class="select select-bordered w-full">
+            <select id="output_mode" class="select select-bordered w-full" onchange="toggleOutputFields()">
               <option value="stdout">stdout</option>
               <option value="http">http</option>
               <option value="db">db</option>
             </select>
           </label>
-          <label class="form-control w-full">
-            <div class="label"><span class="label-text">Target URL</span></div>
-            <input type="text" id="output_target_url" class="input input-bordered w-full" placeholder="https://example.com/webhook" />
-          </label>
-          <label class="form-control w-full">
-            <div class="label"><span class="label-text">Output Format</span></div>
-            <select id="output_output_format" class="select select-bordered w-full">
-              <option value="json">json</option>
-              <option value="xml">xml</option>
-              <option value="form">form</option>
-              <option value="msgpack">msgpack</option>
-              <option value="cbor">cbor</option>
-              <option value="bson">bson</option>
-              <option value="yaml">yaml</option>
-            </select>
-          </label>
+
+          <!-- HTTP-specific fields -->
+          <div id="output_http_fields">
+            <label class="form-control w-full mb-3">
+              <div class="label"><span class="label-text">Target URL</span></div>
+              <input type="text" id="output_target_url" class="input input-bordered w-full" placeholder="https://example.com/webhook" />
+            </label>
+            <label class="form-control w-full">
+              <div class="label"><span class="label-text">Output Format</span></div>
+              <select id="output_output_format" class="select select-bordered w-full">
+                <option value="json">json</option>
+                <option value="xml">xml</option>
+                <option value="form">form</option>
+                <option value="msgpack">msgpack</option>
+                <option value="cbor">cbor</option>
+                <option value="bson">bson</option>
+                <option value="yaml">yaml</option>
+              </select>
+            </label>
+          </div>
+
+          <!-- DB-specific fields -->
+          <div id="output_db_fields" class="hidden">
+            <label class="form-control w-full mb-3">
+              <div class="label"><span class="label-text">Engine</span></div>
+              <select id="output_db_engine" class="select select-bordered w-full">
+                <option value="postgres">PostgreSQL</option>
+                <option value="mysql">MySQL</option>
+                <option value="mssql">MS SQL Server</option>
+                <option value="oracle">Oracle</option>
+              </select>
+            </label>
+            <div class="grid grid-cols-2 gap-3 mb-3">
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Host</span></div>
+                <input type="text" id="output_db_host" class="input input-bordered w-full" placeholder="localhost" />
+              </label>
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Port</span></div>
+                <input type="number" id="output_db_port" class="input input-bordered w-full" min="1" max="65535" />
+              </label>
+            </div>
+            <label class="form-control w-full mb-3">
+              <div class="label"><span class="label-text">Database</span></div>
+              <input type="text" id="output_db_database" class="input input-bordered w-full" placeholder="mydb" />
+            </label>
+            <div class="grid grid-cols-2 gap-3 mb-3">
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Username</span></div>
+                <input type="text" id="output_db_username" class="input input-bordered w-full" />
+              </label>
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Password</span></div>
+                <input type="password" id="output_db_password" class="input input-bordered w-full" />
+              </label>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mb-3">
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Schema</span></div>
+                <input type="text" id="output_db_schema" class="input input-bordered w-full" placeholder="public" />
+              </label>
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Table (fallback)</span></div>
+                <input type="text" id="output_db_table" class="input input-bordered w-full" placeholder="couchbase_docs" />
+              </label>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mb-3">
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Pool Size</span></div>
+                <input type="number" id="output_db_pool_size" class="input input-bordered w-full" min="1" value="5" />
+              </label>
+              <label class="form-control w-full">
+                <div class="label"><span class="label-text">Connect Timeout (s)</span></div>
+                <input type="number" id="output_db_connect_timeout" class="input input-bordered w-full" min="1" value="10" />
+              </label>
+            </div>
+            <div class="form-control mb-3">
+              <label class="label cursor-pointer justify-start gap-4">
+                <span class="label-text">SSL</span>
+                <input type="checkbox" id="output_db_ssl" class="toggle toggle-success" />
+              </label>
+            </div>
+
+            <!-- Mapping sub-section -->
+            <div class="divider text-xs opacity-60">Mapping</div>
+            <label class="form-control w-full mb-3">
+              <div class="label"><span class="label-text">Mapping Mode</span></div>
+              <select id="output_db_mapping_mode" class="select select-bordered w-full" onchange="toggleDbMappingFields()">
+                <option value="jsonb">jsonb (whole doc as JSON column)</option>
+                <option value="columns">columns (map fields to columns)</option>
+              </select>
+            </label>
+
+            <!-- JSONB mapping fields -->
+            <div id="output_db_jsonb_fields">
+              <div class="grid grid-cols-2 gap-3 mb-3">
+                <label class="form-control w-full">
+                  <div class="label"><span class="label-text">Doc ID Column</span></div>
+                  <input type="text" id="output_db_doc_id_column" class="input input-bordered w-full" placeholder="doc_id" />
+                </label>
+                <label class="form-control w-full">
+                  <div class="label"><span class="label-text">Rev Column</span></div>
+                  <input type="text" id="output_db_rev_column" class="input input-bordered w-full" placeholder="rev" />
+                </label>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <label class="form-control w-full">
+                  <div class="label"><span class="label-text">Body Column</span></div>
+                  <input type="text" id="output_db_body_column" class="input input-bordered w-full" placeholder="body" />
+                </label>
+                <label class="form-control w-full">
+                  <div class="label"><span class="label-text">Timestamp Column</span></div>
+                  <input type="text" id="output_db_timestamp_column" class="input input-bordered w-full" placeholder="updated_at" />
+                </label>
+              </div>
+            </div>
+
+            <!-- Columns mapping fields (schema_mappings) -->
+            <div id="output_db_columns_fields" class="hidden">
+              <div class="form-control mb-3">
+                <label class="label cursor-pointer justify-start gap-4">
+                  <span class="label-text">Schema Mappings Enabled</span>
+                  <input type="checkbox" id="output_db_schema_mappings_enabled" class="toggle toggle-success" checked />
+                </label>
+              </div>
+              <label class="form-control w-full mb-3">
+                <div class="label"><span class="label-text">Mappings Path</span></div>
+                <input type="text" id="output_db_schema_mappings_path" class="input input-bordered w-full" placeholder="mappings/" />
+              </label>
+              <label class="form-control w-full mb-3">
+                <div class="label"><span class="label-text">Default Mode (for unmapped doc types)</span></div>
+                <select id="output_db_schema_mappings_default_mode" class="select select-bordered w-full">
+                  <option value="jsonb">jsonb (store in fallback table)</option>
+                  <option value="skip">skip (ignore unmapped docs)</option>
+                </select>
+              </label>
+              <div class="form-control">
+                <label class="label cursor-pointer justify-start gap-4">
+                  <span class="label-text">Strict (reject unmapped docs)</span>
+                  <input type="checkbox" id="output_db_schema_mappings_strict" class="toggle toggle-success" />
+                </label>
+              </div>
+              <div class="mt-3">
+                <a href="/schema" class="btn btn-sm btn-outline">Edit Schema Mappings →</a>
+              </div>
+            </div>
+          </div>
+
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
               <span class="label-text">Halt on Failure</span>
-              <input type="checkbox" id="output_halt_on_failure" class="toggle" />
+              <input type="checkbox" id="output_halt_on_failure" class="toggle toggle-success" />
             </label>
           </div>
         </div>
@@ -255,7 +400,7 @@
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
               <span class="label-text">Enabled</span>
-              <input type="checkbox" id="checkpoint_enabled" class="toggle" />
+              <input type="checkbox" id="checkpoint_enabled" class="toggle toggle-success" />
             </label>
           </div>
           <label class="form-control w-full">
@@ -277,7 +422,7 @@
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
               <span class="label-text">Enabled</span>
-              <input type="checkbox" id="metrics_enabled" class="toggle" />
+              <input type="checkbox" id="metrics_enabled" class="toggle toggle-success" />
             </label>
           </div>
           <label class="form-control w-full">
@@ -372,6 +517,20 @@
     document.getElementById('auth_bearer_fields').classList.toggle('hidden', method !== 'bearer');
   }
 
+  // Output mode field visibility
+  function toggleOutputFields() {
+    var mode = document.getElementById('output_mode').value;
+    document.getElementById('output_http_fields').classList.toggle('hidden', mode !== 'http');
+    document.getElementById('output_db_fields').classList.toggle('hidden', mode !== 'db');
+  }
+
+  // DB mapping mode field visibility
+  function toggleDbMappingFields() {
+    var mode = document.getElementById('output_db_mapping_mode').value;
+    document.getElementById('output_db_jsonb_fields').classList.toggle('hidden', mode !== 'jsonb');
+    document.getElementById('output_db_columns_fields').classList.toggle('hidden', mode !== 'columns');
+  }
+
   // Show toast
   function showToast(message, type) {
     var container = document.getElementById('toastContainer');
@@ -403,7 +562,8 @@
     document.getElementById('changes_feed_poll_interval_seconds').value = cfg.changes_feed?.poll_interval_seconds ?? 10;
     document.getElementById('changes_feed_active_only').checked = cfg.changes_feed?.active_only || false;
     document.getElementById('changes_feed_include_docs').checked = cfg.changes_feed?.include_docs || false;
-    document.getElementById('changes_feed_channels').value = (cfg.changes_feed?.channels || []).join(', ');
+    channelsTagify.removeAllTags();
+    channelsTagify.addTags(cfg.changes_feed?.channels || []);
     document.getElementById('changes_feed_throttle_feed').value = cfg.changes_feed?.throttle_feed ?? 0;
     document.getElementById('changes_feed_http_timeout_seconds').value = cfg.changes_feed?.http_timeout_seconds ?? 300;
 
@@ -418,6 +578,36 @@
     document.getElementById('output_output_format').value = cfg.output?.output_format || 'json';
     document.getElementById('output_halt_on_failure').checked = cfg.output?.halt_on_failure ?? true;
 
+    // DB fields
+    var db = cfg.output?.db || {};
+    document.getElementById('output_db_engine').value = db.engine || 'postgres';
+    document.getElementById('output_db_host').value = db.host || '';
+    document.getElementById('output_db_port').value = db.port || '';
+    document.getElementById('output_db_database').value = db.database || '';
+    document.getElementById('output_db_username').value = db.username || '';
+    document.getElementById('output_db_password').value = db.password || '';
+    document.getElementById('output_db_schema').value = db.schema || '';
+    document.getElementById('output_db_table').value = db.table || '';
+    document.getElementById('output_db_pool_size').value = db.pool_size ?? 5;
+    document.getElementById('output_db_connect_timeout').value = db.connect_timeout_seconds ?? 10;
+    document.getElementById('output_db_ssl').checked = db.ssl || false;
+
+    var mapping = db.mapping || {};
+    document.getElementById('output_db_mapping_mode').value = mapping.mode || 'jsonb';
+    document.getElementById('output_db_doc_id_column').value = mapping.doc_id_column || 'doc_id';
+    document.getElementById('output_db_rev_column').value = mapping.rev_column || 'rev';
+    document.getElementById('output_db_body_column').value = mapping.body_column || 'body';
+    document.getElementById('output_db_timestamp_column').value = mapping.timestamp_column || 'updated_at';
+
+    var sm = db.schema_mappings || {};
+    document.getElementById('output_db_schema_mappings_enabled').checked = sm.enabled ?? true;
+    document.getElementById('output_db_schema_mappings_path').value = sm.path || 'mappings/';
+    document.getElementById('output_db_schema_mappings_default_mode').value = sm.default_mode || 'jsonb';
+    document.getElementById('output_db_schema_mappings_strict').checked = sm.strict || false;
+
+    toggleOutputFields();
+    toggleDbMappingFields();
+
     document.getElementById('checkpoint_enabled').checked = cfg.checkpoint?.enabled ?? true;
     document.getElementById('checkpoint_client_id').value = cfg.checkpoint?.client_id || '';
     document.getElementById('checkpoint_every_n_docs').value = cfg.checkpoint?.every_n_docs ?? 0;
@@ -431,8 +621,7 @@
 
   // Collect form values into config object
   function collectConfig() {
-    var channelsRaw = document.getElementById('changes_feed_channels').value.trim();
-    var channels = channelsRaw ? channelsRaw.split(',').map(function(c) { return c.trim(); }).filter(Boolean) : [];
+    var channels = channelsTagify.value.map(function(t) { return t.value; });
 
     return {
       gateway: {
@@ -466,12 +655,50 @@
         max_concurrent: parseInt(document.getElementById('processing_max_concurrent').value) || 20,
         dry_run: document.getElementById('processing_dry_run').checked
       },
-      output: {
-        mode: document.getElementById('output_mode').value,
-        target_url: document.getElementById('output_target_url').value,
-        output_format: document.getElementById('output_output_format').value,
-        halt_on_failure: document.getElementById('output_halt_on_failure').checked
-      },
+      output: (function() {
+        var mode = document.getElementById('output_mode').value;
+        var o = {
+          mode: mode,
+          halt_on_failure: document.getElementById('output_halt_on_failure').checked
+        };
+        if (mode === 'http') {
+          o.target_url = document.getElementById('output_target_url').value;
+          o.output_format = document.getElementById('output_output_format').value;
+        }
+        if (mode === 'db') {
+          var mappingMode = document.getElementById('output_db_mapping_mode').value;
+          var dbCfg = {
+            engine: document.getElementById('output_db_engine').value,
+            host: document.getElementById('output_db_host').value,
+            port: parseInt(document.getElementById('output_db_port').value) || null,
+            database: document.getElementById('output_db_database').value,
+            username: document.getElementById('output_db_username').value,
+            password: document.getElementById('output_db_password').value,
+            schema: document.getElementById('output_db_schema').value,
+            table: document.getElementById('output_db_table').value,
+            ssl: document.getElementById('output_db_ssl').checked,
+            pool_size: parseInt(document.getElementById('output_db_pool_size').value) || 5,
+            connect_timeout_seconds: parseInt(document.getElementById('output_db_connect_timeout').value) || 10,
+            mapping: { mode: mappingMode }
+          };
+          if (mappingMode === 'jsonb') {
+            dbCfg.mapping.doc_id_column = document.getElementById('output_db_doc_id_column').value || 'doc_id';
+            dbCfg.mapping.rev_column = document.getElementById('output_db_rev_column').value || 'rev';
+            dbCfg.mapping.body_column = document.getElementById('output_db_body_column').value || 'body';
+            dbCfg.mapping.timestamp_column = document.getElementById('output_db_timestamp_column').value || 'updated_at';
+          }
+          if (mappingMode === 'columns') {
+            dbCfg.schema_mappings = {
+              enabled: document.getElementById('output_db_schema_mappings_enabled').checked,
+              path: document.getElementById('output_db_schema_mappings_path').value || 'mappings/',
+              default_mode: document.getElementById('output_db_schema_mappings_default_mode').value,
+              strict: document.getElementById('output_db_schema_mappings_strict').checked
+            };
+          }
+          o.db = dbCfg;
+        }
+        return o;
+      })(),
       checkpoint: {
         enabled: document.getElementById('checkpoint_enabled').checked,
         client_id: document.getElementById('checkpoint_client_id').value,
@@ -529,6 +756,15 @@
       showToast('Failed to save config: ' + err.message, 'error');
     }
   }
+
+  // Initialize Tagify on Channels input
+  var channelsInput = document.getElementById('changes_feed_channels');
+  var channelsTagify = new Tagify(channelsInput, {
+    delimiters: ',| |Enter',
+    trim: true,
+    duplicates: false,
+    placeholder: 'Type a channel and press Enter'
+  });
 
   // Load on page init
   loadConfig();

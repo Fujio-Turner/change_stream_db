@@ -39,6 +39,8 @@ try:
 except ImportError:
     yaml = None
 
+from pipeline_logging import log_event, infer_operation
+
 logger = logging.getLogger("changes_worker")
 
 
@@ -235,7 +237,9 @@ class OutputForwarder:
         body_len = len(body) if isinstance(body, (bytes, str)) else 0
 
         if self._dry_run:
-            logger.info("[DRY RUN] Would %s %s (%s, %d bytes)", method, url, content_type, body_len)
+            log_event(logger, "info", "OUTPUT", "dry run",
+                      operation=infer_operation(doc=doc, method=method),
+                      doc_id=doc_id, http_method=method, url=url, bytes=body_len)
             return {"ok": True, "doc_id": doc_id, "method": method, "dry_run": True}
 
         assert self._http is not None
@@ -262,9 +266,11 @@ class OutputForwarder:
                 self._metrics.inc(f"output_{mk}_total")
                 self._metrics.inc("bytes_output_total", body_len)
                 self._metrics.record_output_response_time(elapsed_ms / 1000)
-            logger.debug(
-                "OUTPUT %s %s -> %d (%.1fms)", method, url, status, elapsed_ms
-            )
+            log_event(logger, "debug", "OUTPUT", "forwarded document",
+                      operation=infer_operation(doc=doc, method=method),
+                      doc_id=doc_id, http_method=method, url=url,
+                      status=status, elapsed_ms=round(elapsed_ms, 1),
+                      bytes=body_len)
             if self._metrics:
                 self._metrics.inc("output_success_total")
             return {"ok": True, "doc_id": doc_id, "method": method, "status": status}
@@ -277,10 +283,10 @@ class OutputForwarder:
                 self._metrics.inc(f"output_{mk}_errors_total")
                 self._metrics.inc("bytes_output_total", body_len)
                 self._metrics.record_output_response_time(elapsed_ms / 1000)
-            logger.error(
-                "OUTPUT %s %s -> %d CLIENT ERROR (%.1fms): %s",
-                method, url, exc.status, elapsed_ms, exc.body[:200],
-            )
+            log_event(logger, "error", "OUTPUT", "client error",
+                      operation=infer_operation(doc=doc, method=method),
+                      doc_id=doc_id, http_method=method, url=url,
+                      status=exc.status, elapsed_ms=round(elapsed_ms, 1))
             if self._halt_on_failure:
                 if self._metrics:
                     self._metrics.set("output_endpoint_up", 0)
@@ -289,7 +295,9 @@ class OutputForwarder:
                     f"halting to preserve checkpoint"
                 ) from exc
             else:
-                logger.warning("halt_on_failure=false – skipping doc %s", doc_id)
+                log_event(logger, "warn", "OUTPUT",
+                          "halt_on_failure=false – skipping doc",
+                          doc_id=doc_id, status=exc.status)
                 return {"ok": False, "doc_id": doc_id, "method": method, "status": exc.status, "error": exc.body[:500]}
 
         except _RedirectHTTPError as exc:
@@ -300,10 +308,10 @@ class OutputForwarder:
                 self._metrics.inc(f"output_{mk}_errors_total")
                 self._metrics.inc("bytes_output_total", body_len)
                 self._metrics.record_output_response_time(elapsed_ms / 1000)
-            logger.error(
-                "OUTPUT %s %s -> %d REDIRECT (%.1fms): %s",
-                method, url, exc.status, elapsed_ms, exc.body[:200],
-            )
+            log_event(logger, "error", "OUTPUT", "redirect error",
+                      operation=infer_operation(doc=doc, method=method),
+                      doc_id=doc_id, http_method=method, url=url,
+                      status=exc.status, elapsed_ms=round(elapsed_ms, 1))
             if self._halt_on_failure:
                 if self._metrics:
                     self._metrics.set("output_endpoint_up", 0)
@@ -311,7 +319,9 @@ class OutputForwarder:
                     f"Output endpoint returned redirect {exc.status} for {method} {url}"
                 ) from exc
             else:
-                logger.warning("halt_on_failure=false – skipping doc %s", doc_id)
+                log_event(logger, "warn", "OUTPUT",
+                          "halt_on_failure=false – skipping doc",
+                          doc_id=doc_id, status=exc.status)
                 return {"ok": False, "doc_id": doc_id, "method": method, "status": exc.status, "error": exc.body[:500]}
 
         except (ConnectionError, _ServerHTTPError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
@@ -322,10 +332,10 @@ class OutputForwarder:
                 self._metrics.inc(f"output_{mk}_errors_total")
                 self._metrics.inc("bytes_output_total", body_len)
                 self._metrics.record_output_response_time(elapsed_ms / 1000)
-            logger.error(
-                "OUTPUT %s %s FAILED after retries (%.1fms): %s",
-                method, url, elapsed_ms, exc,
-            )
+            log_event(logger, "error", "OUTPUT", "output failed after retries",
+                      operation=infer_operation(doc=doc, method=method),
+                      doc_id=doc_id, http_method=method, url=url,
+                      elapsed_ms=round(elapsed_ms, 1))
             if self._halt_on_failure:
                 if self._metrics:
                     self._metrics.set("output_endpoint_up", 0)
@@ -334,7 +344,9 @@ class OutputForwarder:
                     f"halting to preserve checkpoint: {exc}"
                 ) from exc
             else:
-                logger.warning("halt_on_failure=false – skipping doc %s", doc_id)
+                log_event(logger, "warn", "OUTPUT",
+                          "halt_on_failure=false – skipping doc",
+                          doc_id=doc_id)
                 return {"ok": False, "doc_id": doc_id, "method": method, "status": 0, "error": str(exc)[:500]}
 
     async def test_reachable(self) -> bool:
@@ -347,10 +359,13 @@ class OutputForwarder:
             resp = await self._http.request("GET", self._target_url, auth=self._auth, headers=self._headers)
             elapsed_ms = (time.monotonic() - t_start) * 1000
             resp.release()
-            logger.info("Output endpoint reachable: %s (%d, %.1fms)", self._target_url, resp.status, elapsed_ms)
+            log_event(logger, "info", "HTTP", "output endpoint reachable",
+                      operation="SELECT", url=self._target_url,
+                      status=resp.status, elapsed_ms=round(elapsed_ms, 1))
             return True
         except Exception as exc:
-            logger.error("Output endpoint UNREACHABLE: %s – %s", self._target_url, exc)
+            log_event(logger, "error", "HTTP", "output endpoint unreachable: %s" % exc,
+                      url=self._target_url)
             return False
 
     def log_stats(self) -> None:
@@ -361,10 +376,8 @@ class OutputForwarder:
         avg = sum(self._resp_times) / n
         lo = min(self._resp_times)
         hi = max(self._resp_times)
-        logger.info(
-            "OUTPUT STATS: %d requests | avg=%.1fms | min=%.1fms | max=%.1fms",
-            n, avg, lo, hi,
-        )
+        log_event(logger, "info", "OUTPUT",
+                  "output stats: %d requests | avg=%.1fms | min=%.1fms | max=%.1fms" % (n, avg, lo, hi))
 
     # -- Internal --------------------------------------------------------------
 
@@ -421,7 +434,9 @@ class DeadLetterQueue:
                 error=result.get("error", ""),
                 doc=doc,
             )
-            logger.warning("Dead letter: doc %s (seq %s) written to CBL", result.get("doc_id"), seq)
+            log_event(logger, "warn", "DLQ", "entry written to CBL",
+                      operation="INSERT", doc_id=result.get("doc_id"),
+                      seq=str(seq), storage="cbl")
             return
         # Original file fallback
         if not self._path:
@@ -438,7 +453,9 @@ class DeadLetterQueue:
         async with self._lock:
             with open(self._path, "a") as f:
                 f.write(json.dumps(entry) + "\n")
-        logger.warning("Dead letter: doc %s (seq %s) written to %s", result.get("doc_id"), seq, self._path)
+        log_event(logger, "warn", "DLQ", "entry written to file",
+                  operation="INSERT", doc_id=result.get("doc_id"),
+                  seq=str(seq), storage="file")
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +514,7 @@ class _RetryableHTTPLazy:
     """Thin wrapper that delegates to the real RetryableHTTP from changes_worker."""
 
     def __init__(self, session: aiohttp.ClientSession, retry_cfg: dict):
-        from changes_worker import RetryableHTTP
+        from main import RetryableHTTP
         self._inner = RetryableHTTP(session, retry_cfg)
 
     async def request(self, method: str, url: str, **kwargs) -> aiohttp.ClientResponse:

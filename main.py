@@ -10,7 +10,7 @@ bulk_get fallback, async parallel or sequential processing, and
 forwarding results via stdout or HTTP.
 """
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 import argparse
 import asyncio
@@ -38,20 +38,18 @@ from rest import (
     VALID_OUTPUT_FORMATS,
 )
 from rest.output_http import check_serialization_library
-from cbl_store import USE_CBL, CBLStore, migrate_files_to_cbl
+from cbl_store import USE_CBL, CBLStore, CBLMaintenanceScheduler, close_db, migrate_files_to_cbl
+from pipeline_logging import (
+    configure_logging,
+    log_event,
+    infer_operation,
+    get_redactor,
+)
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 logger = logging.getLogger("changes_worker")
-
-
-def setup_logging(level: str) -> None:
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.DEBUG),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
-    ic.configureOutput(prefix="ic| ", outputFunction=lambda s: logger.debug(s))
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +269,8 @@ async def start_metrics_server(metrics: MetricsCollector, host: str, port: int) 
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     await site.start()
-    logger.info("Metrics server listening on http://%s:%d/_metrics", host, port)
+    log_event(logger, "info", "METRICS", "metrics server listening",
+              host=host, port=port)
     return runner
 
 
@@ -615,16 +614,25 @@ class Checkpoint:
             self._seq = str(data.get("SGs_Seq", "0"))
             self._rev = data.get("_rev")
             self._internal = data.get("remote", data.get("local_internal", 0))
-            ic("checkpoint loaded from SG", self._seq, self._rev, self._internal)
+            log_event(logger, "info", "CHECKPOINT",
+                      "loaded checkpoint from Sync Gateway",
+                      operation="SELECT", seq=self._seq,
+                      doc_id=self._local_doc_id, storage="sg")
         except ClientHTTPError as exc:
             if exc.status == 404:
-                logger.info("No existing checkpoint on SG – starting from 0")
+                log_event(logger, "info", "CHECKPOINT",
+                          "no existing checkpoint on SG – starting from 0",
+                          operation="SELECT", storage="sg")
                 self._seq = "0"
             else:
-                logger.warning("Could not load checkpoint from SG (%s), trying local fallback", exc)
+                log_event(logger, "warn", "CHECKPOINT",
+                          "checkpoint load fell back to local storage",
+                          operation="SELECT", status=exc.status, storage="fallback")
                 self._seq = self._load_fallback()
         except Exception as exc:
-            logger.warning("Could not load checkpoint from SG (%s), trying local fallback", exc)
+            log_event(logger, "warn", "CHECKPOINT",
+                      "checkpoint load fell back to local storage: %s" % exc,
+                      operation="SELECT", storage="fallback")
             self._seq = self._load_fallback()
 
         return self._seq
@@ -655,9 +663,14 @@ class Checkpoint:
                 resp_data = await resp.json()
                 resp.release()
                 self._rev = resp_data.get("rev", self._rev)
-                ic("checkpoint saved to SG", self._rev)
+                log_event(logger, "info", "CHECKPOINT",
+                          "saved checkpoint to Sync Gateway",
+                          operation="UPDATE", seq=seq,
+                          doc_id=self._local_doc_id, storage="sg")
             except Exception as exc:
-                logger.warning("Could not save checkpoint to SG (%s), saving locally", exc)
+                log_event(logger, "warn", "CHECKPOINT",
+                          "checkpoint save fell back to local storage: %s" % exc,
+                          operation="UPDATE", seq=seq, storage="fallback")
                 self._save_fallback(seq)
 
     # -- Local file fallback ---------------------------------------------------
@@ -713,25 +726,35 @@ class RetryableHTTP:
                     return resp
                 body = await resp.text()
                 if resp.status in self._retry_statuses:
-                    logger.warning(
-                        "Retryable %d from %s %s (attempt %d/%d): %s",
-                        resp.status, method, url, attempt, self._max_retries, body[:200],
-                    )
+                    log_event(logger, "warn", "RETRY",
+                              "retryable response",
+                              http_method=method, url=url,
+                              status=resp.status, attempt=attempt)
                     resp.release()
                 elif 400 <= resp.status < 500:
-                    logger.error("Client error %d on %s %s: %s", resp.status, method, url, body[:500])
+                    log_event(logger, "error", "HTTP",
+                              "client error",
+                              http_method=method, url=url,
+                              status=resp.status)
                     raise ClientHTTPError(resp.status, body)
                 elif 300 <= resp.status < 400:
-                    logger.warning("Redirect %d on %s %s – not following", resp.status, method, url)
+                    log_event(logger, "warn", "HTTP",
+                              "redirect – not following",
+                              http_method=method, url=url,
+                              status=resp.status)
                     raise RedirectHTTPError(resp.status, body)
                 else:
                     raise ServerHTTPError(resp.status, body)
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                logger.warning("Connection error on %s %s (attempt %d/%d): %s", method, url, attempt, self._max_retries, exc)
+                log_event(logger, "warn", "RETRY",
+                          "connection error: %s" % exc,
+                          http_method=method, url=url, attempt=attempt)
                 last_exc = exc
 
             delay = min(self._backoff_base * (2 ** (attempt - 1)), self._backoff_max)
-            logger.info("Backing off %.1fs before retry", delay)
+            log_event(logger, "info", "RETRY",
+                      "backing off before retry",
+                      delay_seconds=delay, attempt=attempt)
             await asyncio.sleep(delay)
 
         raise ConnectionError(f"All {self._max_retries} retries exhausted for {method} {url}") from last_exc
@@ -960,6 +983,9 @@ async def _process_changes_batch(
             metrics.set("checkpoint_seq", new_since)
         return new_since, False
 
+    log_event(logger, "debug", "CHANGES", "received _changes batch",
+              seq=since, batch_size=len(results))
+
     # Count deletes/removes in the feed (always), then optionally filter
     filtered: list[dict] = []
     deleted_count = 0
@@ -991,6 +1017,10 @@ async def _process_changes_batch(
             metrics.inc("changes_removed_total", removed_count)
             metrics.inc("changes_filtered_total", deleted_count + removed_count)
 
+    if deleted_count or removed_count:
+        log_event(logger, "debug", "PROCESSING", "filtered changes batch",
+                  input_count=len(results), filtered_count=len(filtered))
+
     # If include_docs was false, fetch full docs
     docs_by_id: dict[str, dict] = {}
     if not feed_cfg.get("include_docs") and filtered:
@@ -1015,9 +1045,21 @@ async def _process_changes_batch(
             else:
                 doc = docs_by_id.get(doc_id, change)
             method = determine_method(change)
+            op = infer_operation(change=change, doc=doc, method=method)
+            log_event(logger, "trace", "OUTPUT", "sending document",
+                      operation=op, doc_id=doc_id, mode=output._mode,
+                      http_method=method)
             result = await output.send(doc, method)
             result["_change"] = change
             result["_doc"] = doc
+            if result.get("ok"):
+                log_event(logger, "debug", "OUTPUT", "document forwarded",
+                          operation=op, doc_id=doc_id,
+                          status=result.get("status"))
+            else:
+                log_event(logger, "warn", "OUTPUT", "document delivery failed",
+                          operation=op, doc_id=doc_id,
+                          status=result.get("status"))
             return result
 
     if every_n_docs > 0 and sequential:
@@ -1083,11 +1125,11 @@ async def _process_changes_batch(
 
     total = batch_success + batch_fail
     if total > 0:
-        logger.info(
-            "BATCH SUMMARY: %d/%d succeeded, %d failed%s",
-            batch_success, total, batch_fail,
-            f" ({batch_fail} written to dead letter queue)" if batch_fail and dlq.enabled else "",
-        )
+        log_event(logger, "info", "PROCESSING",
+                  "batch complete: %d/%d succeeded, %d failed%s" % (
+                      batch_success, total, batch_fail,
+                      " (%d written to dead letter queue)" % batch_fail if batch_fail and dlq.enabled else "",
+                  ))
 
     output.log_stats()
 
@@ -1323,7 +1365,7 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
     out_cfg = cfg["output"]
     retry_cfg = cfg.get("retry", {})
 
-    logger.info("Source type: %s", src)
+    log_event(logger, "info", "PROCESSING", "source type: %s" % src)
 
     base_url = build_base_url(gw)
     ssl_ctx = build_ssl_context(gw)
@@ -1362,10 +1404,12 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
         if out_cfg.get("mode") == "http":
             if not await output.test_reachable():
                 if out_cfg.get("halt_on_failure", True):
-                    logger.error("Output endpoint unreachable at startup – aborting")
+                    log_event(logger, "error", "OUTPUT",
+                              "output endpoint unreachable at startup – aborting")
                     return
                 else:
-                    logger.warning("Output endpoint unreachable at startup – continuing (halt_on_failure=false)")
+                    log_event(logger, "warn", "OUTPUT",
+                              "output endpoint unreachable at startup – continuing (halt_on_failure=false)")
 
         # Load checkpoint from SG _local doc (CBL-style)
         since = feed_cfg.get("since", "0")
@@ -1402,7 +1446,7 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
 
         # ── Continuous mode: 2-phase catch-up then stream ────────────────
         if feed_type == "continuous":
-            logger.info("Feed mode: continuous (catch-up → stream)")
+            log_event(logger, "info", "CHANGES", "feed mode: continuous (catch-up → stream)")
             while not shutdown_event.is_set():
                 since = await _catch_up_normal(
                     since=since, changes_url=changes_url,
@@ -1621,9 +1665,9 @@ def main() -> None:
         migrate_files_to_cbl(args.config)
 
     cfg = load_config(args.config)
-    setup_logging(cfg.get("logging", {}).get("level", "DEBUG"))
+    configure_logging(cfg.get("logging", {}))
 
-    logger.info("changes_worker v%s starting (CBL=%s)", __version__, USE_CBL)
+    log_event(logger, "info", "PROCESSING", "changes_worker v%s starting (CBL=%s)" % (__version__, USE_CBL))
 
     # ── Startup config validation ────────────────────────────────────────
     src, warnings, errors = validate_config(cfg)
@@ -1662,6 +1706,15 @@ def main() -> None:
         logger.info("Shutdown signal received")
         shutdown_event.set()
 
+    # ── CBL maintenance scheduler ───────────────────────────────────────
+    cbl_scheduler: CBLMaintenanceScheduler | None = None
+    if USE_CBL:
+        cbl_cfg = cfg.get("cbl_maintenance", {})
+        if cbl_cfg.get("enabled", True):
+            interval = cbl_cfg.get("interval_hours", 24)
+            cbl_scheduler = CBLMaintenanceScheduler(interval_hours=interval)
+            cbl_scheduler.start()
+
     # ── Metrics server ───────────────────────────────────────────────────
     metrics_cfg = cfg.get("metrics", {})
     metrics: MetricsCollector | None = None
@@ -1687,6 +1740,10 @@ def main() -> None:
     except KeyboardInterrupt:
         logger.info("Interrupted")
     finally:
+        if cbl_scheduler is not None:
+            cbl_scheduler.stop()
+        if USE_CBL:
+            close_db()
         if metrics_runner is not None:
             loop.run_until_complete(metrics_runner.cleanup())
         loop.run_until_complete(loop.shutdown_asyncgens())
