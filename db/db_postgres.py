@@ -83,30 +83,67 @@ class PostgresOutputForwarder:
                      self._host, self._port, self._database,
                      self._pool_min, self._pool_max)
 
-        # Load mappings from filesystem (bind-mounted, shared with admin-ui)
+        # Load mappings – prefer CBL (single source of truth), fall back to filesystem
         from schema.mapper import SchemaMapper
         from pathlib import Path
+        import json as _json
 
-        if self._mappings_dir:
-            mdir = Path(self._mappings_dir)
-            if mdir.is_dir():
-                for f in sorted(mdir.glob("*.json")):
-                    try:
-                        raw = json.loads(f.read_text())
-                        meta = raw.get("_meta", {})
-                        if not meta.get("active", True):
-                            logger.info("Skipping inactive mapping: %s", f)
+        cbl_loaded = False
+        try:
+            from cbl_store import USE_CBL, CBLStore
+            if USE_CBL:
+                entries = CBLStore().list_mappings()
+                for entry in entries:
+                    name = entry.get("name", "")
+                    if name.endswith(".meta.json"):
+                        continue
+                    raw = entry.get("content", "")
+                    if not raw:
+                        continue
+                    data = _json.loads(raw) if isinstance(raw, str) else raw
+                    data["_source_name"] = name
+                    self._mappers.append(SchemaMapper(data))
+                    logger.info("Loaded schema mapping from CBL: %s", name)
+                cbl_loaded = True
+        except Exception as exc:
+            logger.warning("Could not load mappings from CBL (%s) – falling back to filesystem", exc)
+
+        if not cbl_loaded:
+            if self._mappings_dir:
+                mdir = Path(self._mappings_dir)
+                if mdir.is_dir():
+                    for f in sorted(mdir.glob("*.json")):
+                        if f.name.endswith(".meta.json"):
                             continue
-                    except (json.JSONDecodeError, OSError):
-                        pass
-                    self._mappers.append(SchemaMapper.from_file(f))
-                    logger.info("Loaded schema mapping from %s", f)
-        if self._mapping_file:
-            self._mappers.append(SchemaMapper.from_file(self._mapping_file))
-            logger.info("Loaded schema mapping from %s", self._mapping_file)
+                        try:
+                            raw = json.loads(f.read_text())
+                            meta = raw.get("_meta", {})
+                            if not meta.get("active", True):
+                                logger.info("Skipping inactive mapping: %s", f)
+                                continue
+                        except (json.JSONDecodeError, OSError):
+                            pass
+                        self._mappers.append(SchemaMapper.from_file(f))
+                        logger.info("Loaded schema mapping from %s", f)
+            if self._mapping_file:
+                self._mappers.append(SchemaMapper.from_file(self._mapping_file))
+                logger.info("Loaded schema mapping from %s", self._mapping_file)
 
         if not self._mappers:
             logger.warning("No schema mappings loaded – documents will be skipped")
+
+        # Warn about duplicate match filters (first-match wins, rest are shadowed)
+        seen_matches = {}
+        for m in self._mappers:
+            key = f"{m.match.get('field', '')}={m.match.get('value', '')}"
+            src = m.mapping.get("_source_name", "?")
+            if key in seen_matches:
+                logger.warning(
+                    "DUPLICATE MAPPING: '%s' and '%s' both match %s — "
+                    "only '%s' will be used (first-match wins)",
+                    seen_matches[key], src, key, seen_matches[key])
+            else:
+                seen_matches[key] = src
 
     async def close(self) -> None:
         """Close the connection pool."""
@@ -136,9 +173,11 @@ class PostgresOutputForwarder:
 
         # Find the first matching mapper
         mapper = None
+        mapper_name = None
         for m in self._mappers:
             if m.matches(doc):
                 mapper = m
+                mapper_name = m.mapping.get("_source_name", m.match.get("value", "unknown"))
                 break
         if not mapper:
             logger.debug("Doc %s does not match any mapping filter – skipping", doc_id)

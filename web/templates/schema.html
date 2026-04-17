@@ -78,6 +78,7 @@
         <button class="btn btn-info btn-sm" onclick="document.getElementById('dbImportModal').showModal()">🗄️ Import from Database</button>
         <button class="btn btn-warning btn-sm" onclick="document.getElementById('ddlModal').showModal()">📄 Upload DDL</button>
         <button class="btn btn-primary btn-sm" onclick="validateMapping()">🧪 Validate Mapping</button>
+        <button class="btn btn-sm" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;" onclick="openAIAssist()">🤖 AI Assist Me</button>
         <span id="statusMsg" class="text-sm ml-auto"></span>
       </div>
     </div>
@@ -211,6 +212,50 @@ CREATE TABLE order_items (
         <div class="modal-action">
           <form method="dialog"><button class="btn">Close</button></form>
         </div>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- AI Assist Modal -->
+    <dialog id="aiAssistModal" class="modal">
+      <div class="modal-box w-11/12 max-w-5xl max-h-[90vh] flex flex-col">
+        <form method="dialog">
+          <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+        </form>
+        <h3 class="font-bold text-lg mb-2">🤖 AI Assist — Schema Mapping Generator</h3>
+        <p class="text-sm opacity-60 mb-4">Copy the context JSON below and paste it into your AI assistant (ChatGPT, Claude, etc.). Then paste the AI's response back to import it.</p>
+
+        <div class="tabs tabs-boxed mb-3">
+          <a class="tab tab-active" id="aiTabExport" onclick="switchAITab('export')">① Export Context</a>
+          <a class="tab" id="aiTabImport" onclick="switchAITab('import')">② Import AI Response</a>
+        </div>
+
+        <!-- Export panel -->
+        <div id="aiPanelExport" class="flex-1 flex flex-col min-h-0">
+          <div class="flex gap-2 mb-2">
+            <button class="btn btn-sm btn-primary" onclick="copyAIContext()">📋 Copy to Clipboard</button>
+            <button class="btn btn-sm btn-secondary" onclick="downloadAIContext()">💾 Download JSON</button>
+          </div>
+          <textarea id="aiContextOutput" class="textarea textarea-bordered w-full font-mono text-xs flex-1" style="min-height: 350px;" readonly></textarea>
+        </div>
+
+        <!-- Import panel -->
+        <div id="aiPanelImport" class="flex-1 flex-col min-h-0 hidden">
+          <p class="text-sm opacity-60 mb-2">Paste the AI-generated mapping JSON below, or upload a file:</p>
+          <div class="flex gap-2 mb-2">
+            <label class="btn btn-sm btn-secondary">
+              📂 Upload JSON File
+              <input type="file" accept=".json,application/json" class="hidden" onchange="uploadAIResponse(event)" />
+            </label>
+          </div>
+          <textarea id="aiResponseInput" class="textarea textarea-bordered w-full font-mono text-xs flex-1" style="min-height: 300px;"
+                    placeholder='Paste the AI-generated mapping JSON here...'></textarea>
+          <div id="aiImportStatus" class="text-sm mt-2"></div>
+          <div class="flex gap-2 mt-3">
+            <button class="btn btn-success" onclick="importAIResponse()">✅ Import Mapping</button>
+          </div>
+        </div>
+
       </div>
       <form method="dialog" class="modal-backdrop"><button>close</button></form>
     </dialog>
@@ -354,6 +399,9 @@ CREATE TABLE order_items (
     </div>
 
   </main>
+
+  <!-- Toast container -->
+  <div id="toastContainer" class="toast toast-end toast-bottom z-50"></div>
 
   <footer class="footer footer-center p-4 bg-base-100 text-base-content">
     <p>Changes Worker v1.4.0</p>
@@ -944,9 +992,9 @@ function renderTableEditor() {
         '<div class="tooltip tooltip-right" data-tip="Table name, primary key column, and delete behavior.">' +
           '<span class="badge badge-ghost badge-sm cursor-help">?</span></div></div>' +
       '<div class="grid grid-cols-3 gap-2">' +
-        '<div><label class="label label-text text-xs">Table Name</label><input id="tblName" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.name) + '" oninput="onTableNameChange()"></div>' +
-        '<div><label class="label label-text text-xs">Primary Key</label><input id="tblPK" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.primary_key) + '" oninput="onMappingChange()"></div>' +
-        '<div><label class="label label-text text-xs">On Delete</label><select id="tblOnDelete" class="select select-bordered select-sm w-full" onchange="onMappingChange()"><option' + (t.on_delete === 'delete' ? ' selected' : '') + '>delete</option><option' + (t.on_delete === 'ignore' ? ' selected' : '') + '>ignore</option></select></div>' +
+        '<div><label class="label label-text text-xs">Table Name <div class="tooltip tooltip-bottom inline" data-tip="The SQL table name in your target database where documents will be written."><span class="opacity-40 cursor-help">(?)</span></div></label><input id="tblName" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.name) + '" oninput="onTableNameChange()"></div>' +
+        '<div><label class="label label-text text-xs">Primary Key <div class="tooltip tooltip-bottom inline" data-tip="The column used for UPSERT conflict resolution (ON CONFLICT). Must match a column name in your column mappings below. Typically the document _id."><span class="opacity-40 cursor-help">(?)</span></div></label><input id="tblPK" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.primary_key) + '" oninput="onMappingChange()"></div>' +
+        '<div><label class="label label-text text-xs">On Delete <div class="tooltip tooltip-bottom inline" data-tip="What happens when a deleted document arrives: \'delete\' removes the row from the table, \'ignore\' skips deleted documents for this table."><span class="opacity-40 cursor-help">(?)</span></div></label><select id="tblOnDelete" class="select select-bordered select-sm w-full" onchange="onMappingChange()"><option' + (t.on_delete === 'delete' ? ' selected' : '') + '>delete</option><option' + (t.on_delete === 'ignore' ? ' selected' : '') + '>ignore</option></select></div>' +
       '</div>' +
     '</div></div>' +
     // Parent / FK
@@ -955,10 +1003,10 @@ function renderTableEditor() {
         '<div class="tooltip tooltip-right" data-tip="For child tables: select the parent table and define the foreign key relationship. Source array is the JSON path to the array of child objects.">' +
           '<span class="badge badge-ghost badge-sm cursor-help">?</span></div></div>' +
       '<div class="grid grid-cols-2 gap-2">' +
-        '<div><label class="label label-text text-xs">Parent Table</label><select id="tblParent" class="select select-bordered select-sm w-full" onchange="onMappingChange()">' + parentOptions + '</select></div>' +
-        '<div><label class="label label-text text-xs">Source Array</label><input id="tblSourceArray" type="text" class="input input-bordered input-sm w-full" placeholder="$.items" value="' + esc(t.source_array) + '" oninput="onMappingChange()"></div>' +
-        '<div><label class="label label-text text-xs">FK Column</label><input id="tblFKCol" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.column) + '" oninput="onMappingChange()"></div>' +
-        '<div><label class="label label-text text-xs">FK References</label><input id="tblFKRef" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.references) + '" oninput="onMappingChange()"></div>' +
+        '<div><label class="label label-text text-xs">Parent Table <div class="tooltip tooltip-bottom inline" data-tip="Set this for child tables. The parent table must exist in this mapping. Child rows are inserted/deleted relative to their parent."><span class="opacity-40 cursor-help">(?)</span></div></label><select id="tblParent" class="select select-bordered select-sm w-full" onchange="onMappingChange()">' + parentOptions + '</select></div>' +
+        '<div><label class="label label-text text-xs">Source Array <div class="tooltip tooltip-bottom inline" data-tip="JSON path to the array in the source document that contains child items (e.g. $.items). One row is inserted per array element."><span class="opacity-40 cursor-help">(?)</span></div></label><input id="tblSourceArray" type="text" class="input input-bordered input-sm w-full" placeholder="$.items" value="' + esc(t.source_array) + '" oninput="onMappingChange()"></div>' +
+        '<div><label class="label label-text text-xs">FK Column <div class="tooltip tooltip-bottom inline" data-tip="The column name in this child table that references the parent. Used for DELETE cascading and linking rows (e.g. order_doc_id)."><span class="opacity-40 cursor-help">(?)</span></div></label><input id="tblFKCol" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.column) + '" oninput="onMappingChange()"></div>' +
+        '<div><label class="label label-text text-xs">FK References <div class="tooltip tooltip-bottom inline" data-tip="The column name in the parent table that this FK points to. Usually the parent\'s primary key column (e.g. doc_id)."><span class="opacity-40 cursor-help">(?)</span></div></label><input id="tblFKRef" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.references) + '" oninput="onMappingChange()"></div>' +
       '</div>' +
       '<div class="mt-2"><label class="label label-text text-xs">Replace Strategy</label>' +
         '<div class="flex items-center gap-2"><select id="tblReplaceStrategy" class="select select-bordered select-sm w-48" onchange="onMappingChange()">' +
@@ -1347,6 +1395,17 @@ async function saveMapping() {
     });
     if (!res.ok) throw new Error(res.statusText);
     currentFile = filename;
+    // Save sample doc as sidecar metadata file
+    var sampleText = document.getElementById('sourceEditor').value.trim();
+    if (sampleText) {
+      var metaName = filename.replace(/\.json$/, '.meta.json');
+      var meta = { sample_doc: null };
+      try { meta.sample_doc = JSON.parse(sampleText); } catch (e) { meta.sample_doc = sampleText; }
+      await fetch('/api/mappings/' + encodeURIComponent(metaName), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(meta, null, 2)
+      });
+    }
     showStatus('Saved ' + filename, 'success');
     loadFileList();
   } catch (e) { showStatus('Save failed: ' + e.message, 'error'); }
@@ -1367,7 +1426,10 @@ async function loadFileList(autoLoadFirst) {
   try {
     var res = await fetch('/api/mappings');
     var data = await res.json();
-    var files = data.files || data || [];
+    var files = (data.files || data || []).filter(function(f) {
+      var n = typeof f === 'string' ? f : f.name || f.filename;
+      return !n.endsWith('.meta.json');
+    });
     countBadge.textContent = files.length;
     if (!files.length) {
       tbody.innerHTML = '<tr><td colspan="6" class="text-center opacity-50">No saved mappings. Create one above and click Save.</td></tr>';
@@ -1471,6 +1533,24 @@ async function openFile(name) {
       renderTableTabs();
       renderTableEditor();
     }
+    // Load sample doc from sidecar metadata file
+    var metaName = name.replace(/\.json$/, '.meta.json');
+    try {
+      var metaRes = await fetch('/api/mappings/' + encodeURIComponent(metaName));
+      if (metaRes.ok) {
+        var metaData = await metaRes.json();
+        var metaContent = metaData.content;
+        if (typeof metaContent === 'string') {
+          try { metaContent = JSON.parse(metaContent); } catch (e) {}
+        }
+        if (metaContent && metaContent.sample_doc) {
+          var sampleDoc = metaContent.sample_doc;
+          var sampleText = typeof sampleDoc === 'string' ? sampleDoc : JSON.stringify(sampleDoc, null, 2);
+          document.getElementById('sourceEditor').value = sampleText;
+          onSourceChange();
+        }
+      }
+    } catch (e) { /* no sidecar – ignore */ }
     onMappingChange();
     showStatus('Loaded ' + name, 'success');
     loadFileList();
@@ -1482,6 +1562,9 @@ async function deleteFile(name) {
   try {
     var res = await fetch('/api/mappings/' + encodeURIComponent(name), { method: 'DELETE' });
     if (!res.ok) throw new Error(res.statusText);
+    // Also delete sidecar metadata file
+    var metaName = name.replace(/\.json$/, '.meta.json');
+    fetch('/api/mappings/' + encodeURIComponent(metaName), { method: 'DELETE' }).catch(function() {});
     if (currentFile === name) { currentFile = null; tables = []; jsonFields = []; activeTableIdx = 0; renderTableTabs(); renderTableEditor(); if (outputMode === 'json') renderJsonFields(); onMappingChange(); }
     showStatus('Deleted ' + name, 'success');
     loadFileList();
@@ -1535,6 +1618,14 @@ function showStatus(msg, type) {
   el.textContent = msg;
   el.className = 'text-sm ml-auto ' + (type === 'error' ? 'text-error' : 'text-success');
   setTimeout(function() { el.textContent = ''; }, 3000);
+  // DaisyUI toast
+  var container = document.getElementById('toastContainer');
+  var alertClass = type === 'success' ? 'alert-success' : 'alert-error';
+  var toast = document.createElement('div');
+  toast.className = 'alert ' + alertClass;
+  toast.innerHTML = '<span>' + msg + '</span>';
+  container.appendChild(toast);
+  setTimeout(function() { toast.remove(); }, 3000);
 }
 
 // ── Resize ───────────────────────────────────────────────────
@@ -1893,6 +1984,347 @@ async function parseDDL() {
     status.textContent = '❌ ' + e.message;
     status.className = 'text-sm mt-2 text-error';
   }
+}
+
+// ── AI Assist ────────────────────────────────────────────────
+function switchAITab(tab) {
+  document.getElementById('aiTabExport').classList.toggle('tab-active', tab === 'export');
+  document.getElementById('aiTabImport').classList.toggle('tab-active', tab === 'import');
+  var ep = document.getElementById('aiPanelExport');
+  var ip = document.getElementById('aiPanelImport');
+  if (tab === 'export') {
+    ep.classList.remove('hidden'); ep.classList.add('flex');
+    ip.classList.add('hidden'); ip.classList.remove('flex');
+  } else {
+    ep.classList.add('hidden'); ep.classList.remove('flex');
+    ip.classList.remove('hidden'); ip.classList.add('flex');
+  }
+}
+
+function buildAIContext() {
+  saveCurrentTableEdits();
+
+  // 1. Sample document
+  var sampleText = document.getElementById('sourceEditor').value.trim();
+  var sampleDoc = null;
+  try { sampleDoc = JSON.parse(sampleText); } catch (e) {}
+
+  // 2. Current target tables/fields (if any exist)
+  var targetTables = [];
+  for (var i = 0; i < tables.length; i++) {
+    var t = tables[i];
+    var cols = {};
+    for (var colName in t.columns) {
+      if (!t.columns.hasOwnProperty(colName)) continue;
+      var val = t.columns[colName];
+      cols[colName] = { current_mapping: val || '(unmapped)' };
+    }
+    targetTables.push({
+      table_name: t.name,
+      primary_key: t.primary_key || '',
+      parent_table: t.parent || null,
+      foreign_key: (t.foreign_key && t.foreign_key.column) ? t.foreign_key : null,
+      source_array: t.source_array || null,
+      on_delete: t.on_delete || 'delete',
+      columns: cols
+    });
+  }
+
+  // 3. JSON field mappings (if in JSON mode)
+  var jsonMappings = null;
+  if (outputMode === 'json') {
+    jsonMappings = [];
+    for (var j = 0; j < jsonFields.length; j++) {
+      jsonMappings.push({
+        target_key: jsonFields[j].key,
+        source_path: jsonFields[j].path,
+        transform: jsonFields[j].transform || null
+      });
+    }
+  }
+
+  // 4. Available transform functions grouped by category
+  var transformsByCategory = {
+    'String': TRANSFORMS.slice(1, 22),
+    'Numeric': TRANSFORMS.slice(22, 33),
+    'Date / Time': TRANSFORMS.slice(33, 42),
+    'Array / Object': TRANSFORMS.slice(42, 46),
+    'Encoding / Hash': TRANSFORMS.slice(46, 54),
+    'Conditional': TRANSFORMS.slice(54)
+  };
+  // Clean empty strings
+  for (var cat in transformsByCategory) {
+    transformsByCategory[cat] = transformsByCategory[cat].filter(function(t) { return t; });
+  }
+
+  // 5. Source match config
+  var matchField = document.getElementById('matchField').value.trim();
+  var matchValue = document.getElementById('matchValue').value.trim();
+
+  // 6. Flatten source fields for reference
+  var sourceFieldsList = sourceFields.map(function(f) {
+    return { path: f.path, type: f.type, sample_value: f.value };
+  });
+
+  var context = {
+    _instructions: [
+      'You are generating a Changes Worker schema mapping JSON.',
+      'Return ONLY valid JSON — no markdown, no code fences.',
+      'Include an "_explanation" field (array of strings) in your response explaining your reasoning for each mapping decision (see response_format).',
+      '',
+      '## How mappings work',
+      '',
+      'A mapping tells the Changes Worker how to transform a Couchbase/Sync Gateway document into SQL rows or a JSON object.',
+      '',
+      '### Tables mode (output_mode = "tables")',
+      '',
+      'The top-level object has:',
+      '  - "source": { "match": { "field": "<doc_field>", "value": "<value>" } } — only documents where this field equals this value are processed.',
+      '  - "tables": [ ... ] — an ordered array of table definitions.',
+      '',
+      'Each table object has these EXACT fields (use these field names, not alternatives):',
+      '  - "name" (string, REQUIRED): The SQL table name.',
+      '  - "primary_key" (string, REQUIRED): The column that serves as the primary key. Usually "doc_id" for the parent table.',
+      '  - "columns" (object, REQUIRED): Maps SQL column names to JSONPath expressions or transform objects.',
+      '  - "on_delete" (string): What to do when the source doc is deleted. Usually "delete".',
+      '  - "parent" (string): For child tables ONLY — the name of the parent table this child belongs to.',
+      '  - "foreign_key" (object): For child tables ONLY — { "column": "<child_fk_col>", "references": "<parent_pk_col>" }.',
+      '  - "source_array" (string): For child tables ONLY — JSONPath to the array in the parent doc that produces child rows (e.g. "$.items").',
+      '  - "replace_strategy" (string): For child tables — usually "delete_insert" (delete old child rows then insert new ones on update).',
+      '',
+      '### Column value formats',
+      '',
+      'Each column value can be:',
+      '  - A simple JSONPath string: "$.field_name" — extracts the value directly.',
+      '  - A transform object: { "path": "$.field_name", "transform": "uppercase()" } — extracts then transforms.',
+      '',
+      '### JSONPath rules',
+      '',
+      '  - Parent table columns use paths relative to the root document: "$._id", "$.status", "$.nested.field".',
+      '  - Child table columns use paths relative to each array element: "$.product_id", "$.qty" (NOT "$.items[].product_id").',
+      '  - The exception: a child column referencing a PARENT field (like a foreign key) still uses the root path: "$._id".',
+      '',
+      '### Parent / Child table relationships',
+      '',
+      '  - The FIRST table is typically the parent (no "parent", "foreign_key", or "source_array" fields).',
+      '  - Child tables MUST include "parent", "foreign_key", and "source_array".',
+      '  - Example: If the parent table "orders" has primary_key "doc_id" mapped to "$._id", and the child "order_items" iterates over "$.items",',
+      '    then order_items needs: "parent": "orders", "foreign_key": { "column": "order_doc_id", "references": "doc_id" }, "source_array": "$.items".',
+      '',
+      '### Nested objects',
+      '',
+      'When the source document contains a nested object like "address": { "city": "Austin", "state": "TX", "postalCodes": ["78764","78745"] }:',
+      '  - Access individual nested fields with dot notation: "$.address.city", "$.address.state".',
+      '  - To store the entire object as a JSON string in a single column, use: { "path": "$.address", "transform": "json_stringify()" }.',
+      '  - To access an array inside a nested object for a child table, use: "source_array": "$.address.postalCodes".',
+      '',
+      '### Simple (primitive) arrays',
+      '',
+      'When the source document contains an array of simple values like "sports": ["water", "land"] or "tags": ["vip", "active"]:',
+      '',
+      'Option A — Store as a JSON string in a single column (simplest):',
+      '  "sports_json": { "path": "$.sports", "transform": "json_stringify()" }',
+      '',
+      'Option B — Create a child table with one row per array element:',
+      '  {',
+      '    "name": "user_sports",',
+      '    "primary_key": "",',
+      '    "parent": "users",',
+      '    "foreign_key": { "column": "user_doc_id", "references": "doc_id" },',
+      '    "source_array": "$.sports",',
+      '    "replace_strategy": "delete_insert",',
+      '    "columns": {',
+      '      "user_doc_id": "$._id",',
+      '      "value": "$"',
+      '    },',
+      '    "on_delete": "delete"',
+      '  }',
+      '  Note: Use "$" (bare dollar sign) as the path when the array element IS the value itself (not an object).',
+      '',
+      'Choose Option A unless the target_tables already defines a separate child table for that array.',
+      '',
+      '### JSON mode (output_mode = "json")',
+      '',
+      'Instead of "tables", use "output_format": "json" and "mapping": { "targetKey": "$.source.path", ... }.',
+      '',
+      '### Transforms',
+      '',
+      'Use transforms from the available_transforms list. Common examples:',
+      '  - uppercase(), lowercase() — string case conversion',
+      '  - to_int(), to_float() — type conversion',
+      '  - to_date(), to_iso8601() — date parsing',
+      '  - trim() — remove whitespace',
+      '  - coalesce(,0) — default value if null',
+      'Only use a transform when the data type or format needs conversion. Do not add transforms unnecessarily.'
+    ].join('\n'),
+    output_mode: outputMode,
+    source_match: (matchField && matchValue) ? { field: matchField, value: matchValue } : null,
+    sample_document: sampleDoc || sampleText || '(no sample document provided — paste one in the Source JSON panel)',
+    source_fields: sourceFieldsList.length ? sourceFieldsList : '(paste a sample JSON to extract fields)',
+    target_tables: targetTables.length ? targetTables : '(no target tables defined yet — import from DB or add manually)',
+    current_json_mappings: jsonMappings,
+    available_transforms: transformsByCategory,
+    response_format: {
+      _note: 'Return a JSON object matching EXACTLY this structure. Use the exact field names shown — do NOT rename fields. Always include the _explanation field.',
+      tables_mode_example: {
+        _explanation: [
+          'Created parent table "orders" with doc_id as primary key mapped to $._id for unique document identification.',
+          'Mapped status, total, etc. directly — no transforms needed since the source types match the target columns.',
+          'Created child table "order_items" iterating over $.items array with foreign key back to orders.doc_id.',
+          'Used replace_strategy "delete_insert" so child rows are fully refreshed on each document update.'
+        ],
+        source: { match: { field: 'type', value: 'order' } },
+        tables: [
+          {
+            name: 'orders',
+            primary_key: 'doc_id',
+            columns: {
+              doc_id: '$._id',
+              rev: '$._rev',
+              status: '$.status',
+              total: '$.total'
+            },
+            on_delete: 'delete'
+          },
+          {
+            name: 'order_items',
+            primary_key: '',
+            parent: 'orders',
+            foreign_key: { column: 'order_doc_id', references: 'doc_id' },
+            source_array: '$.items',
+            replace_strategy: 'delete_insert',
+            columns: {
+              order_doc_id: '$._id',
+              product_id: '$.product_id',
+              qty: '$.qty',
+              price: '$.price'
+            },
+            on_delete: 'delete'
+          }
+        ]
+      },
+      json_mode_example: {
+        source: { match: { field: 'type', value: 'example' } },
+        output_format: 'json',
+        mapping: {
+          targetKey: '$.source.path',
+          transformedKey: { path: '$.raw_value', transform: 'to_int()' }
+        }
+      }
+    }
+  };
+
+  return context;
+}
+
+function openAIAssist() {
+  var context = buildAIContext();
+  document.getElementById('aiContextOutput').value = JSON.stringify(context, null, 2);
+  switchAITab('export');
+  document.getElementById('aiResponseInput').value = '';
+  document.getElementById('aiImportStatus').textContent = '';
+  document.getElementById('aiAssistModal').showModal();
+}
+
+function copyAIContext() {
+  var el = document.getElementById('aiContextOutput');
+  navigator.clipboard.writeText(el.value).then(function() {
+    showStatus('Copied AI context to clipboard', 'success');
+  }).catch(function() {
+    el.select();
+    document.execCommand('copy');
+    showStatus('Copied AI context to clipboard', 'success');
+  });
+}
+
+function downloadAIContext() {
+  var content = document.getElementById('aiContextOutput').value;
+  var blob = new Blob([content], { type: 'application/json' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ai_mapping_context.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function uploadAIResponse(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    document.getElementById('aiResponseInput').value = e.target.result;
+    document.getElementById('aiImportStatus').textContent = 'Loaded ' + file.name;
+    document.getElementById('aiImportStatus').className = 'text-sm mt-2 text-success';
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+function importAIResponse() {
+  var text = document.getElementById('aiResponseInput').value.trim();
+  var statusEl = document.getElementById('aiImportStatus');
+  if (!text) { statusEl.textContent = 'Paste or upload a response first'; statusEl.className = 'text-sm mt-2 text-error'; return; }
+
+  var mapping;
+  try { mapping = JSON.parse(text); } catch (e) {
+    statusEl.textContent = 'Invalid JSON: ' + e.message;
+    statusEl.className = 'text-sm mt-2 text-error';
+    return;
+  }
+
+  // Populate the editor from the AI response (reuse openFile logic)
+  if (mapping.source && mapping.source.match) {
+    document.getElementById('matchField').value = mapping.source.match.field || '';
+    document.getElementById('matchValue').value = mapping.source.match.value || '';
+  }
+
+  var mode = mapping.output_format || (mapping.mapping ? 'json' : 'tables');
+  switchOutputMode(mode);
+
+  if (mode === 'json') {
+    jsonFields = [];
+    var m = mapping.mapping || {};
+    Object.keys(m).forEach(function(k) {
+      var v = m[k];
+      if (typeof v === 'object' && v !== null) jsonFields.push({ key: k, path: v.path || '', transform: v.transform || '' });
+      else jsonFields.push({ key: k, path: v, transform: '' });
+    });
+    renderJsonFields();
+  } else {
+    tables = (mapping.tables || []).map(function(t) {
+      return {
+        name: t.name || '',
+        primary_key: t.primary_key || '',
+        parent: t.parent || t.parent_table || '',
+        foreign_key: t.foreign_key || { column: '', references: '' },
+        source_array: t.source_array || '',
+        replace_strategy: t.replace_strategy || '',
+        on_delete: t.on_delete || 'delete',
+        columns: Object.assign({}, t.columns || {})
+      };
+    });
+    activeTableIdx = 0;
+    renderTableTabs();
+    renderTableEditor();
+  }
+
+  onMappingChange();
+
+  // Show explanation if provided
+  if (mapping._explanation && mapping._explanation.length) {
+    var explHtml = '<h3 class="font-bold text-lg mb-3">🤖 AI Reasoning</h3>';
+    explHtml += '<div class="space-y-2">';
+    for (var ei = 0; ei < mapping._explanation.length; ei++) {
+      explHtml += '<div class="flex items-start gap-2"><span class="opacity-40 mt-0.5">•</span><span class="text-sm">' + escapeHtml(mapping._explanation[ei]) + '</span></div>';
+    }
+    explHtml += '</div>';
+    document.getElementById('validateResultContent').innerHTML = explHtml;
+    document.getElementById('aiAssistModal').close();
+    document.getElementById('validateModal').showModal();
+  } else {
+    document.getElementById('aiAssistModal').close();
+  }
+  showStatus('Imported AI-generated mapping (' + mode + ' mode)', 'success');
 }
 
 // ── Init ─────────────────────────────────────────────────────

@@ -184,7 +184,7 @@ async def put_mapping(request):
         content = json.dumps(parsed, indent=2)
     except (json.JSONDecodeError, ValueError):
         pass  # not valid JSON, save as-is
-    # Always write to filesystem so changes-worker can pick it up
+    # Write to filesystem as fallback cache (CBL is the source of truth when available)
     MAPPINGS_DIR.mkdir(exist_ok=True)
     (MAPPINGS_DIR / name).write_text(content)
     return json_response({"ok": True})

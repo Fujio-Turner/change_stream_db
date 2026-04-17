@@ -1,0 +1,39 @@
+{
+  "sample_doc": {
+    "type": "order",
+    "status": "shipped",
+    "customer_id": "cust_42",
+    "order_date": "2024-09-15",
+    "total": 129.99,
+    "items": [
+      {
+        "product_id": "prod_C",
+        "qty": 789987,
+        "price": 21.99
+      },
+      {
+        "product_id": "prod_A",
+        "qty": 685321,
+        "price": 49.99
+      },
+      {
+        "product_id": "prod_E",
+        "qty": 4156,
+        "price": 789,
+        "discount": false
+      },
+      {
+        "product_id": "prod_B",
+        "qty": 80,
+        "price": 9786.99,
+        "draft": "pending"
+      }
+    ],
+    "channels": [
+      "bob",
+      "kevin"
+    ],
+    "_id": "postgres_01",
+    "_rev": "24-e9a67782a71f6b002acade6b0251319f"
+  }
+}

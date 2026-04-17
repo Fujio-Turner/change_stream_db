@@ -694,31 +694,80 @@ def migrate_default_to_collections() -> None:
 
 
 def migrate_files_to_cbl(config_path: str = "config.json") -> None:
-    """One-time migration of file-based storage to CBL."""
+    """Sync file-based storage into CBL.
+
+    Strategy:
+      - **Config**: ``config.json`` is a seed file. It is imported into CBL
+        only when CBL has no config (first start or fresh volume). After that,
+        CBL is the single source of truth and ``config.json`` is ignored.
+        To re-seed, delete the CBL volume.
+      - **Mappings**: The ``mappings/`` directory is the edit surface (bind-
+        mounted). On every startup, disk files are synced into CBL (new,
+        changed, and deleted). The worker reads from CBL at runtime.
+    """
     from pathlib import Path
 
     store = CBLStore()
 
-    # Config
+    # ── Config: seed-only (CBL wins if it already has config) ─────────
     if not store.load_config():
         p = Path(config_path)
         if p.exists():
             cfg = json.loads(p.read_text())
             store.save_config(cfg)
-            log_event(logger, "info", "CBL", "migrated config to CBL",
+            log_event(logger, "info", "CBL",
+                      "seeded config into CBL from %s (first start)" % config_path,
                       operation="INSERT", doc_type="config", db_path=config_path)
+    else:
+        log_event(logger, "debug", "CBL",
+                  "config already in CBL — ignoring %s" % config_path,
+                  operation="SELECT", doc_type="config")
 
-    # Mappings
+    # ── Mappings: disk is edit surface, CBL is runtime store ────────
+    # On every startup, sync mappings/ → CBL (disk always wins).
     mappings_dir = Path("mappings")
+    mappings_dir.mkdir(exist_ok=True)
+
+    disk_names: set[str] = set()
+    added = updated = removed = 0
+
     if mappings_dir.is_dir():
         for f in mappings_dir.iterdir():
             if f.suffix in (".yaml", ".yml", ".json"):
-                if not store.get_mapping(f.name):
-                    store.save_mapping(f.name, f.read_text())
+                disk_names.add(f.name)
+                disk_content = f.read_text()
+                cbl_content = store.get_mapping(f.name)
+                if cbl_content is None:
+                    store.save_mapping(f.name, disk_content)
+                    added += 1
                     log_event(logger, "info", "CBL",
-                              "migrated mapping to CBL",
+                              "imported mapping to CBL: %s" % f.name,
                               operation="INSERT", doc_type="mapping",
                               doc_id=f"mapping:{f.name}")
+                elif disk_content.strip() != cbl_content.strip():
+                    store.save_mapping(f.name, disk_content)
+                    updated += 1
+                    log_event(logger, "info", "CBL",
+                              "updated mapping in CBL from disk: %s" % f.name,
+                              operation="UPDATE", doc_type="mapping",
+                              doc_id=f"mapping:{f.name}")
+
+    # Remove CBL mappings that no longer exist on disk
+    cbl_entries = store.list_mappings()
+    for entry in cbl_entries:
+        name = entry.get("name", "")
+        if name and name not in disk_names:
+            store.delete_mapping(name)
+            removed += 1
+            log_event(logger, "info", "CBL",
+                      "removed mapping from CBL (not on disk): %s" % name,
+                      operation="DELETE", doc_type="mapping",
+                      doc_id=f"mapping:{name}")
+
+    log_event(logger, "info", "CBL",
+              "mappings sync complete: %d on disk, %d added, %d updated, %d removed"
+              % (len(disk_names), added, updated, removed),
+              operation="SYNC", doc_type="mapping")
 
     # Checkpoint
     cp_path = Path("checkpoint.json")

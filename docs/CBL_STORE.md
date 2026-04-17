@@ -485,56 +485,152 @@ volumes:
 
 ---
 
-## Migration Path
+## Storage Model — Who Owns What
 
-### First Run (Importing Existing Files)
+CBL is the **runtime source of truth** for all data. Files on disk serve specific
+roles depending on the data type:
 
-On first startup with CBL, the worker should auto-import existing files:
+| Data | File on disk | Role of file | Role of CBL | Sync direction |
+|---|---|---|---|---|
+| **Config** | `config.json` | Seed (read once on first start) | Runtime source of truth | File → CBL (once) |
+| **Mappings** | `mappings/*.json` | Edit surface (bind-mounted) | Runtime store (worker reads from here) | File → CBL (every startup) |
+| **Checkpoints** | `checkpoint.json` | Legacy migration only | Runtime source of truth | File → CBL (once) |
+| **Dead Letters** | — | Not on disk | CBL only | — |
+
+### Config: Seed-Only
+
+`config.json` is read **only on the very first startup** (when CBL has no config).
+After that, CBL owns the config and `config.json` is ignored — even if it changes.
 
 ```
-┌─────────────────────────┐
-│  First run detected     │
-│  (no "config" doc in CBL)│
-├─────────────────────────┤
-│  1. Import config.json  │
-│  2. Import mappings/*   │
-│  3. Import checkpoint   │
-│  4. Log: "Migrated to   │
-│     CBL storage"        │
-└─────────────────────────┘
+First start:   config.json ──→ CBL   (seed)
+Every start:   CBL ──→ worker         (config.json ignored)
+Admin UI:      edits go to CBL only
 ```
 
-```python
-def migrate_files_to_cbl(config_path: str = "config.json"):
-    """One-time migration of file-based storage to CBL."""
-    store = CBLStore()
+**To re-seed config from `config.json`:** delete the CBL volume and restart.
 
-    # Config
-    if not store.load_config():
-        if Path(config_path).exists():
-            cfg = json.loads(Path(config_path).read_text())
-            store.save_config(cfg)
-            logger.info("Migrated %s to CBL", config_path)
+### Mappings: Disk Wins
 
-    # Mappings
-    mappings_dir = Path("mappings")
-    if mappings_dir.is_dir():
-        for f in mappings_dir.iterdir():
-            if f.suffix in (".yaml", ".yml", ".json"):
-                if not store.get_mapping(f.name):
-                    store.save_mapping(f.name, f.read_text())
-                    logger.info("Migrated mapping %s to CBL", f.name)
+The `mappings/` directory is **bind-mounted** from the host into the container.
+It is the edit surface — you can edit files directly or use the Admin UI.
+On every startup, the contents of `mappings/` are synced **into** CBL:
 
-    # Checkpoint
-    cp_path = Path("checkpoint.json")
-    if cp_path.exists():
-        data = json.loads(cp_path.read_text())
-        # We don't know the UUID here, so store under a generic key
-        # The Checkpoint class will find it on next load
-        logger.info("Migrated checkpoint.json to CBL")
+- New files on disk → imported into CBL
+- Changed files on disk → updated in CBL
+- Files deleted from disk → removed from CBL
+
+```
+Every start:   mappings/*.json ──→ CBL   (disk always wins)
+Worker:        reads from CBL at runtime
+Admin UI:      saves to CBL + writes to mappings/ (both stay in sync)
 ```
 
-### Backward Compatibility
+The worker loads mappings from CBL at runtime. If CBL is unavailable, it falls
+back to reading the `mappings/` directory directly.
+
+### Duplicate Mapping Detection
+
+If two mapping files match the same source filter (e.g., both match
+`type=order`), the worker logs a warning at startup:
+
+```
+WARNING: DUPLICATE MAPPING: 'orders.json' and 'order.json' both match
+type=order — only 'orders.json' will be used (first-match wins)
+```
+
+Delete the stale duplicate from `mappings/` and restart.
+
+---
+
+## Startup Sync Sequence
+
+On every startup with `USE_CBL=True`, `migrate_files_to_cbl()` runs **after**
+logging is configured so all sync activity is visible in the logs:
+
+```
+1. Config sync:
+   - CBL has config?  → use it, ignore config.json
+   - CBL empty?       → seed from config.json → CBL
+
+2. Mappings sync (disk → CBL):
+   - For each *.json in mappings/:
+     - Not in CBL?        → import
+     - In CBL but differs? → update CBL from disk
+   - For each mapping in CBL:
+     - Not on disk?       → delete from CBL
+   - Log summary: "mappings sync complete: 2 on disk, 0 added, 1 updated, 1 removed"
+
+3. Checkpoint migration (one-time):
+   - checkpoint.json exists? → import into CBL
+```
+
+---
+
+## Troubleshooting
+
+### Problem: Stale config or mappings after editing files
+
+**Symptom:** You edited `config.json` or a mapping file, but the worker
+uses the old version.
+
+**Cause:** For config, CBL already has a copy and ignores `config.json`.
+For mappings, the CBL volume may have cached old data from a previous
+sync cycle.
+
+**Fix:**
+
+```bash
+# Stop containers
+docker compose down
+
+# Delete the CBL volume (destroys all CBL data — config, mappings, checkpoints)
+docker volume rm change_stream_db_cbl-data
+
+# Rebuild and start (CBL will re-seed from disk files)
+docker compose up --build
+```
+
+> ⚠️ This resets checkpoints too. The worker will re-process changes from
+> the last Sync Gateway checkpoint (stored on SG, not in CBL).
+
+### Problem: Duplicate mapping warning
+
+**Symptom:** Log shows `DUPLICATE MAPPING: 'a.json' and 'b.json' both match ...`
+
+**Cause:** Two mapping files have the same `source.match` filter. Only the
+first one (alphabetical order) is used.
+
+**Fix:** Delete the stale file from `mappings/` and restart:
+
+```bash
+rm mappings/old_duplicate.json
+docker compose restart changes-worker
+```
+
+### Problem: Config changes from Admin UI not reflected
+
+**Symptom:** You changed config in the Admin UI but the worker uses old settings.
+
+**Fix:** The Admin UI sends a restart signal to the worker automatically.
+If that fails (e.g., network issue between containers), restart manually:
+
+```bash
+docker compose restart changes-worker
+```
+
+### Problem: Need to start completely fresh
+
+```bash
+docker compose down
+docker volume rm change_stream_db_cbl-data
+# Optionally edit config.json and mappings/ to your desired state
+docker compose up --build
+```
+
+---
+
+## Backward Compatibility
 
 The `USE_CBL` flag means the entire system still works without CBL installed:
 

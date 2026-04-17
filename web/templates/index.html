@@ -25,6 +25,9 @@
     .diag-item { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.4rem 0; }
     .diag-icon { flex-shrink: 0; font-size: 1.1rem; line-height: 1.4; }
     .diag-text { font-size: 0.875rem; line-height: 1.4; }
+    .stat-tip { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .stat-tip .tip-q { font-size: 0.6rem; opacity: 0.4; cursor: help; border: 1px solid currentColor; border-radius: 50%; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .stat-tip .tip-q:hover { opacity: 0.8; }
   </style>
 </head>
 <body class="min-h-screen flex flex-col bg-base-200">
@@ -137,9 +140,9 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Poll Cycles</td><td class="text-right" id="mPollCycles">--</td></tr>
-              <tr><td class="font-medium">Poll Errors</td><td class="text-right" id="mPollErrors">--</td></tr>
-              <tr><td class="font-medium">Retries</td><td class="text-right" id="mRetries">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Poll Cycles <span class="tooltip tooltip-right tip-q" data-tip="Number of completed _changes feed requests. Each cycle fetches a batch of changes from Sync Gateway. Low count + high uptime may indicate long-poll or streaming mode.">?</span></span></td><td class="text-right" id="mPollCycles">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Poll Errors <span class="tooltip tooltip-right tip-q" data-tip="Failed _changes requests. A rising count means the gateway is unreachable, returning errors, or auth has expired. Compare with Poll Cycles to get the error ratio.">?</span></span></td><td class="text-right" id="mPollErrors">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Retries <span class="tooltip tooltip-right tip-q" data-tip="Total HTTP retry attempts across all requests. Retries happen automatically on transient failures. If this rises but Retry Exhausted stays 0, the system is self-healing.">?</span></span></td><td class="text-right" id="mRetries">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -154,11 +157,11 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Changes Received</td><td class="text-right" id="mChangesReceived">--</td></tr>
-              <tr><td class="font-medium">Last Batch Size</td><td class="text-right" id="mLastBatch">--</td></tr>
-              <tr><td class="font-medium">Bytes Received</td><td class="text-right" id="mBytesIn">--</td></tr>
-              <tr><td class="font-medium">Deletes Seen</td><td class="text-right" id="mFeedDeletes">--</td></tr>
-              <tr><td class="font-medium">Removes Seen</td><td class="text-right" id="mFeedRemoves">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Changes Received <span class="tooltip tooltip-right tip-q" data-tip="Total number of change notifications received from the _changes feed since startup. This is the raw inbound count before any filtering.">?</span></span></td><td class="text-right" id="mChangesReceived">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Last Batch Size <span class="tooltip tooltip-right tip-q" data-tip="Number of changes in the most recent batch. A consistently low number may mean few changes are happening; a number at the batch limit means the feed is busy.">?</span></span></td><td class="text-right" id="mLastBatch">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Bytes Received <span class="tooltip tooltip-right tip-q" data-tip="Total bytes downloaded from the _changes feed, bulk_get, and individual doc GETs. Useful for estimating network bandwidth usage.">?</span></span></td><td class="text-right" id="mBytesIn">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Deletes Seen <span class="tooltip tooltip-right tip-q" data-tip="Changes with deleted=true in the feed. These are document deletions from Couchbase. If filter_deletes is on, these are filtered out before processing.">?</span></span></td><td class="text-right" id="mFeedDeletes">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Removes Seen <span class="tooltip tooltip-right tip-q" data-tip="Changes with removed=true in the feed. These are access-removal notifications (the user lost access to the document). If filter_removes is on, these are filtered out.">?</span></span></td><td class="text-right" id="mFeedRemoves">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -173,8 +176,8 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Checkpoint Seq</td><td class="text-right font-mono" id="mCheckpointSeq">--</td></tr>
-              <tr><td class="font-medium">Checkpoint Saves</td><td class="text-right" id="mCheckpointSaves">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Checkpoint Seq <span class="tooltip tooltip-right tip-q" data-tip="The last sequence number saved. On restart the worker resumes from this point, so no changes are reprocessed. If this stops advancing, the worker may be stuck.">?</span></span></td><td class="text-right font-mono" id="mCheckpointSeq">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Checkpoint Saves <span class="tooltip tooltip-right tip-q" data-tip="How many times the checkpoint has been persisted (to Sync Gateway or local fallback). Should increase steadily as batches complete.">?</span></span></td><td class="text-right" id="mCheckpointSaves">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -194,8 +197,8 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Docs Processed</td><td class="text-right" id="mProcessed">--</td></tr>
-              <tr><td class="font-medium">Docs Fetched</td><td class="text-right" id="mDocsFetched">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Docs Processed <span class="tooltip tooltip-right tip-q" data-tip="Total changes that made it through filtering and were forwarded to the output stage. Compare with Changes Received to see how many were filtered out.">?</span></span></td><td class="text-right" id="mProcessed">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Docs Fetched <span class="tooltip tooltip-right tip-q" data-tip="Documents retrieved via bulk_get or individual GET from Sync Gateway. If include_docs is off, changes are fetched separately; this tracks those fetches.">?</span></span></td><td class="text-right" id="mDocsFetched">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -210,9 +213,9 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Filtered (total)</td><td class="text-right" id="mFiltered">--</td></tr>
-              <tr><td class="font-medium">Filtered (deletes)</td><td class="text-right" id="mFilteredDeletes">--</td></tr>
-              <tr><td class="font-medium">Filtered (removes)</td><td class="text-right" id="mFilteredRemoves">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Filtered (total) <span class="tooltip tooltip-right tip-q" data-tip="Total changes dropped before output. Sum of filtered deletes + filtered removes. A high ratio vs. Changes Received means most feed activity is deletions or access revocations.">?</span></span></td><td class="text-right" id="mFiltered">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Filtered (deletes) <span class="tooltip tooltip-right tip-q" data-tip="Changes skipped because the document was deleted and filter_deletes is enabled in config.">?</span></span></td><td class="text-right" id="mFilteredDeletes">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Filtered (removes) <span class="tooltip tooltip-right tip-q" data-tip="Changes skipped because the user lost channel access (removed=true) and filter_removes is enabled in config.">?</span></span></td><td class="text-right" id="mFilteredRemoves">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -247,12 +250,12 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Requests Total</td><td class="text-right" id="mOutRequests">--</td></tr>
-              <tr><td class="font-medium">Success</td><td class="text-right text-success" id="mOutSuccess">--</td></tr>
-              <tr><td class="font-medium">Errors</td><td class="text-right text-error" id="mOutErrors">--</td></tr>
-              <tr><td class="font-medium">Skipped</td><td class="text-right text-warning" id="mOutSkipped">--</td></tr>
-              <tr><td class="font-medium">PUT Requests</td><td class="text-right" id="mOutPut">--</td></tr>
-              <tr><td class="font-medium">DELETE Requests</td><td class="text-right" id="mOutDelete">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Requests Total <span class="tooltip tooltip-right tip-q" data-tip="Total HTTP requests sent to the output target (database or HTTP endpoint). This is Success + Errors + Skipped.">?</span></span></td><td class="text-right" id="mOutRequests">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Success <span class="tooltip tooltip-right tip-q" data-tip="Requests that returned a 2xx response. Each success means the document was accepted by the downstream target.">?</span></span></td><td class="text-right text-success" id="mOutSuccess">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Errors <span class="tooltip tooltip-right tip-q" data-tip="Requests that failed (non-2xx response or network error). Documents that error may be retried or sent to the dead letter queue depending on config.">?</span></span></td><td class="text-right text-error" id="mOutErrors">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Skipped <span class="tooltip tooltip-right tip-q" data-tip="Documents that reached the output stage but were not sent — usually because no schema mapper matched or the mapper produced no operations.">?</span></span></td><td class="text-right text-warning" id="mOutSkipped">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">PUT Requests <span class="tooltip tooltip-right tip-q" data-tip="Output requests using HTTP PUT method. Typically used for upsert/create operations on the downstream target.">?</span></span></td><td class="text-right" id="mOutPut">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">DELETE Requests <span class="tooltip tooltip-right tip-q" data-tip="Output requests using HTTP DELETE method. Sent when a document deletion is forwarded to the downstream target.">?</span></span></td><td class="text-right" id="mOutDelete">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -267,9 +270,9 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Bytes Sent</td><td class="text-right" id="mBytesOut">--</td></tr>
-              <tr><td class="font-medium">Dead Letters</td><td class="text-right text-warning" id="mDeadLetters">--</td></tr>
-              <tr><td class="font-medium">Endpoint</td><td class="text-right" id="mEndpointUp">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Bytes Sent <span class="tooltip tooltip-right tip-q" data-tip="Total bytes sent to the output endpoint. Compare with Bytes Received to understand data amplification or reduction through mapping/transforms.">?</span></span></td><td class="text-right" id="mBytesOut">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Dead Letters <span class="tooltip tooltip-right tip-q" data-tip="Documents that failed all retries and were written to the dead letter queue. Review these at /api/dlq — they can be retried or discarded manually.">?</span></span></td><td class="text-right text-warning" id="mDeadLetters">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Endpoint <span class="tooltip tooltip-right tip-q" data-tip="Whether the output target is currently reachable (UP/DOWN). Checked via periodic health probes. DOWN means documents will queue up or fail.">?</span></span></td><td class="text-right" id="mEndpointUp">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -284,8 +287,8 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Resp p50</td><td class="text-right" id="mRespP50">--</td></tr>
-              <tr><td class="font-medium">Resp p99</td><td class="text-right" id="mRespP99">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Resp p50 <span class="tooltip tooltip-right tip-q" data-tip="Median (50th percentile) output response time. Half of all requests complete faster than this. This is your typical latency.">?</span></span></td><td class="text-right" id="mRespP50">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Resp p99 <span class="tooltip tooltip-right tip-q" data-tip="99th percentile output response time — the worst-case tail latency. If this is much higher than p50, some requests are hitting slow paths or timeouts.">?</span></span></td><td class="text-right" id="mRespP99">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -650,9 +653,13 @@ function computeStatus(m, cfg) {
   } else {
     feedChecks.push(diagOk('Worker is running (uptime: ' + fmtUptime(uptime) + ')'));
     var errorRatio = pollCycles > 0 ? pollErrors / pollCycles : 0;
-    if (pollCycles === 0) {
+    var feedReceived = m['changes_worker_changes_received_total'] || 0;
+    if (pollCycles === 0 && feedReceived === 0) {
       feedChecks.push(diagWarn('No poll cycles completed yet — still starting up'));
       feedColor = 'yellow';
+    } else if (pollCycles === 0 && feedReceived > 0) {
+      feedColor = 'green';
+      feedChecks.push(diagOk('Streaming mode — ' + fmt(feedReceived) + ' change(s) received'));
     } else if (errorRatio > 0.1) {
       feedColor = 'yellow';
       feedChecks.push(diagWarn('High error ratio: ' + (errorRatio * 100).toFixed(1) + '% of poll cycles failed'));
@@ -696,7 +703,7 @@ function computeStatus(m, cfg) {
     'Checkpoint Load Errors': fmt(chkLoadErr)
   };
   var procColor = 'red';
-  if (uptime > 30) {
+  if (uptime > 30 || (uptime > 0 && processed > 0)) {
     procColor = 'green';
     procChecks.push(diagOk('Worker running for ' + fmtUptime(uptime)));
   } else if (uptime > 0) {

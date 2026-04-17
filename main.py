@@ -594,20 +594,28 @@ async def start_metrics_server(metrics: MetricsCollector, host: str, port: int,
 # ---------------------------------------------------------------------------
 
 def load_config(path: str | None = None) -> dict:
+    """Load config from CBL (source of truth) or fall back to config.json.
+
+    When CBL is available, config.json is only used as a seed on the very
+    first startup.  After that, all config changes go through CBL via the
+    Admin UI.  To re-seed from config.json, delete the CBL volume.
+    """
     if USE_CBL:
         store = CBLStore()
         cfg = store.load_config()
         if cfg:
+            logger.info("Config loaded from CBL (config.json is ignored)")
             ic(cfg)
             return cfg
-        # First run: import from file
+        # First run: seed from file → CBL
         if path:
             with open(path) as f:
                 cfg = json.load(f)
             store.save_config(cfg)
+            logger.info("First start — seeded config from %s into CBL", path)
             ic(cfg)
             return cfg
-    # Fallback: read from file directly
+    # Fallback: no CBL — read from file directly
     with open(path or "config.json") as f:
         cfg = json.load(f)
     ic(cfg)
@@ -2364,16 +2372,16 @@ def main() -> None:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
 
-    # Run one-time migrations if CBL is available
-    if USE_CBL:
-        migrate_files_to_cbl(args.config)
-        migrate_default_to_collections()
-
     cfg = load_config(args.config)
     _ensure_full_logging_config(cfg)
     configure_logging(cfg.get("logging", {}))
 
     log_event(logger, "info", "PROCESSING", "changes_worker v%s starting (CBL=%s)" % (__version__, USE_CBL))
+
+    # Run migrations after logging is configured so we can see output
+    if USE_CBL:
+        migrate_files_to_cbl(args.config)
+        migrate_default_to_collections()
 
     # ── Startup config validation ────────────────────────────────────────
     src, warnings, errors = validate_config(cfg)
