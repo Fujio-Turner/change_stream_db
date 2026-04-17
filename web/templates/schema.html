@@ -328,13 +328,23 @@ CREATE TABLE order_items (
               <div class="card-body p-3">
                 <div class="flex items-center gap-2 mb-1">
                   <h4 class="text-sm font-semibold">Source Match</h4>
-                  <div class="tooltip tooltip-right" data-tip="Match documents where a field equals a value. Only matched documents are processed by this mapping.">
+                  <div class="tooltip tooltip-right" data-tip="Match documents by field name or by expression. Expressions let you use string functions on any field (e.g. split($._id,&quot;::&quot;)[0] to extract a type prefix from the document key).">
                     <span class="badge badge-ghost badge-sm cursor-help">?</span>
                   </div>
                 </div>
-                <div class="flex gap-2">
+                <div class="flex gap-2 mb-2">
+                  <select id="matchMode" class="select select-bordered select-sm w-36" onchange="onMatchModeChange()">
+                    <option value="field">Field</option>
+                    <option value="expression">Expression</option>
+                  </select>
+                </div>
+                <div id="matchFieldRow" class="flex gap-2">
                   <input id="matchField" type="text" placeholder="field (e.g. type)" class="input input-bordered input-sm flex-1" oninput="onMappingChange()" />
                   <input id="matchValue" type="text" placeholder="value (e.g. order)" class="input input-bordered input-sm flex-1" oninput="onMappingChange()" />
+                </div>
+                <div id="matchExprRow" class="flex gap-2 hidden">
+                  <input id="matchExpression" type="text" placeholder='expression e.g. split($._id,"::")[0]' class="input input-bordered input-sm flex-[2]" oninput="onMappingChange()" />
+                  <input id="matchExprValue" type="text" placeholder="value (e.g. invoice)" class="input input-bordered input-sm flex-1" oninput="onMappingChange()" />
                 </div>
               </div>
             </div>
@@ -1085,6 +1095,13 @@ function onTableNameChange() {
 function esc(s) { return (s || '').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
 
 // ── Build Mapping JSON ──────────────────────────────────────
+function onMatchModeChange() {
+  var mode = document.getElementById('matchMode').value;
+  document.getElementById('matchFieldRow').classList.toggle('hidden', mode !== 'field');
+  document.getElementById('matchExprRow').classList.toggle('hidden', mode !== 'expression');
+  onMappingChange();
+}
+
 function onMappingChange() {
   saveCurrentTableEdits();
   var mapping = buildMapping();
@@ -1200,9 +1217,16 @@ function updateCoverage() {
 }
 
 function buildMapping() {
-  var mf = document.getElementById('matchField').value.trim();
-  var mv = document.getElementById('matchValue').value.trim();
-  var mapping = { source: { match: { field: mf, value: mv } }, output_format: outputMode };
+  var matchMode = document.getElementById('matchMode').value;
+  var matchObj = {};
+  if (matchMode === 'expression') {
+    matchObj.expression = document.getElementById('matchExpression').value.trim();
+    matchObj.value = document.getElementById('matchExprValue').value.trim();
+  } else {
+    matchObj.field = document.getElementById('matchField').value.trim();
+    matchObj.value = document.getElementById('matchValue').value.trim();
+  }
+  var mapping = { source: { match: matchObj }, output_format: outputMode };
 
   if (outputMode === 'json') {
     // Save JSON field rows from DOM
@@ -1247,8 +1271,21 @@ function loadTemplate(name) {
   onSourceChange();
   // Load mapping
   var m = tmpl.mapping;
-  document.getElementById('matchField').value = m.source.match.field;
-  document.getElementById('matchValue').value = m.source.match.value;
+  var tmatch = m.source.match;
+  if (tmatch.expression) {
+    document.getElementById('matchMode').value = 'expression';
+    document.getElementById('matchExpression').value = tmatch.expression || '';
+    document.getElementById('matchExprValue').value = tmatch.value || '';
+    document.getElementById('matchField').value = '';
+    document.getElementById('matchValue').value = '';
+  } else {
+    document.getElementById('matchMode').value = 'field';
+    document.getElementById('matchField').value = tmatch.field || '';
+    document.getElementById('matchValue').value = tmatch.value || '';
+    document.getElementById('matchExpression').value = '';
+    document.getElementById('matchExprValue').value = '';
+  }
+  onMatchModeChange();
   switchOutputMode(m.output_format || 'tables');
   if (outputMode === 'json') {
     jsonFields = [];
@@ -1451,7 +1488,8 @@ async function loadFileList(autoLoadFirst) {
       try {
         var parsed = typeof f.content === 'object' ? f.content : JSON.parse(f.content || '{}');
         var match = (parsed.source || {}).match || {};
-        if (match.field) filterText = match.field + ' = ' + (match.value || '*');
+        if (match.expression) filterText = match.expression + ' = ' + (match.value || '*');
+        else if (match.field) filterText = match.field + ' = ' + (match.value || '*');
       } catch (e) {}
       // Format date
       var dateStr = '';
@@ -1505,8 +1543,21 @@ async function openFile(name) {
     document.getElementById('filenameInput').value = name;
     // Populate UI from mapping
     if (mapping.source && mapping.source.match) {
-      document.getElementById('matchField').value = mapping.source.match.field || '';
-      document.getElementById('matchValue').value = mapping.source.match.value || '';
+      var match = mapping.source.match;
+      if (match.expression) {
+        document.getElementById('matchMode').value = 'expression';
+        document.getElementById('matchExpression').value = match.expression || '';
+        document.getElementById('matchExprValue').value = match.value || '';
+        document.getElementById('matchField').value = '';
+        document.getElementById('matchValue').value = '';
+      } else {
+        document.getElementById('matchMode').value = 'field';
+        document.getElementById('matchField').value = match.field || '';
+        document.getElementById('matchValue').value = match.value || '';
+        document.getElementById('matchExpression').value = '';
+        document.getElementById('matchExprValue').value = '';
+      }
+      onMatchModeChange();
     }
     // Detect output mode
     var mode = mapping.output_format || (mapping.mapping ? 'json' : 'tables');

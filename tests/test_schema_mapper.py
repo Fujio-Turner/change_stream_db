@@ -308,6 +308,46 @@ class TestSchemaMapperMatches(unittest.TestCase):
         mapper = SchemaMapper(mapping)
         self.assertTrue(mapper.matches({"anything": True}))
 
+    # -- expression-based matching -------------------------------------------
+
+    def test_matches_expression_split_index(self):
+        """split($._id,"::")[0] extracts the prefix from the doc key."""
+        m = SchemaMapper({
+            "source": {"match": {"expression": 'split($._id,"::")[0]', "value": "invoice"}}
+        })
+        self.assertTrue(m.matches({"_id": "invoice::12345"}))
+        self.assertFalse(m.matches({"_id": "order::12345"}))
+        self.assertFalse(m.matches({"_id": "invoice_no_separator"}))
+
+    def test_matches_expression_split_second_part(self):
+        """split($._id,"::")[1] extracts the second segment."""
+        m = SchemaMapper({
+            "source": {"match": {"expression": 'split($._id,"::")[1]', "value": "99"}}
+        })
+        self.assertTrue(m.matches({"_id": "type::99"}))
+        self.assertFalse(m.matches({"_id": "type::100"}))
+
+    def test_matches_expression_lowercase(self):
+        m = SchemaMapper({
+            "source": {"match": {"expression": "lowercase($._id)", "value": "invoice::abc"}}
+        })
+        self.assertTrue(m.matches({"_id": "INVOICE::ABC"}))
+        self.assertFalse(m.matches({"_id": "ORDER::ABC"}))
+
+    def test_matches_expression_plain_path(self):
+        """Expression can also be a plain JSON path."""
+        m = SchemaMapper({
+            "source": {"match": {"expression": "$._id", "value": "invoice::1"}}
+        })
+        self.assertTrue(m.matches({"_id": "invoice::1"}))
+        self.assertFalse(m.matches({"_id": "invoice::2"}))
+
+    def test_matches_expression_missing_field(self):
+        m = SchemaMapper({
+            "source": {"match": {"expression": 'split($._id,"::")[0]', "value": "invoice"}}
+        })
+        self.assertFalse(m.matches({"no_id": "x"}))
+
 
 class TestSchemaMapperMapDocument(unittest.TestCase):
     """Tests for SchemaMapper.map_document()."""
