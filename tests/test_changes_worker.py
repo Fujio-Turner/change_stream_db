@@ -30,13 +30,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import aiohttp
 import main as cw
 from rest.output_http import (
-    _dict_to_xml, _flatten_dict, _ClientHTTPError, serialize_doc,
+    _dict_to_xml,
+    _flatten_dict,
+    _ClientHTTPError,
+    serialize_doc,
 )
 
 
 # ---------------------------------------------------------------------------
 # Helper: minimal valid config
 # ---------------------------------------------------------------------------
+
 
 def _base_config(**overrides) -> dict:
     """Return a minimal valid config dict; apply overrides at top level."""
@@ -74,6 +78,7 @@ def _base_config(**overrides) -> dict:
 # ===================================================================
 # validate_config
 # ===================================================================
+
 
 class TestValidateConfig(unittest.TestCase):
     """Tests for validate_config()."""
@@ -151,7 +156,9 @@ class TestValidateConfig(unittest.TestCase):
         cfg["gateway"]["src"] = "edge_server"
         cfg["auth"] = {"method": "bearer", "bearer_token": "tok"}
         _, _, errors = cw.validate_config(cfg)
-        self.assertTrue(any("bearer" in e.lower() and "Edge Server" in e for e in errors))
+        self.assertTrue(
+            any("bearer" in e.lower() and "Edge Server" in e for e in errors)
+        )
 
     def test_invalid_auth_method(self):
         cfg = _base_config()
@@ -235,7 +242,11 @@ class TestValidateConfig(unittest.TestCase):
         cfg["gateway"]["src"] = "edge_server"
         cfg["changes_feed"]["include_docs"] = False
         _, warnings, _ = cw.validate_config(cfg)
-        self.assertTrue(any("bulk_get" in w.lower() or "individually" in w.lower() for w in warnings))
+        self.assertTrue(
+            any(
+                "bulk_get" in w.lower() or "individually" in w.lower() for w in warnings
+            )
+        )
 
     # -- output validation --
 
@@ -255,7 +266,9 @@ class TestValidateConfig(unittest.TestCase):
         cfg = _base_config()
         cfg["output"] = {"mode": "stdout", "output_format": "protobuf"}
         _, _, errors = cw.validate_config(cfg)
-        self.assertTrue(any("output_format" in e or "output.output_format" in e for e in errors))
+        self.assertTrue(
+            any("output_format" in e or "output.output_format" in e for e in errors)
+        )
 
     # -- retry validation --
 
@@ -283,18 +296,33 @@ class TestValidateConfig(unittest.TestCase):
 # build_base_url
 # ===================================================================
 
-class TestBuildBaseUrl(unittest.TestCase):
 
+class TestBuildBaseUrl(unittest.TestCase):
     def test_with_scope_and_collection(self):
-        gw = {"url": "http://localhost:4984", "database": "db", "scope": "us", "collection": "prices"}
+        gw = {
+            "url": "http://localhost:4984",
+            "database": "db",
+            "scope": "us",
+            "collection": "prices",
+        }
         self.assertEqual(cw.build_base_url(gw), "http://localhost:4984/db.us.prices")
 
     def test_without_scope_collection(self):
-        gw = {"url": "http://localhost:4984", "database": "mydb", "scope": "", "collection": ""}
+        gw = {
+            "url": "http://localhost:4984",
+            "database": "mydb",
+            "scope": "",
+            "collection": "",
+        }
         self.assertEqual(cw.build_base_url(gw), "http://localhost:4984/mydb")
 
     def test_trailing_slash_stripped(self):
-        gw = {"url": "http://localhost:4984/", "database": "db", "scope": "s", "collection": "c"}
+        gw = {
+            "url": "http://localhost:4984/",
+            "database": "db",
+            "scope": "s",
+            "collection": "c",
+        }
         self.assertEqual(cw.build_base_url(gw), "http://localhost:4984/db.s.c")
 
 
@@ -302,8 +330,8 @@ class TestBuildBaseUrl(unittest.TestCase):
 # build_ssl_context
 # ===================================================================
 
-class TestBuildSslContext(unittest.TestCase):
 
+class TestBuildSslContext(unittest.TestCase):
     def test_http_returns_none(self):
         self.assertIsNone(cw.build_ssl_context({"url": "http://localhost:4984"}))
 
@@ -313,7 +341,10 @@ class TestBuildSslContext(unittest.TestCase):
 
     def test_self_signed_disables_verification(self):
         import ssl
-        ctx = cw.build_ssl_context({"url": "https://example.com", "accept_self_signed_certs": True})
+
+        ctx = cw.build_ssl_context(
+            {"url": "https://example.com", "accept_self_signed_certs": True}
+        )
         self.assertFalse(ctx.check_hostname)
         self.assertEqual(ctx.verify_mode, ssl.CERT_NONE)
 
@@ -322,37 +353,53 @@ class TestBuildSslContext(unittest.TestCase):
 # build_auth_headers / build_basic_auth
 # ===================================================================
 
-class TestAuthBuilders(unittest.TestCase):
 
+class TestAuthBuilders(unittest.TestCase):
     def test_bearer_headers(self):
-        h = cw.build_auth_headers({"method": "bearer", "bearer_token": "tok123"}, "sync_gateway")
+        h = cw.build_auth_headers(
+            {"method": "bearer", "bearer_token": "tok123"}, "sync_gateway"
+        )
         self.assertEqual(h["Authorization"], "Bearer tok123")
 
     def test_session_headers(self):
-        h = cw.build_auth_headers({"method": "session", "session_cookie": "abc"}, "sync_gateway")
+        h = cw.build_auth_headers(
+            {"method": "session", "session_cookie": "abc"}, "sync_gateway"
+        )
         self.assertIn("SyncGatewaySession=abc", h["Cookie"])
 
     def test_basic_headers_empty(self):
-        h = cw.build_auth_headers({"method": "basic", "username": "u", "password": "p"}, "sync_gateway")
+        h = cw.build_auth_headers(
+            {"method": "basic", "username": "u", "password": "p"}, "sync_gateway"
+        )
         self.assertEqual(h, {})
 
     def test_build_basic_auth_returns_auth(self):
         import aiohttp
-        auth = cw.build_basic_auth({"method": "basic", "username": "u", "password": "p"})
+
+        auth = cw.build_basic_auth(
+            {"method": "basic", "username": "u", "password": "p"}
+        )
         self.assertIsInstance(auth, aiohttp.BasicAuth)
 
     def test_build_basic_auth_none_for_session(self):
-        self.assertIsNone(cw.build_basic_auth({"method": "session", "session_cookie": "c"}))
+        self.assertIsNone(
+            cw.build_basic_auth({"method": "session", "session_cookie": "c"})
+        )
 
 
 # ===================================================================
 # Checkpoint – key derivation & local fallback
 # ===================================================================
 
-class TestCheckpoint(unittest.TestCase):
 
+class TestCheckpoint(unittest.TestCase):
     def test_uuid_derivation(self):
-        gw = {"url": "http://localhost:4984", "database": "db", "scope": "us", "collection": "prices"}
+        gw = {
+            "url": "http://localhost:4984",
+            "database": "db",
+            "scope": "us",
+            "collection": "prices",
+        }
         channels = ["chan-a", "chan-b"]
         cp = cw.Checkpoint({"client_id": "my_worker"}, gw, channels)
 
@@ -363,7 +410,12 @@ class TestCheckpoint(unittest.TestCase):
         self.assertEqual(cp.local_doc_path, f"_local/checkpoint-{expected_uuid}")
 
     def test_uuid_channels_sorted(self):
-        gw = {"url": "http://localhost:4984", "database": "db", "scope": "", "collection": ""}
+        gw = {
+            "url": "http://localhost:4984",
+            "database": "db",
+            "scope": "",
+            "collection": "",
+        }
         cp1 = cw.Checkpoint({"client_id": "w"}, gw, ["b", "a"])
         cp2 = cw.Checkpoint({"client_id": "w"}, gw, ["a", "b"])
         self.assertEqual(cp1._uuid, cp2._uuid)
@@ -374,7 +426,12 @@ class TestCheckpoint(unittest.TestCase):
             f.flush()
             path = f.name
         try:
-            gw = {"url": "http://localhost:4984", "database": "db", "scope": "", "collection": ""}
+            gw = {
+                "url": "http://localhost:4984",
+                "database": "db",
+                "scope": "",
+                "collection": "",
+            }
             cp = cw.Checkpoint({"client_id": "w", "file": path}, gw, [])
             seq = cp._load_fallback()
             self.assertEqual(seq, "42")
@@ -382,15 +439,27 @@ class TestCheckpoint(unittest.TestCase):
             os.unlink(path)
 
     def test_load_fallback_missing_file(self):
-        gw = {"url": "http://localhost:4984", "database": "db", "scope": "", "collection": ""}
-        cp = cw.Checkpoint({"client_id": "w", "file": "/tmp/nonexistent_checkpoint.json"}, gw, [])
+        gw = {
+            "url": "http://localhost:4984",
+            "database": "db",
+            "scope": "",
+            "collection": "",
+        }
+        cp = cw.Checkpoint(
+            {"client_id": "w", "file": "/tmp/nonexistent_checkpoint.json"}, gw, []
+        )
         self.assertEqual(cp._load_fallback(), "0")
 
     def test_save_fallback(self):
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
             path = f.name
         try:
-            gw = {"url": "http://localhost:4984", "database": "db", "scope": "", "collection": ""}
+            gw = {
+                "url": "http://localhost:4984",
+                "database": "db",
+                "scope": "",
+                "collection": "",
+            }
             cp = cw.Checkpoint({"client_id": "w", "file": path}, gw, [])
             cp._save_fallback("99")
             data = json.loads(Path(path).read_text())
@@ -404,7 +473,12 @@ class TestCheckpoint(unittest.TestCase):
             os.unlink(path)
 
     def test_checkpoint_disabled(self):
-        gw = {"url": "http://localhost:4984", "database": "db", "scope": "", "collection": ""}
+        gw = {
+            "url": "http://localhost:4984",
+            "database": "db",
+            "scope": "",
+            "collection": "",
+        }
         cp = cw.Checkpoint({"enabled": False, "client_id": "w"}, gw, [])
         seq = asyncio.run(cp.load(MagicMock(), "http://x", None, {}))
         self.assertEqual(seq, "0")
@@ -414,8 +488,8 @@ class TestCheckpoint(unittest.TestCase):
 # Serialization – serialize_doc
 # ===================================================================
 
-class TestSerializeDoc(unittest.TestCase):
 
+class TestSerializeDoc(unittest.TestCase):
     def test_json_format(self):
         doc = {"_id": "doc1", "name": "Alice"}
         body, ct = serialize_doc(doc, "json")
@@ -444,8 +518,8 @@ class TestSerializeDoc(unittest.TestCase):
 # _dict_to_xml / _flatten_dict
 # ===================================================================
 
-class TestXmlHelper(unittest.TestCase):
 
+class TestXmlHelper(unittest.TestCase):
     def test_nested_dict(self):
         doc = {"a": {"b": "hello"}}
         xml_bytes = _dict_to_xml(doc, "root")
@@ -465,7 +539,6 @@ class TestXmlHelper(unittest.TestCase):
 
 
 class TestFlattenDict(unittest.TestCase):
-
     def test_flat(self):
         self.assertEqual(_flatten_dict({"a": "1", "b": "2"}), {"a": "1", "b": "2"})
 
@@ -486,8 +559,8 @@ class TestFlattenDict(unittest.TestCase):
 # determine_method
 # ===================================================================
 
-class TestDetermineMethod(unittest.TestCase):
 
+class TestDetermineMethod(unittest.TestCase):
     def test_normal_change_returns_put(self):
         self.assertEqual(cw.determine_method({"id": "doc1"}), "PUT")
 
@@ -498,18 +571,29 @@ class TestDetermineMethod(unittest.TestCase):
         self.assertEqual(cw.determine_method({"id": "doc1", "deleted": False}), "PUT")
 
     def test_custom_write_method(self):
-        self.assertEqual(cw.determine_method({"id": "doc1"}, write_method="POST"), "POST")
+        self.assertEqual(
+            cw.determine_method({"id": "doc1"}, write_method="POST"), "POST"
+        )
 
     def test_custom_delete_method(self):
-        self.assertEqual(cw.determine_method({"id": "doc1", "deleted": True}, delete_method="PUT"), "PUT")
+        self.assertEqual(
+            cw.determine_method({"id": "doc1", "deleted": True}, delete_method="PUT"),
+            "PUT",
+        )
 
     def test_custom_both_methods(self):
         self.assertEqual(
-            cw.determine_method({"id": "d1"}, write_method="PATCH", delete_method="POST"),
+            cw.determine_method(
+                {"id": "d1"}, write_method="PATCH", delete_method="POST"
+            ),
             "PATCH",
         )
         self.assertEqual(
-            cw.determine_method({"id": "d1", "deleted": True}, write_method="PATCH", delete_method="POST"),
+            cw.determine_method(
+                {"id": "d1", "deleted": True},
+                write_method="PATCH",
+                delete_method="POST",
+            ),
             "POST",
         )
 
@@ -518,8 +602,8 @@ class TestDetermineMethod(unittest.TestCase):
 # _chunked
 # ===================================================================
 
-class TestChunked(unittest.TestCase):
 
+class TestChunked(unittest.TestCase):
     def test_even_split(self):
         self.assertEqual(cw._chunked([1, 2, 3, 4], 2), [[1, 2], [3, 4]])
 
@@ -537,6 +621,7 @@ class TestChunked(unittest.TestCase):
 # OutputForwarder – stdout mode
 # ===================================================================
 
+
 def _stdout_out_cfg(**overrides):
     cfg = {
         "mode": "stdout",
@@ -548,7 +633,6 @@ def _stdout_out_cfg(**overrides):
 
 
 class TestOutputForwarderStdout(unittest.TestCase):
-
     def test_send_stdout_json(self):
         session = MagicMock()
         fwd = cw.OutputForwarder(session, _stdout_out_cfg(), dry_run=False)
@@ -562,7 +646,9 @@ class TestOutputForwarderStdout(unittest.TestCase):
 
     def test_send_stdout_xml(self):
         session = MagicMock()
-        fwd = cw.OutputForwarder(session, _stdout_out_cfg(output_format="xml"), dry_run=False)
+        fwd = cw.OutputForwarder(
+            session, _stdout_out_cfg(output_format="xml"), dry_run=False
+        )
         doc = {"_id": "doc1"}
         with patch("sys.stdout") as mock_stdout:
             mock_stdout.buffer = MagicMock()
@@ -574,15 +660,18 @@ class TestOutputForwarderStdout(unittest.TestCase):
 # RetryableHTTP
 # ===================================================================
 
-class TestRetryableHTTP(unittest.TestCase):
 
+class TestRetryableHTTP(unittest.TestCase):
     def test_success_on_first_try(self):
         session = MagicMock()
         resp = AsyncMock()
         resp.status = 200
         session.request = AsyncMock(return_value=resp)
 
-        http = cw.RetryableHTTP(session, {"max_retries": 3, "backoff_base_seconds": 0, "backoff_max_seconds": 0})
+        http = cw.RetryableHTTP(
+            session,
+            {"max_retries": 3, "backoff_base_seconds": 0, "backoff_max_seconds": 0},
+        )
         result = asyncio.run(http.request("GET", "http://example.com"))
         self.assertEqual(result.status, 200)
         session.request.assert_called_once()
@@ -595,7 +684,10 @@ class TestRetryableHTTP(unittest.TestCase):
         resp.content_type = "text/plain"
         session.request = AsyncMock(return_value=resp)
 
-        http = cw.RetryableHTTP(session, {"max_retries": 3, "backoff_base_seconds": 0, "backoff_max_seconds": 0})
+        http = cw.RetryableHTTP(
+            session,
+            {"max_retries": 3, "backoff_base_seconds": 0, "backoff_max_seconds": 0},
+        )
         with self.assertRaises(cw.ClientHTTPError) as ctx:
             asyncio.run(http.request("GET", "http://example.com"))
         self.assertEqual(ctx.exception.status, 404)
@@ -612,12 +704,15 @@ class TestRetryableHTTP(unittest.TestCase):
 
         session.request = AsyncMock(side_effect=[resp_fail, resp_ok])
 
-        http = cw.RetryableHTTP(session, {
-            "max_retries": 2,
-            "backoff_base_seconds": 0,
-            "backoff_max_seconds": 0,
-            "retry_on_status": [503],
-        })
+        http = cw.RetryableHTTP(
+            session,
+            {
+                "max_retries": 2,
+                "backoff_base_seconds": 0,
+                "backoff_max_seconds": 0,
+                "retry_on_status": [503],
+            },
+        )
         result = asyncio.run(http.request("GET", "http://example.com"))
         self.assertEqual(result.status, 200)
         self.assertEqual(session.request.call_count, 2)
@@ -631,12 +726,15 @@ class TestRetryableHTTP(unittest.TestCase):
 
         session.request = AsyncMock(return_value=resp_fail)
 
-        http = cw.RetryableHTTP(session, {
-            "max_retries": 2,
-            "backoff_base_seconds": 0,
-            "backoff_max_seconds": 0,
-            "retry_on_status": [500],
-        })
+        http = cw.RetryableHTTP(
+            session,
+            {
+                "max_retries": 2,
+                "backoff_base_seconds": 0,
+                "backoff_max_seconds": 0,
+                "retry_on_status": [500],
+            },
+        )
         with self.assertRaises(ConnectionError):
             asyncio.run(http.request("GET", "http://example.com"))
 
@@ -645,8 +743,8 @@ class TestRetryableHTTP(unittest.TestCase):
 # HTTP error classes
 # ===================================================================
 
-class TestHTTPErrors(unittest.TestCase):
 
+class TestHTTPErrors(unittest.TestCase):
     def test_client_http_error(self):
         e = cw.ClientHTTPError(400, "Bad request body")
         self.assertEqual(e.status, 400)
@@ -665,25 +763,28 @@ class TestHTTPErrors(unittest.TestCase):
 # _sleep_or_shutdown
 # ===================================================================
 
-class TestSleepOrShutdown(unittest.TestCase):
 
+class TestSleepOrShutdown(unittest.TestCase):
     def test_returns_immediately_if_event_set(self):
         async def _run():
             event = asyncio.Event()
             event.set()
             await cw._sleep_or_shutdown(10, event)
+
         asyncio.run(_run())
 
     def test_returns_after_timeout(self):
         async def _run():
             event = asyncio.Event()
             await cw._sleep_or_shutdown(0.01, event)
+
         asyncio.run(_run())
 
 
 # ===================================================================
 # OutputForwarder – response time tracking
 # ===================================================================
+
 
 class TestOutputForwarderRequestOptions(unittest.TestCase):
     """Tests for output.request_options (custom params & headers)."""
@@ -696,10 +797,12 @@ class TestOutputForwarderRequestOptions(unittest.TestCase):
 
     def test_picks_up_params_and_headers(self):
         session = MagicMock()
-        cfg = _stdout_out_cfg(request_options={
-            "params": {"batch": "ok", "source": "cbl"},
-            "headers": {"X-Source": "changes-worker"},
-        })
+        cfg = _stdout_out_cfg(
+            request_options={
+                "params": {"batch": "ok", "source": "cbl"},
+                "headers": {"X-Source": "changes-worker"},
+            }
+        )
         fwd = cw.OutputForwarder(session, cfg, dry_run=False)
         self.assertEqual(fwd._extra_params, {"batch": "ok", "source": "cbl"})
         self.assertEqual(fwd._extra_headers, {"X-Source": "changes-worker"})
@@ -722,8 +825,12 @@ class TestOutputForwarderRequestOptions(unittest.TestCase):
                 "params": {"batch": "ok"},
                 "headers": {"X-Region": "us-east-1"},
             },
-            "retry": {"max_retries": 1, "backoff_base_seconds": 0,
-                      "backoff_max_seconds": 0, "retry_on_status": []},
+            "retry": {
+                "max_retries": 1,
+                "backoff_base_seconds": 0,
+                "backoff_max_seconds": 0,
+                "retry_on_status": [],
+            },
             "halt_on_failure": True,
         }
         fwd = cw.OutputForwarder(session, cfg, dry_run=False)
@@ -733,8 +840,10 @@ class TestOutputForwarderRequestOptions(unittest.TestCase):
         asyncio.run(fwd.send(doc, "PUT"))
 
         call_kwargs = mock_http.request.call_args
-        self.assertEqual(call_kwargs.kwargs.get("params") or call_kwargs[1].get("params"),
-                         {"batch": "ok"})
+        self.assertEqual(
+            call_kwargs.kwargs.get("params") or call_kwargs[1].get("params"),
+            {"batch": "ok"},
+        )
         headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers")
         self.assertEqual(headers["X-Region"], "us-east-1")
         self.assertEqual(headers["Content-Type"], "application/json")
@@ -753,8 +862,12 @@ class TestOutputForwarderRequestOptions(unittest.TestCase):
             "target_url": "http://example.com/api",
             "output_format": "json",
             "target_auth": {"method": "none"},
-            "retry": {"max_retries": 1, "backoff_base_seconds": 0,
-                      "backoff_max_seconds": 0, "retry_on_status": []},
+            "retry": {
+                "max_retries": 1,
+                "backoff_base_seconds": 0,
+                "backoff_max_seconds": 0,
+                "retry_on_status": [],
+            },
             "halt_on_failure": True,
         }
         fwd = cw.OutputForwarder(session, cfg, dry_run=False)
@@ -784,7 +897,13 @@ class TestDeadLetterQueue(unittest.TestCase):
         try:
             dlq = cw.DeadLetterQueue(path)
             doc = {"_id": "doc1", "val": 42}
-            result = {"ok": False, "doc_id": "doc1", "method": "PUT", "status": 500, "error": "boom"}
+            result = {
+                "ok": False,
+                "doc_id": "doc1",
+                "method": "PUT",
+                "status": 500,
+                "error": "boom",
+            }
 
             asyncio.run(dlq.write(doc, result, "15"))
 
@@ -800,7 +919,19 @@ class TestDeadLetterQueue(unittest.TestCase):
             self.assertIsInstance(entry["time"], int)
 
             # Second write appends
-            asyncio.run(dlq.write({"_id": "doc2"}, {"ok": False, "doc_id": "doc2", "method": "DELETE", "status": 404, "error": "nope"}, "20"))
+            asyncio.run(
+                dlq.write(
+                    {"_id": "doc2"},
+                    {
+                        "ok": False,
+                        "doc_id": "doc2",
+                        "method": "DELETE",
+                        "status": 404,
+                        "error": "nope",
+                    },
+                    "20",
+                )
+            )
             lines = Path(path).read_text().strip().split("\n")
             self.assertEqual(len(lines), 2)
         finally:
@@ -833,10 +964,16 @@ class TestSendReturnsResultDict(unittest.TestCase):
 
         session = MagicMock()
         cfg = {
-            "mode": "http", "target_url": "http://example.com",
-            "output_format": "json", "target_auth": {"method": "none"},
-            "retry": {"max_retries": 1, "backoff_base_seconds": 0,
-                      "backoff_max_seconds": 0, "retry_on_status": []},
+            "mode": "http",
+            "target_url": "http://example.com",
+            "output_format": "json",
+            "target_auth": {"method": "none"},
+            "retry": {
+                "max_retries": 1,
+                "backoff_base_seconds": 0,
+                "backoff_max_seconds": 0,
+                "retry_on_status": [],
+            },
             "halt_on_failure": True,
         }
         fwd = cw.OutputForwarder(session, cfg, dry_run=False)
@@ -852,10 +989,16 @@ class TestSendReturnsResultDict(unittest.TestCase):
 
         session = MagicMock()
         cfg = {
-            "mode": "http", "target_url": "http://example.com",
-            "output_format": "json", "target_auth": {"method": "none"},
-            "retry": {"max_retries": 1, "backoff_base_seconds": 0,
-                      "backoff_max_seconds": 0, "retry_on_status": []},
+            "mode": "http",
+            "target_url": "http://example.com",
+            "output_format": "json",
+            "target_auth": {"method": "none"},
+            "retry": {
+                "max_retries": 1,
+                "backoff_base_seconds": 0,
+                "backoff_max_seconds": 0,
+                "retry_on_status": [],
+            },
             "halt_on_failure": False,
         }
         fwd = cw.OutputForwarder(session, cfg, dry_run=False)
@@ -882,7 +1025,6 @@ class TestMetricsNewCounters(unittest.TestCase):
 
 
 class TestOutputForwarderStats(unittest.TestCase):
-
     def test_log_stats_no_times(self):
         session = MagicMock()
         fwd = cw.OutputForwarder(session, _stdout_out_cfg(), dry_run=False)
@@ -890,11 +1032,14 @@ class TestOutputForwarderStats(unittest.TestCase):
 
     def test_record_time_and_stats(self):
         session = MagicMock()
-        fwd = cw.OutputForwarder(session, _stdout_out_cfg(log_response_times=True), dry_run=False)
+        fwd = cw.OutputForwarder(
+            session, _stdout_out_cfg(log_response_times=True), dry_run=False
+        )
 
         async def _run():
             await fwd._record_time(10.0)
             await fwd._record_time(20.0)
+
         asyncio.run(_run())
 
         self.assertEqual(len(fwd._resp_times), 2)
@@ -906,8 +1051,8 @@ class TestOutputForwarderStats(unittest.TestCase):
 # load_config
 # ===================================================================
 
-class TestLoadConfig(unittest.TestCase):
 
+class TestLoadConfig(unittest.TestCase):
     def test_loads_json_file(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump({"gateway": {"src": "sync_gateway"}}, f)
@@ -923,8 +1068,8 @@ class TestLoadConfig(unittest.TestCase):
 # MetricsCollector
 # ===================================================================
 
-class TestMetricsCollector(unittest.TestCase):
 
+class TestMetricsCollector(unittest.TestCase):
     def test_initial_state(self):
         m = cw.MetricsCollector("sync_gateway", "db")
         self.assertEqual(m.poll_cycles_total, 0)
@@ -965,19 +1110,36 @@ class TestMetricsCollector(unittest.TestCase):
         body = m.render()
 
         # Verify Prometheus text format structure
-        self.assertIn('# TYPE changes_worker_poll_cycles_total counter', body)
-        self.assertIn('changes_worker_poll_cycles_total{src="sync_gateway",database="mydb"} 3', body)
-        self.assertIn('changes_worker_changes_received_total{src="sync_gateway",database="mydb"} 100', body)
-        self.assertIn('changes_worker_changes_processed_total{src="sync_gateway",database="mydb"} 95', body)
-        self.assertIn('# TYPE changes_worker_uptime_seconds gauge', body)
-        self.assertIn('# TYPE changes_worker_output_response_time_seconds summary', body)
-        self.assertIn('changes_worker_output_response_time_seconds_count{src="sync_gateway",database="mydb"} 2', body)
+        self.assertIn("# TYPE changes_worker_poll_cycles_total counter", body)
+        self.assertIn(
+            'changes_worker_poll_cycles_total{src="sync_gateway",database="mydb"} 3',
+            body,
+        )
+        self.assertIn(
+            'changes_worker_changes_received_total{src="sync_gateway",database="mydb"} 100',
+            body,
+        )
+        self.assertIn(
+            'changes_worker_changes_processed_total{src="sync_gateway",database="mydb"} 95',
+            body,
+        )
+        self.assertIn("# TYPE changes_worker_uptime_seconds gauge", body)
+        self.assertIn(
+            "# TYPE changes_worker_output_response_time_seconds summary", body
+        )
+        self.assertIn(
+            'changes_worker_output_response_time_seconds_count{src="sync_gateway",database="mydb"} 2',
+            body,
+        )
         self.assertIn('seq="500"', body)
 
     def test_render_empty_response_times(self):
         m = cw.MetricsCollector("edge_server", "db")
         body = m.render()
-        self.assertIn('changes_worker_output_response_time_seconds_count{src="edge_server",database="db"} 0', body)
+        self.assertIn(
+            'changes_worker_output_response_time_seconds_count{src="edge_server",database="db"} 0',
+            body,
+        )
         self.assertIn('quantile="0.5"} 0.000000', body)
 
     def test_labels_contain_src_and_database(self):
@@ -991,8 +1153,8 @@ class TestMetricsCollector(unittest.TestCase):
 # Metrics config validation
 # ===================================================================
 
-class TestMetricsConfigValidation(unittest.TestCase):
 
+class TestMetricsConfigValidation(unittest.TestCase):
     def test_metrics_disabled_no_validation(self):
         cfg = _base_config()
         cfg["metrics"] = {"enabled": False, "port": -1}
@@ -1019,8 +1181,8 @@ class TestMetricsConfigValidation(unittest.TestCase):
 # Metrics server endpoint
 # ===================================================================
 
-class TestMetricsServer(unittest.TestCase):
 
+class TestMetricsServer(unittest.TestCase):
     def test_metrics_endpoint(self):
         async def _run():
             m = cw.MetricsCollector("sync_gateway", "db")
@@ -1043,17 +1205,19 @@ class TestMetricsServer(unittest.TestCase):
         asyncio.run(_run())
 
 
-
 # ===================================================================
 # Continuous feed helpers
 # ===================================================================
+
 
 class TestBuildChangesParams(unittest.TestCase):
     """Tests for _build_changes_params()."""
 
     def test_basic_params(self):
         feed_cfg = {"heartbeat_ms": 30000}
-        params = cw._build_changes_params(feed_cfg, "sync_gateway", "100", "longpoll", 60000)
+        params = cw._build_changes_params(
+            feed_cfg, "sync_gateway", "100", "longpoll", 60000
+        )
         self.assertEqual(params["feed"], "longpoll")
         self.assertEqual(params["since"], "100")
         self.assertEqual(params["heartbeat"], "30000")
@@ -1062,28 +1226,38 @@ class TestBuildChangesParams(unittest.TestCase):
 
     def test_with_limit(self):
         feed_cfg = {"heartbeat_ms": 30000}
-        params = cw._build_changes_params(feed_cfg, "sync_gateway", "0", "normal", 60000, limit=500)
+        params = cw._build_changes_params(
+            feed_cfg, "sync_gateway", "0", "normal", 60000, limit=500
+        )
         self.assertEqual(params["limit"], "500")
 
     def test_no_limit_when_zero(self):
         feed_cfg = {"heartbeat_ms": 30000}
-        params = cw._build_changes_params(feed_cfg, "sync_gateway", "0", "normal", 60000, limit=0)
+        params = cw._build_changes_params(
+            feed_cfg, "sync_gateway", "0", "normal", 60000, limit=0
+        )
         self.assertNotIn("limit", params)
 
     def test_edge_server_no_version_type(self):
         feed_cfg = {"heartbeat_ms": 30000}
-        params = cw._build_changes_params(feed_cfg, "edge_server", "0", "longpoll", 60000)
+        params = cw._build_changes_params(
+            feed_cfg, "edge_server", "0", "longpoll", 60000
+        )
         self.assertNotIn("version_type", params)
 
     def test_channels_filter(self):
         feed_cfg = {"heartbeat_ms": 30000, "channels": ["ch1", "ch2"]}
-        params = cw._build_changes_params(feed_cfg, "sync_gateway", "0", "normal", 60000)
+        params = cw._build_changes_params(
+            feed_cfg, "sync_gateway", "0", "normal", 60000
+        )
         self.assertEqual(params["filter"], "sync_gateway/bychannel")
         self.assertEqual(params["channels"], "ch1,ch2")
 
     def test_include_docs_and_active_only(self):
         feed_cfg = {"heartbeat_ms": 30000, "include_docs": True, "active_only": True}
-        params = cw._build_changes_params(feed_cfg, "sync_gateway", "0", "normal", 60000)
+        params = cw._build_changes_params(
+            feed_cfg, "sync_gateway", "0", "normal", 60000
+        )
         self.assertEqual(params["include_docs"], "true")
         self.assertEqual(params["active_only"], "true")
 
@@ -1097,10 +1271,10 @@ class TestSleepWithBackoff(unittest.TestCase):
             # failure_count=1 → delay = min(1 * 2^0, 60) = 1s
             # We just verify it returns (event not set, so it times out)
             import time
+
             start = time.monotonic()
             await cw._sleep_with_backoff(
-                {"backoff_base_seconds": 0.01, "backoff_max_seconds": 1},
-                1, event
+                {"backoff_base_seconds": 0.01, "backoff_max_seconds": 1}, 1, event
             )
             elapsed = time.monotonic() - start
             self.assertGreaterEqual(elapsed, 0.005)
@@ -1111,11 +1285,11 @@ class TestSleepWithBackoff(unittest.TestCase):
         async def _run():
             event = asyncio.Event()
             import time
+
             start = time.monotonic()
             # failure_count=10 → delay = min(0.01 * 2^9, 0.05) = 0.05
             await cw._sleep_with_backoff(
-                {"backoff_base_seconds": 0.01, "backoff_max_seconds": 0.05},
-                10, event
+                {"backoff_base_seconds": 0.01, "backoff_max_seconds": 0.05}, 10, event
             )
             elapsed = time.monotonic() - start
             self.assertGreaterEqual(elapsed, 0.04)
@@ -1128,8 +1302,7 @@ class TestSleepWithBackoff(unittest.TestCase):
             event = asyncio.Event()
             event.set()
             await cw._sleep_with_backoff(
-                {"backoff_base_seconds": 10, "backoff_max_seconds": 60},
-                1, event
+                {"backoff_base_seconds": 10, "backoff_max_seconds": 60}, 1, event
             )
 
         asyncio.run(_run())
@@ -1138,6 +1311,7 @@ class TestSleepWithBackoff(unittest.TestCase):
 # ===================================================================
 # validate_config – new HTTP output fields
 # ===================================================================
+
 
 class TestValidateConfigHTTPOutputFields(unittest.TestCase):
     """Tests for config validation of the new HTTP output settings."""
@@ -1199,6 +1373,7 @@ class TestValidateConfigHTTPOutputFields(unittest.TestCase):
 # ===================================================================
 # OutputForwarder – new HTTP config fields
 # ===================================================================
+
 
 def _http_out_cfg(**overrides):
     """Minimal HTTP output config for testing."""
@@ -1363,6 +1538,7 @@ class TestOutputForwarderSSL(unittest.TestCase):
 
     def test_ssl_context_created_when_enabled(self):
         import ssl
+
         session = MagicMock()
         cfg = _http_out_cfg(accept_self_signed_certs=True)
         fwd = cw.OutputForwarder(session, cfg, dry_run=False)
@@ -1401,13 +1577,15 @@ class TestOutputForwarderHealthCheck(unittest.TestCase):
 
     def test_health_check_custom_url(self):
         session = MagicMock()
-        cfg = _http_out_cfg(health_check={
-            "enabled": True,
-            "interval_seconds": 15,
-            "url": "http://example.com/health",
-            "method": "HEAD",
-            "timeout_seconds": 3,
-        })
+        cfg = _http_out_cfg(
+            health_check={
+                "enabled": True,
+                "interval_seconds": 15,
+                "url": "http://example.com/health",
+                "method": "HEAD",
+                "timeout_seconds": 3,
+            }
+        )
         fwd = cw.OutputForwarder(session, cfg, dry_run=False)
         self.assertTrue(fwd._hc_enabled)
         self.assertEqual(fwd._hc_interval, 15)
@@ -1423,6 +1601,7 @@ class TestOutputForwarderHealthCheck(unittest.TestCase):
             event = asyncio.Event()
             await fwd.start_heartbeat(event)
             self.assertIsNone(fwd._hc_task)
+
         asyncio.run(_run())
 
     def test_start_heartbeat_noop_for_stdout(self):
@@ -1437,17 +1616,20 @@ class TestOutputForwarderHealthCheck(unittest.TestCase):
             event = asyncio.Event()
             await fwd.start_heartbeat(event)
             self.assertIsNone(fwd._hc_task)
+
         asyncio.run(_run())
 
     def test_start_and_stop_heartbeat(self):
         session = MagicMock()
-        cfg = _http_out_cfg(health_check={
-            "enabled": True,
-            "interval_seconds": 60,
-            "url": "",
-            "method": "GET",
-            "timeout_seconds": 5,
-        })
+        cfg = _http_out_cfg(
+            health_check={
+                "enabled": True,
+                "interval_seconds": 60,
+                "url": "",
+                "method": "GET",
+                "timeout_seconds": 5,
+            }
+        )
         fwd = cw.OutputForwarder(session, cfg, dry_run=False)
         # Mock _http so heartbeat probe doesn't fail
         mock_http = MagicMock()
@@ -1464,15 +1646,20 @@ class TestOutputForwarderHealthCheck(unittest.TestCase):
             self.assertFalse(fwd._hc_task.done())
             await fwd.stop_heartbeat()
             self.assertTrue(fwd._hc_task.done())
+
         asyncio.run(_run())
 
     def test_health_check_returns_true_on_success(self):
         session = MagicMock()
-        cfg = _http_out_cfg(health_check={
-            "enabled": True, "interval_seconds": 30,
-            "url": "http://example.com/health",
-            "method": "GET", "timeout_seconds": 5,
-        })
+        cfg = _http_out_cfg(
+            health_check={
+                "enabled": True,
+                "interval_seconds": 30,
+                "url": "http://example.com/health",
+                "method": "GET",
+                "timeout_seconds": 5,
+            }
+        )
         fwd = cw.OutputForwarder(session, cfg, dry_run=False)
         mock_http = MagicMock()
         resp = AsyncMock()
@@ -1486,11 +1673,15 @@ class TestOutputForwarderHealthCheck(unittest.TestCase):
 
     def test_health_check_returns_false_on_5xx(self):
         session = MagicMock()
-        cfg = _http_out_cfg(health_check={
-            "enabled": True, "interval_seconds": 30,
-            "url": "http://example.com/health",
-            "method": "GET", "timeout_seconds": 5,
-        })
+        cfg = _http_out_cfg(
+            health_check={
+                "enabled": True,
+                "interval_seconds": 30,
+                "url": "http://example.com/health",
+                "method": "GET",
+                "timeout_seconds": 5,
+            }
+        )
         fwd = cw.OutputForwarder(session, cfg, dry_run=False)
         mock_http = MagicMock()
         resp = AsyncMock()
@@ -1504,11 +1695,15 @@ class TestOutputForwarderHealthCheck(unittest.TestCase):
 
     def test_health_check_returns_false_on_exception(self):
         session = MagicMock()
-        cfg = _http_out_cfg(health_check={
-            "enabled": True, "interval_seconds": 30,
-            "url": "http://example.com/health",
-            "method": "GET", "timeout_seconds": 5,
-        })
+        cfg = _http_out_cfg(
+            health_check={
+                "enabled": True,
+                "interval_seconds": 30,
+                "url": "http://example.com/health",
+                "method": "GET",
+                "timeout_seconds": 5,
+            }
+        )
         fwd = cw.OutputForwarder(session, cfg, dry_run=False)
         mock_http = MagicMock()
         mock_http.request = AsyncMock(side_effect=ConnectionError("refused"))
@@ -1566,13 +1761,17 @@ class TestRespTimesDeque(unittest.TestCase):
 
     def test_forwarder_deque_capped(self):
         from collections import deque
+
         session = MagicMock()
-        fwd = cw.OutputForwarder(session, _stdout_out_cfg(log_response_times=True), dry_run=False)
+        fwd = cw.OutputForwarder(
+            session, _stdout_out_cfg(log_response_times=True), dry_run=False
+        )
         self.assertIsInstance(fwd._resp_times, deque)
         self.assertEqual(fwd._resp_times.maxlen, 10000)
 
     def test_metrics_deque_capped(self):
         from collections import deque
+
         m = cw.MetricsCollector("sync_gateway", "db")
         self.assertIsInstance(m._output_resp_times, deque)
         self.assertEqual(m._output_resp_times.maxlen, 10000)
@@ -1581,6 +1780,7 @@ class TestRespTimesDeque(unittest.TestCase):
 # ===================================================================
 # _consume_websocket_stream
 # ===================================================================
+
 
 def _ws_msg(msg_type, data=None):
     """Create a mock WebSocket message."""
@@ -1668,7 +1868,9 @@ class TestConsumeWebsocketStream(unittest.TestCase):
 
         mock_batch.assert_called_once()
         args = mock_batch.call_args
-        self.assertEqual(args[0][0], [{"seq": "50", "id": "doc1", "changes": [{"rev": "1-abc"}]}])
+        self.assertEqual(
+            args[0][0], [{"seq": "50", "id": "doc1", "changes": [{"rev": "1-abc"}]}]
+        )
         self.assertEqual(args[0][1], "50")  # last_seq
         self.assertEqual(result, "50")
 
@@ -1802,8 +2004,8 @@ class TestConsumeWebsocketStream(unittest.TestCase):
 # ShutdownRequested exception
 # ===================================================================
 
-class TestShutdownRequested(unittest.TestCase):
 
+class TestShutdownRequested(unittest.TestCase):
     def test_is_exception(self):
         exc = cw.ShutdownRequested("test shutdown")
         self.assertIsInstance(exc, Exception)
@@ -1814,14 +2016,17 @@ class TestShutdownRequested(unittest.TestCase):
 # RetryableHTTP – shutdown-aware behaviour
 # ===================================================================
 
-class TestRetryableHTTPShutdown(unittest.TestCase):
 
+class TestRetryableHTTPShutdown(unittest.TestCase):
     def test_raises_shutdown_before_first_attempt(self):
         """If shutdown_event is already set, raises ShutdownRequested immediately."""
         session = MagicMock()
         session.request = AsyncMock()
 
-        http = cw.RetryableHTTP(session, {"max_retries": 3, "backoff_base_seconds": 0, "backoff_max_seconds": 0})
+        http = cw.RetryableHTTP(
+            session,
+            {"max_retries": 3, "backoff_base_seconds": 0, "backoff_max_seconds": 0},
+        )
         event = asyncio.Event()
         event.set()
         http.set_shutdown_event(event)
@@ -1835,7 +2040,10 @@ class TestRetryableHTTPShutdown(unittest.TestCase):
         session = MagicMock()
         session.request = AsyncMock()
 
-        http = cw.RetryableHTTP(session, {"max_retries": 3, "backoff_base_seconds": 0, "backoff_max_seconds": 0})
+        http = cw.RetryableHTTP(
+            session,
+            {"max_retries": 3, "backoff_base_seconds": 0, "backoff_max_seconds": 0},
+        )
         event = asyncio.Event()
         event.set()
 
@@ -1851,12 +2059,15 @@ class TestRetryableHTTPShutdown(unittest.TestCase):
         resp_fail.release = MagicMock()
         session.request = AsyncMock(return_value=resp_fail)
 
-        http = cw.RetryableHTTP(session, {
-            "max_retries": 5,
-            "backoff_base_seconds": 100,  # very long sleep
-            "backoff_max_seconds": 100,
-            "retry_on_status": [503],
-        })
+        http = cw.RetryableHTTP(
+            session,
+            {
+                "max_retries": 5,
+                "backoff_base_seconds": 100,  # very long sleep
+                "backoff_max_seconds": 100,
+                "retry_on_status": [503],
+            },
+        )
 
         async def _run():
             event = asyncio.Event()
@@ -1866,6 +2077,7 @@ class TestRetryableHTTPShutdown(unittest.TestCase):
             async def _set_later():
                 await asyncio.sleep(0.05)
                 event.set()
+
             asyncio.create_task(_set_later())
             await http.request("GET", "http://example.com")
 
@@ -1881,14 +2093,18 @@ class TestRetryableHTTPShutdown(unittest.TestCase):
         resp_fail.release = MagicMock()
         session.request = AsyncMock(return_value=resp_fail)
 
-        http = cw.RetryableHTTP(session, {
-            "max_retries": 2,
-            "backoff_base_seconds": 0,
-            "backoff_max_seconds": 0,
-            "retry_on_status": [500],
-        })
+        http = cw.RetryableHTTP(
+            session,
+            {
+                "max_retries": 2,
+                "backoff_base_seconds": 0,
+                "backoff_max_seconds": 0,
+                "retry_on_status": [500],
+            },
+        )
 
         import time as _time
+
         t0 = _time.monotonic()
         with self.assertRaises(ConnectionError):
             asyncio.run(http.request("GET", "http://example.com"))
@@ -1910,11 +2126,12 @@ class TestRetryableHTTPShutdown(unittest.TestCase):
 # Shutdown handler
 # ===================================================================
 
-class TestShutdownHandler(unittest.TestCase):
 
+class TestShutdownHandler(unittest.TestCase):
     def _make_app(self, **kwargs):
         """Build a minimal app dict mimic for _shutdown_handler."""
         from aiohttp.web import Application
+
         app = Application()
         app["metrics"] = kwargs.get("metrics")
         app["shutdown_event"] = kwargs.get("shutdown_event", asyncio.Event())
@@ -1954,7 +2171,10 @@ class TestShutdownHandler(unittest.TestCase):
             request.app = {
                 "shutdown_event": shutdown_event,
                 "metrics": metrics,
-                "shutdown_cfg": {"drain_timeout_seconds": 0.1, "dlq_inflight_on_shutdown": True},
+                "shutdown_cfg": {
+                    "drain_timeout_seconds": 0.1,
+                    "dlq_inflight_on_shutdown": True,
+                },
             }
 
             resp = await cw._shutdown_handler(request)
@@ -1977,7 +2197,10 @@ class TestShutdownHandler(unittest.TestCase):
             request.app = {
                 "shutdown_event": shutdown_event,
                 "metrics": metrics,
-                "shutdown_cfg": {"drain_timeout_seconds": 0.1, "dlq_inflight_on_shutdown": False},
+                "shutdown_cfg": {
+                    "drain_timeout_seconds": 0.1,
+                    "dlq_inflight_on_shutdown": False,
+                },
             }
 
             resp = await cw._shutdown_handler(request)
@@ -2000,6 +2223,7 @@ class TestShutdownHandler(unittest.TestCase):
 
     def test_shutdown_does_not_close_cbl(self):
         """The handler should NOT close CBL — main()'s finally does that."""
+
         async def _run():
             shutdown_event = asyncio.Event()
             metrics = cw.MetricsCollector("sg", "db")
@@ -2022,10 +2246,11 @@ class TestShutdownHandler(unittest.TestCase):
 # DeadLetterQueue – purge, list_pending, get_entry_doc
 # ===================================================================
 
-class TestDeadLetterQueuePurge(unittest.TestCase):
 
+class TestDeadLetterQueuePurge(unittest.TestCase):
     def test_purge_cbl_calls_delete(self):
         """purge() calls store.delete_dlq_entry when CBL is available."""
+
         async def _run():
             dlq = cw.DeadLetterQueue("")
             dlq._use_cbl = True
@@ -2039,6 +2264,7 @@ class TestDeadLetterQueuePurge(unittest.TestCase):
 
     def test_purge_file_noop(self):
         """purge() is a no-op for file-based DLQ (just logs)."""
+
         async def _run():
             dlq = cw.DeadLetterQueue("test.jsonl")
             # Should not raise
@@ -2048,7 +2274,6 @@ class TestDeadLetterQueuePurge(unittest.TestCase):
 
 
 class TestDeadLetterQueueListPending(unittest.TestCase):
-
     def test_list_pending_cbl(self):
         dlq = cw.DeadLetterQueue("")
         dlq._use_cbl = True
@@ -2105,10 +2330,11 @@ class TestDeadLetterQueueListPending(unittest.TestCase):
 # DLQ replay
 # ===================================================================
 
-class TestReplayDeadLetterQueue(unittest.TestCase):
 
+class TestReplayDeadLetterQueue(unittest.TestCase):
     def test_replay_no_pending(self):
         """When DLQ is empty, returns zeros."""
+
         async def _run():
             dlq = MagicMock()
             dlq.list_pending.return_value = []
@@ -2122,6 +2348,7 @@ class TestReplayDeadLetterQueue(unittest.TestCase):
 
     def test_replay_success_purges(self):
         """Successful replay purges the DLQ entry."""
+
         async def _run():
             dlq = MagicMock()
             dlq.list_pending.return_value = [
@@ -2148,6 +2375,7 @@ class TestReplayDeadLetterQueue(unittest.TestCase):
 
     def test_replay_failure_keeps_entry(self):
         """Failed replay does NOT purge – entry stays for next startup."""
+
         async def _run():
             dlq = MagicMock()
             dlq.list_pending.return_value = [
@@ -2173,6 +2401,7 @@ class TestReplayDeadLetterQueue(unittest.TestCase):
 
     def test_replay_exception_keeps_entry(self):
         """Exception during replay does NOT purge."""
+
         async def _run():
             dlq = MagicMock()
             dlq.list_pending.return_value = [
@@ -2197,13 +2426,17 @@ class TestReplayDeadLetterQueue(unittest.TestCase):
 
     def test_replay_stops_on_shutdown(self):
         """If shutdown_event is set, replay stops early."""
+
         async def _run():
             dlq = MagicMock()
             dlq.list_pending.return_value = [
                 {"id": "dlq:doc1:100", "doc_id_original": "doc1", "method": "PUT"},
                 {"id": "dlq:doc2:200", "doc_id_original": "doc2", "method": "PUT"},
             ]
-            dlq.get_entry_doc.return_value = {"id": "dlq:doc1:100", "doc_data": {"_id": "doc1"}}
+            dlq.get_entry_doc.return_value = {
+                "id": "dlq:doc1:100",
+                "doc_data": {"_id": "doc1"},
+            }
             dlq.purge = AsyncMock()
 
             output = MagicMock()
@@ -2220,6 +2453,7 @@ class TestReplayDeadLetterQueue(unittest.TestCase):
 
     def test_replay_missing_entry_counts_as_failed(self):
         """If get_entry_doc returns None, counts as failed."""
+
         async def _run():
             dlq = MagicMock()
             dlq.list_pending.return_value = [
@@ -2241,6 +2475,7 @@ class TestReplayDeadLetterQueue(unittest.TestCase):
 
     def test_replay_multiple_mixed_results(self):
         """Multiple entries: some succeed, some fail."""
+
         async def _run():
             dlq = MagicMock()
             dlq.list_pending.return_value = [
@@ -2256,11 +2491,13 @@ class TestReplayDeadLetterQueue(unittest.TestCase):
             dlq.purge = AsyncMock()
 
             output = MagicMock()
-            output.send = AsyncMock(side_effect=[
-                {"ok": True, "status": 200},
-                {"ok": False, "status": 503},
-                {"ok": True, "status": 201},
-            ])
+            output.send = AsyncMock(
+                side_effect=[
+                    {"ok": True, "status": 200},
+                    {"ok": False, "status": 503},
+                    {"ok": True, "status": 201},
+                ]
+            )
             event = asyncio.Event()
 
             result = await cw._replay_dead_letter_queue(dlq, output, None, event)
@@ -2280,8 +2517,8 @@ class TestReplayDeadLetterQueue(unittest.TestCase):
 # active_tasks accounting (try/finally)
 # ===================================================================
 
-class TestActiveTasksAccounting(unittest.TestCase):
 
+class TestActiveTasksAccounting(unittest.TestCase):
     def test_active_tasks_decrements_on_success(self):
         """active_tasks should decrement via inc(-1) after successful process_one."""
         metrics = cw.MetricsCollector("sg", "db")

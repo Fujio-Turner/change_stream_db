@@ -24,24 +24,26 @@ except ImportError:
 
 # -- MSSQL error classification --------------------------------------------------
 # SQL Server error numbers that are transient (worth retrying).
-_TRANSIENT_MSSQL_CODES = frozenset({
-    -1,     # General network error / connection failure
-    2,      # Timeout expired
-    53,     # Named pipe provider: could not open connection
-    233,    # Connection was forcibly closed
-    258,    # Timeout waiting for login response
-    1205,   # Deadlock victim
-    10054,  # Connection reset by peer
-    10060,  # Connection timed out
-    10061,  # Connection refused
-    40143,  # Connection could not be initialized
-    40197,  # Service encountered an error processing your request
-    40501,  # Service busy
-    40613,  # Database is currently unavailable
-    49918,  # Cannot process request: not enough resources
-    49919,  # Cannot process create/update request
-    49920,  # Cannot process request: too many operations in progress
-})
+_TRANSIENT_MSSQL_CODES = frozenset(
+    {
+        -1,  # General network error / connection failure
+        2,  # Timeout expired
+        53,  # Named pipe provider: could not open connection
+        233,  # Connection was forcibly closed
+        258,  # Timeout waiting for login response
+        1205,  # Deadlock victim
+        10054,  # Connection reset by peer
+        10060,  # Connection timed out
+        10061,  # Connection refused
+        40143,  # Connection could not be initialized
+        40197,  # Service encountered an error processing your request
+        40501,  # Service busy
+        40613,  # Database is currently unavailable
+        49918,  # Cannot process request: not enough resources
+        49919,  # Cannot process create/update request
+        49920,  # Cannot process request: too many operations in progress
+    }
+)
 
 
 class MSSQLOutputForwarder(BaseOutputForwarder):
@@ -61,9 +63,7 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
 
     def __init__(self, out_cfg: dict, dry_run: bool = False, metrics=None):
         if aioodbc is None:
-            raise RuntimeError(
-                "aioodbc library not installed – pip install aioodbc"
-            )
+            raise RuntimeError("aioodbc library not installed – pip install aioodbc")
 
         super().__init__(out_cfg, dry_run, metrics=metrics)
 
@@ -106,8 +106,11 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
         )
         logger.info(
             "MSSQL pool created: %s:%d/%s (pool %d–%d)",
-            self._host, self._port, self._database,
-            self._pool_min, self._pool_max,
+            self._host,
+            self._port,
+            self._database,
+            self._pool_min,
+            self._pool_max,
         )
 
     async def _close_pool(self) -> None:
@@ -161,9 +164,7 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
             col_list = ", ".join(f"[{c}]" for c in cols)
             val_list = ", ".join("?" for _ in cols)
             on_clause = f"t.[{pk}] = s.[{pk}]"
-            update_set = ", ".join(
-                f"t.[{c}] = s.[{c}]" for c in cols if c != pk
-            )
+            update_set = ", ".join(f"t.[{c}] = s.[{c}]" for c in cols if c != pk)
             insert_cols = ", ".join(f"[{c}]" for c in cols)
             insert_vals = ", ".join(f"s.[{c}]" for c in cols)
 
@@ -175,8 +176,7 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
             if update_set:
                 sql += f"WHEN MATCHED THEN UPDATE SET {update_set} "
             sql += (
-                f"WHEN NOT MATCHED THEN INSERT ({insert_cols}) "
-                f"VALUES ({insert_vals});"
+                f"WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals});"
             )
             return sql, vals
 
@@ -214,8 +214,7 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
             return "connection"
         code = _mssql_error_code(exc)
         if code is not None:
-            if code in (-1, 53, 233, 10054, 10060, 10061,
-                        40143, 40197, 40613):
+            if code in (-1, 53, 233, 10054, 10060, 10061, 40143, 40197, 40613):
                 return "connection"
             if code in (2, 258):
                 return "timeout"
@@ -238,7 +237,9 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
                 await cur.execute("SELECT 1")
         logger.info(
             "MSSQL reachable: %s:%d/%s",
-            self._host, self._port, self._database,
+            self._host,
+            self._port,
+            self._database,
         )
 
 
@@ -248,6 +249,7 @@ def _mssql_error_code(exc: Exception) -> int | None:
     if args and isinstance(args[0], str):
         # pyodbc format: "('HYxxx', '[HYxxx] [Microsoft][ODBC ...] error (code) ...')"
         import re
+
         m = re.search(r"\((\d+)\)", args[0])
         if m:
             return int(m.group(1))
@@ -257,6 +259,7 @@ def _mssql_error_code(exc: Exception) -> int | None:
 
 
 # ── Introspection (standalone functions, not part of the forwarder) ──────
+
 
 async def introspect_tables(ms_cfg: dict) -> list[dict]:
     """
@@ -311,13 +314,21 @@ async def introspect_tables(ms_cfg: dict) -> list[dict]:
                 "FROM INFORMATION_SCHEMA.COLUMNS "
                 "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? "
                 "ORDER BY ORDINAL_POSITION",
-                schema, table_name,
+                schema,
+                table_name,
             )
             col_rows = await cur.fetchall()
 
             columns = []
-            for (col_name, data_type, is_nullable, default_val,
-                 char_max_len, num_prec, num_scale) in col_rows:
+            for (
+                col_name,
+                data_type,
+                is_nullable,
+                default_val,
+                char_max_len,
+                num_prec,
+                num_scale,
+            ) in col_rows:
                 display_type = data_type
                 if char_max_len is not None:
                     if char_max_len == -1:
@@ -325,17 +336,20 @@ async def introspect_tables(ms_cfg: dict) -> list[dict]:
                     else:
                         display_type += f"({char_max_len})"
                 elif num_prec is not None and data_type in (
-                    "numeric", "decimal",
+                    "numeric",
+                    "decimal",
                 ):
                     display_type += f"({num_prec},{num_scale or 0})"
 
-                columns.append({
-                    "name": col_name,
-                    "type": data_type,
-                    "display_type": display_type,
-                    "nullable": is_nullable == "YES",
-                    "default": default_val,
-                })
+                columns.append(
+                    {
+                        "name": col_name,
+                        "type": data_type,
+                        "display_type": display_type,
+                        "nullable": is_nullable == "YES",
+                        "default": default_val,
+                    }
+                )
 
             # Get primary key columns
             await cur.execute(
@@ -347,7 +361,8 @@ async def introspect_tables(ms_cfg: dict) -> list[dict]:
                 "WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ? "
                 "  AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY' "
                 "ORDER BY kcu.ORDINAL_POSITION",
-                schema, table_name,
+                schema,
+                table_name,
             )
             pk_rows = await cur.fetchall()
             pk_cols = [r[0] for r in pk_rows]
@@ -366,7 +381,8 @@ async def introspect_tables(ms_cfg: dict) -> list[dict]:
                 "  AND rc.UNIQUE_CONSTRAINT_SCHEMA = kcu2.TABLE_SCHEMA "
                 "  AND ccu.ORDINAL_POSITION = kcu2.ORDINAL_POSITION "
                 "WHERE ccu.TABLE_SCHEMA = ? AND ccu.TABLE_NAME = ?",
-                schema, table_name,
+                schema,
+                table_name,
             )
             fk_rows = await cur.fetchall()
             fks = [
@@ -378,13 +394,15 @@ async def introspect_tables(ms_cfg: dict) -> list[dict]:
                 for r in fk_rows
             ]
 
-            result.append({
-                "table_name": table_name,
-                "schema": schema,
-                "columns": columns,
-                "primary_key": pk_cols,
-                "foreign_keys": fks,
-            })
+            result.append(
+                {
+                    "table_name": table_name,
+                    "schema": schema,
+                    "columns": columns,
+                    "primary_key": pk_cols,
+                    "foreign_keys": fks,
+                }
+            )
 
         await cur.close()
         return result

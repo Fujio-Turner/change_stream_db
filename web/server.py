@@ -46,9 +46,11 @@ async def cors_middleware(request, handler):
 
 # --- Pages ---
 
+
 async def favicon(request):
-    return web.FileResponse(WEB / "static" / "favicon.svg",
-                            headers={"Content-Type": "image/svg+xml"})
+    return web.FileResponse(
+        WEB / "static" / "favicon.svg", headers={"Content-Type": "image/svg+xml"}
+    )
 
 
 async def page_index(request):
@@ -76,6 +78,7 @@ async def page_help(request):
 
 
 # --- Config API ---
+
 
 async def get_config(request):
     if USE_CBL:
@@ -106,18 +109,23 @@ async def _signal_worker_restart() -> str:
     """POST to the worker's /_restart endpoint to trigger a feed restart."""
     import os
     import aiohttp as _aiohttp
+
     worker_host = os.environ.get("METRICS_HOST")
     if not worker_host:
         return "skipped"  # running locally, no separate worker
     try:
-        cfg = CBLStore().load_config() if USE_CBL else json.loads(CONFIG_PATH.read_text())
+        cfg = (
+            CBLStore().load_config() if USE_CBL else json.loads(CONFIG_PATH.read_text())
+        )
         port = cfg.get("metrics", {}).get("port", 9090)
     except Exception:
         port = 9090
     url = f"http://{worker_host}:{port}/_restart"
     try:
         async with _aiohttp.ClientSession() as session:
-            async with session.post(url, timeout=_aiohttp.ClientTimeout(total=5)) as resp:
+            async with session.post(
+                url, timeout=_aiohttp.ClientTimeout(total=5)
+            ) as resp:
                 return "ok" if resp.status == 200 else f"error:{resp.status}"
     except Exception as exc:
         return f"error:{exc}"
@@ -125,8 +133,13 @@ async def _signal_worker_restart() -> str:
 
 # --- Mappings API ---
 
+
 def _valid_mapping_name(name: str) -> bool:
-    return name.endswith((".yaml", ".yml", ".json")) and "/" not in name and "\\" not in name
+    return (
+        name.endswith((".yaml", ".yml", ".json"))
+        and "/" not in name
+        and "\\" not in name
+    )
 
 
 async def list_mappings(request):
@@ -134,10 +147,12 @@ async def list_mappings(request):
         return json_response(CBLStore().list_mappings())
     MAPPINGS_DIR.mkdir(exist_ok=True)
     files = sorted(
-        p for p in MAPPINGS_DIR.iterdir()
+        p
+        for p in MAPPINGS_DIR.iterdir()
         if p.is_file() and p.suffix in (".yaml", ".yml", ".json")
     )
     import os as _os
+
     result = []
     for p in files:
         content = p.read_text()
@@ -219,7 +234,9 @@ async def patch_mapping_active(request):
             parsed = json.loads(path.read_text())
             meta = parsed.get("_meta", {})
             meta["active"] = active
-            meta["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            meta["updated_at"] = datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat()
             parsed["_meta"] = meta
             path.write_text(json.dumps(parsed, indent=2))
         except (json.JSONDecodeError, ValueError):
@@ -242,6 +259,7 @@ async def delete_mapping(request):
 
 
 # --- DLQ API ---
+
 
 async def list_dlq(request):
     if not USE_CBL:
@@ -290,14 +308,18 @@ async def dlq_count(request):
 
 # --- Status API ---
 
+
 async def get_status(request):
     """Return health status for dashboard indicators."""
-    return json_response({
-        "cbl": "green" if USE_CBL else "red",
-    })
+    return json_response(
+        {
+            "cbl": "green" if USE_CBL else "red",
+        }
+    )
 
 
 # --- Metrics API ---
+
 
 async def get_metrics(request):
     try:
@@ -313,6 +335,7 @@ async def get_metrics(request):
         # In Docker Compose the worker is a separate service, use its
         # service name.  Fall back to loopback for local dev.
         import os
+
         worker_host = os.environ.get("METRICS_HOST")
         if worker_host:
             host = worker_host
@@ -320,16 +343,20 @@ async def get_metrics(request):
             host = "127.0.0.1"
         port = m.get("port", 9090)
         import aiohttp
+
         url = f"http://{host}:{port}/_metrics"
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 text = await resp.text()
-                return web.Response(text=text, content_type="text/plain", headers=cors_headers())
+                return web.Response(
+                    text=text, content_type="text/plain", headers=cors_headers()
+                )
     except Exception as exc:
         return json_response({"error": "metrics_unreachable", "detail": str(exc)})
 
 
 # --- Worker Control API ---
+
 
 async def post_restart(request):
     """Proxy POST to the worker's /_restart endpoint."""
@@ -345,17 +372,25 @@ async def post_shutdown(request):
     if not worker_host:
         return json_response({"ok": False, "error": "skipped"}, status=400)
     try:
-        cfg = CBLStore().load_config() if USE_CBL else json.loads(CONFIG_PATH.read_text())
+        cfg = (
+            CBLStore().load_config() if USE_CBL else json.loads(CONFIG_PATH.read_text())
+        )
         port = cfg.get("metrics", {}).get("port", 9090)
     except Exception:
         port = 9090
     url = f"http://{worker_host}:{port}/_shutdown"
     try:
         async with _aiohttp.ClientSession() as session:
-            async with session.post(url, timeout=_aiohttp.ClientTimeout(total=5)) as resp:
+            async with session.post(
+                url, timeout=_aiohttp.ClientTimeout(total=5)
+            ) as resp:
                 if resp.status == 200:
-                    return json_response({"ok": True, "message": "shutdown signal sent"})
-                return json_response({"ok": False, "error": f"HTTP {resp.status}"}, status=502)
+                    return json_response(
+                        {"ok": True, "message": "shutdown signal sent"}
+                    )
+                return json_response(
+                    {"ok": False, "error": f"HTTP {resp.status}"}, status=502
+                )
     except Exception as exc:
         return json_response({"ok": False, "error": str(exc)}, status=502)
 
@@ -366,7 +401,9 @@ async def _worker_control(endpoint: str, method: str = "POST"):
     if not worker_host:
         return {"ok": False, "error": "skipped"}
     try:
-        cfg = CBLStore().load_config() if USE_CBL else json.loads(CONFIG_PATH.read_text())
+        cfg = (
+            CBLStore().load_config() if USE_CBL else json.loads(CONFIG_PATH.read_text())
+        )
         port = cfg.get("metrics", {}).get("port", 9090)
     except Exception:
         port = 9090
@@ -402,9 +439,11 @@ async def get_worker_status(request):
 
 # --- Sample Doc API (fetch one doc from changes feed in dry-run mode) ---
 
+
 async def get_sample_doc(request):
     """Fetch 100 docs from the changes feed and return one at random."""
     import random
+
     try:
         if USE_CBL:
             cfg = CBLStore().load_config() or {}
@@ -426,9 +465,11 @@ async def get_sample_doc(request):
         params = {"limit": "100", "include_docs": "true", "since": "0"}
 
         import aiohttp as _aiohttp
+
         ssl_ctx = None
         if gw.get("accept_self_signed_certs"):
             import ssl
+
             ssl_ctx = ssl.create_default_context()
             ssl_ctx.check_hostname = False
             ssl_ctx.verify_mode = ssl.CERT_NONE
@@ -437,22 +478,31 @@ async def get_sample_doc(request):
         method = auth_cfg.get("method", "none")
         basic_auth = None
         if method == "basic" and auth_cfg.get("username"):
-            basic_auth = _aiohttp.BasicAuth(auth_cfg["username"],
-                                            auth_cfg.get("password", ""))
+            basic_auth = _aiohttp.BasicAuth(
+                auth_cfg["username"], auth_cfg.get("password", "")
+            )
         elif method == "bearer" and auth_cfg.get("bearer_token"):
             headers["Authorization"] = f"Bearer {auth_cfg['bearer_token']}"
         elif method == "session" and auth_cfg.get("session_cookie"):
             headers["Cookie"] = f"SyncGatewaySession={auth_cfg['session_cookie']}"
 
-        connector = _aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else _aiohttp.TCPConnector()
+        connector = (
+            _aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else _aiohttp.TCPConnector()
+        )
         async with _aiohttp.ClientSession(connector=connector) as session:
-            async with session.get(changes_url, params=params, auth=basic_auth,
-                                   headers=headers,
-                                   timeout=_aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.get(
+                changes_url,
+                params=params,
+                auth=basic_auth,
+                headers=headers,
+                timeout=_aiohttp.ClientTimeout(total=10),
+            ) as resp:
                 data = await resp.json()
                 results = data.get("results", [])
                 if not results:
-                    return json_response({"error": "no_docs", "detail": "No documents in changes feed"})
+                    return json_response(
+                        {"error": "no_docs", "detail": "No documents in changes feed"}
+                    )
                 pick = random.choice(results)
                 doc = pick.get("doc", pick)
                 return json_response({"doc": doc, "pool_size": len(results)})
@@ -465,27 +515,32 @@ async def get_sample_doc(request):
 # Supported RDBMS drivers (auto-detected based on what's installed)
 _DB_DRIVERS = {}
 
+
 def _detect_db_drivers():
     """Check which RDBMS drivers are installed."""
     global _DB_DRIVERS
     _DB_DRIVERS = {}
     try:
         import asyncpg  # noqa: F401
+
         _DB_DRIVERS["postgres"] = {"name": "PostgreSQL", "driver": "asyncpg"}
     except ImportError:
         pass
     try:
         import aiomysql  # noqa: F401
+
         _DB_DRIVERS["mysql"] = {"name": "MySQL", "driver": "aiomysql"}
     except ImportError:
         pass
     try:
         import aioodbc  # noqa: F401
+
         _DB_DRIVERS["mssql"] = {"name": "SQL Server", "driver": "aioodbc"}
     except ImportError:
         pass
     try:
         import oracledb  # noqa: F401
+
         _DB_DRIVERS["oracle"] = {"name": "Oracle", "driver": "oracledb"}
     except ImportError:
         pass
@@ -522,22 +577,28 @@ async def db_introspect(request):
     try:
         if db_type == "postgres":
             from db.db_postgres import introspect_tables
+
             tables = await introspect_tables(body)
             return json_response({"tables": tables})
         elif db_type == "mysql":
             from db.db_mysql import introspect_tables as mysql_introspect
+
             tables = await mysql_introspect(body)
             return json_response({"tables": tables})
         elif db_type == "mssql":
             from db.db_mssql import introspect_tables as mssql_introspect
+
             tables = await mssql_introspect(body)
             return json_response({"tables": tables})
         elif db_type == "oracle":
             from db.db_oracle import introspect_tables as ora_introspect
+
             tables = await ora_introspect(body)
             return json_response({"tables": tables})
         else:
-            return error_response(f"Introspection not yet implemented for {db_type}", 501)
+            return error_response(
+                f"Introspection not yet implemented for {db_type}", 501
+            )
     except Exception as exc:
         return json_response(
             {"error": "introspect_failed", "detail": str(exc)}, status=500
@@ -558,9 +619,11 @@ async def db_test_connection(request):
     try:
         if db_type == "postgres":
             import asyncpg
+
             ssl_ctx = None
             if body.get("ssl"):
                 import ssl as _ssl
+
                 ssl_ctx = _ssl.create_default_context()
                 ssl_ctx.check_hostname = False
                 ssl_ctx.verify_mode = _ssl.CERT_NONE
@@ -577,9 +640,11 @@ async def db_test_connection(request):
             return json_response({"ok": True, "version": ver})
         elif db_type == "mysql":
             import aiomysql as _aiomysql
+
             ssl_ctx = None
             if body.get("ssl"):
                 import ssl as _ssl
+
                 ssl_ctx = _ssl.create_default_context()
                 ssl_ctx.check_hostname = False
                 ssl_ctx.verify_mode = _ssl.CERT_NONE
@@ -600,6 +665,7 @@ async def db_test_connection(request):
             return json_response({"ok": True, "version": ver})
         elif db_type == "mssql":
             import aioodbc as _aioodbc
+
             driver = body.get("odbc_driver", "ODBC Driver 18 for SQL Server")
             host = body.get("host", "localhost")
             port = body.get("port", 1433)
@@ -622,6 +688,7 @@ async def db_test_connection(request):
             return json_response({"ok": True, "version": ver})
         elif db_type == "oracle":
             import oracledb as _oracledb
+
             dsn = body.get("dsn", "")
             if not dsn:
                 host = body.get("host", "localhost")
@@ -665,9 +732,7 @@ async def parse_ddl(request):
         tables = _parse_create_tables(ddl)
         return json_response({"tables": tables})
     except Exception as exc:
-        return json_response(
-            {"error": "parse_failed", "detail": str(exc)}, status=400
-        )
+        return json_response({"error": "parse_failed", "detail": str(exc)}, status=400)
 
 
 def _parse_create_tables(ddl: str) -> list[dict]:
@@ -680,10 +745,10 @@ def _parse_create_tables(ddl: str) -> list[dict]:
     results = []
     # Find CREATE TABLE header, then extract balanced parentheses body
     header_re = re.compile(
-        r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?'
-        r'(?:`|"|\[)?(\w+)(?:`|"|\])?\s*'          # table name or schema
-        r'(?:\.(?:`|"|\[)?(\w+)(?:`|"|\])?\s*)?'    # optional .table
-        r'\(',
+        r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+        r'(?:`|"|\[)?(\w+)(?:`|"|\])?\s*'  # table name or schema
+        r'(?:\.(?:`|"|\[)?(\w+)(?:`|"|\])?\s*)?'  # optional .table
+        r"\(",
         re.IGNORECASE,
     )
 
@@ -694,12 +759,12 @@ def _parse_create_tables(ddl: str) -> list[dict]:
         depth = 1
         pos = start
         while pos < len(ddl) and depth > 0:
-            if ddl[pos] == '(':
+            if ddl[pos] == "(":
                 depth += 1
-            elif ddl[pos] == ')':
+            elif ddl[pos] == ")":
                 depth -= 1
             pos += 1
-        body = ddl[start:pos - 1].strip()
+        body = ddl[start : pos - 1].strip()
 
         columns = []
         pk_cols = []
@@ -714,28 +779,30 @@ def _parse_create_tables(ddl: str) -> list[dict]:
 
             # Check for PRIMARY KEY constraint
             pk_match = re.match(
-                r'(?:CONSTRAINT\s+\w+\s+)?PRIMARY\s+KEY\s*\((.+?)\)',
-                part, re.IGNORECASE,
+                r"(?:CONSTRAINT\s+\w+\s+)?PRIMARY\s+KEY\s*\((.+?)\)",
+                part,
+                re.IGNORECASE,
             )
             if pk_match:
                 pk_cols = [
-                    c.strip().strip('`"[]')
-                    for c in pk_match.group(1).split(",")
+                    c.strip().strip('`"[]') for c in pk_match.group(1).split(",")
                 ]
                 continue
 
             # Check for FOREIGN KEY / other constraints — skip
             if re.match(
-                r'(?:CONSTRAINT|FOREIGN\s+KEY|UNIQUE|CHECK|INDEX)',
-                part, re.IGNORECASE,
+                r"(?:CONSTRAINT|FOREIGN\s+KEY|UNIQUE|CHECK|INDEX)",
+                part,
+                re.IGNORECASE,
             ):
                 continue
 
             # Parse column: name type [NOT NULL] [DEFAULT ...] [PRIMARY KEY] ...
             col_match = re.match(
                 r'(?:`|"|\[)?(\w+)(?:`|"|\])?\s+'
-                r'([\w]+(?:\s*\([^)]*\))?(?:\s+(?:UNSIGNED|VARYING|PRECISION|WITHOUT\s+TIME\s+ZONE|WITH\s+TIME\s+ZONE))*)',
-                part, re.IGNORECASE,
+                r"([\w]+(?:\s*\([^)]*\))?(?:\s+(?:UNSIGNED|VARYING|PRECISION|WITHOUT\s+TIME\s+ZONE|WITH\s+TIME\s+ZONE))*)",
+                part,
+                re.IGNORECASE,
             )
             if not col_match:
                 continue
@@ -745,23 +812,27 @@ def _parse_create_tables(ddl: str) -> list[dict]:
 
             nullable = "NOT NULL" not in part.upper()
 
-            if re.search(r'PRIMARY\s+KEY', part, re.IGNORECASE):
+            if re.search(r"PRIMARY\s+KEY", part, re.IGNORECASE):
                 pk_cols.append(col_name)
 
-            columns.append({
-                "name": col_name,
-                "type": col_type.lower(),
-                "display_type": col_type.lower(),
-                "nullable": nullable,
-                "default": None,
-            })
+            columns.append(
+                {
+                    "name": col_name,
+                    "type": col_type.lower(),
+                    "display_type": col_type.lower(),
+                    "nullable": nullable,
+                    "default": None,
+                }
+            )
 
-        results.append({
-            "table_name": table_name,
-            "columns": columns,
-            "primary_key": pk_cols,
-            "foreign_keys": [],
-        })
+        results.append(
+            {
+                "table_name": table_name,
+                "columns": columns,
+                "primary_key": pk_cols,
+                "foreign_keys": [],
+            }
+        )
 
     if not results:
         raise ValueError("No CREATE TABLE statements found in DDL")
@@ -775,27 +846,29 @@ def _split_ddl_body(body: str) -> list[str]:
     depth = 0
     current = []
     for ch in body:
-        if ch == '(':
+        if ch == "(":
             depth += 1
             current.append(ch)
-        elif ch == ')':
+        elif ch == ")":
             depth -= 1
             current.append(ch)
-        elif ch == ',' and depth == 0:
-            parts.append(''.join(current))
+        elif ch == "," and depth == 0:
+            parts.append("".join(current))
             current = []
         else:
             current.append(ch)
     if current:
-        parts.append(''.join(current))
+        parts.append("".join(current))
     return parts
 
 
 # --- Wizard API ---
 
+
 async def wizard_test_source(request):
     """Test connectivity to SG/App Services/Edge Server and return a random sample doc."""
     import random
+
     try:
         body = await request.json()
     except json.JSONDecodeError:
@@ -820,9 +893,11 @@ async def wizard_test_source(request):
     params = {"limit": "100", "include_docs": "true", "since": "0"}
 
     import aiohttp as _aiohttp
+
     ssl_ctx = None
     if gw.get("accept_self_signed_certs"):
         import ssl
+
         ssl_ctx = ssl.create_default_context()
         ssl_ctx.check_hostname = False
         ssl_ctx.verify_mode = ssl.CERT_NONE
@@ -831,26 +906,37 @@ async def wizard_test_source(request):
     method = auth_cfg.get("method", "none")
     basic_auth = None
     if method == "basic" and auth_cfg.get("username"):
-        basic_auth = _aiohttp.BasicAuth(auth_cfg["username"],
-                                        auth_cfg.get("password", ""))
+        basic_auth = _aiohttp.BasicAuth(
+            auth_cfg["username"], auth_cfg.get("password", "")
+        )
     elif method == "bearer" and auth_cfg.get("bearer_token"):
         headers["Authorization"] = f"Bearer {auth_cfg['bearer_token']}"
     elif method == "session" and auth_cfg.get("session_cookie"):
         headers["Cookie"] = f"SyncGatewaySession={auth_cfg['session_cookie']}"
 
     try:
-        connector = _aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else _aiohttp.TCPConnector()
+        connector = (
+            _aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else _aiohttp.TCPConnector()
+        )
         async with _aiohttp.ClientSession(connector=connector) as session:
-            async with session.get(changes_url, params=params, auth=basic_auth,
-                                   headers=headers,
-                                   timeout=_aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.get(
+                changes_url,
+                params=params,
+                auth=basic_auth,
+                headers=headers,
+                timeout=_aiohttp.ClientTimeout(total=10),
+            ) as resp:
                 data = await resp.json()
                 results = data.get("results", [])
                 if not results:
-                    return json_response({"error": "no_docs", "detail": "No documents in changes feed"})
+                    return json_response(
+                        {"error": "no_docs", "detail": "No documents in changes feed"}
+                    )
                 pick = random.choice(results)
                 doc = pick.get("doc", pick)
-                return json_response({"ok": True, "doc": doc, "pool_size": len(results)})
+                return json_response(
+                    {"ok": True, "doc": doc, "pool_size": len(results)}
+                )
     except Exception as exc:
         return json_response({"error": "fetch_failed", "detail": str(exc)}, status=500)
 
@@ -867,9 +953,11 @@ async def wizard_test_output(request):
         return error_response("target_url is required")
 
     import aiohttp as _aiohttp
+
     ssl_ctx = None
     if body.get("accept_self_signed_certs"):
         import ssl
+
         ssl_ctx = ssl.create_default_context()
         ssl_ctx.check_hostname = False
         ssl_ctx.verify_mode = ssl.CERT_NONE
@@ -879,27 +967,37 @@ async def wizard_test_output(request):
     method = auth_cfg.get("method", "none")
     basic_auth = None
     if method == "basic" and auth_cfg.get("username"):
-        basic_auth = _aiohttp.BasicAuth(auth_cfg["username"],
-                                        auth_cfg.get("password", ""))
+        basic_auth = _aiohttp.BasicAuth(
+            auth_cfg["username"], auth_cfg.get("password", "")
+        )
     elif method == "bearer" and auth_cfg.get("bearer_token"):
         headers["Authorization"] = f"Bearer {auth_cfg['bearer_token']}"
 
     try:
-        connector = _aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else _aiohttp.TCPConnector()
+        connector = (
+            _aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else _aiohttp.TCPConnector()
+        )
         async with _aiohttp.ClientSession(connector=connector) as session:
-            async with session.head(target_url, auth=basic_auth, headers=headers,
-                                    timeout=_aiohttp.ClientTimeout(total=10),
-                                    allow_redirects=True) as resp:
-                return json_response({
-                    "ok": True,
-                    "status": resp.status,
-                    "content_type": resp.headers.get("Content-Type", ""),
-                })
+            async with session.head(
+                target_url,
+                auth=basic_auth,
+                headers=headers,
+                timeout=_aiohttp.ClientTimeout(total=10),
+                allow_redirects=True,
+            ) as resp:
+                return json_response(
+                    {
+                        "ok": True,
+                        "status": resp.status,
+                        "content_type": resp.headers.get("Content-Type", ""),
+                    }
+                )
     except Exception as exc:
         return json_response({"ok": False, "error": str(exc)}, status=200)
 
 
 # --- Validate Mapping ---
+
 
 async def validate_mapping(request):
     try:
@@ -928,18 +1026,21 @@ async def validate_mapping(request):
                     safe_params.append(str(p))
                 else:
                     safe_params.append(p)
-            result_ops.append({
-                "type": op.op_type,
-                "table": op.table,
-                "sql": sql,
-                "params": safe_params,
-            })
+            result_ops.append(
+                {
+                    "type": op.op_type,
+                    "table": op.table,
+                    "sql": sql,
+                    "params": safe_params,
+                }
+            )
         return json_response({"matches": True, "ops": result_ops})
     except Exception as exc:
         return error_response(str(exc), status=500)
 
 
 # --- App factory ---
+
 
 def create_app():
     app = web.Application(middlewares=[cors_middleware])

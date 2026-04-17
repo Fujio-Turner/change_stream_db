@@ -23,6 +23,7 @@ logger = logging.getLogger("changes_worker")
 # Wraps the global MetricsCollector so every inc() also records a labeled
 # counter that can be broken out by engine and job_id on the /_metrics page.
 
+
 class DbMetrics:
     """
     Lightweight metrics wrapper that tracks counters with (engine, job_id)
@@ -43,8 +44,8 @@ class DbMetrics:
 
     def __init__(self, engine: str, job_id: str, global_metrics=None):
         self.engine = engine
-        self.job_id = job_id or engine          # fallback: use engine name
-        self._global = global_metrics           # MetricsCollector from main.py
+        self.job_id = job_id or engine  # fallback: use engine name
+        self._global = global_metrics  # MetricsCollector from main.py
         self._lock = threading.Lock()
         self._counters: dict[str, int] = {}
         self._resp_times: deque[float] = deque(maxlen=10_000)
@@ -115,7 +116,9 @@ class DbMetrics:
         # Emit one HELP/TYPE block per counter, with one line per (engine, job_id)
         for name in sorted(all_counter_names):
             prom_name = f"changes_worker_db_{name}"
-            lines.append(f"# HELP {prom_name} DB output counter: {name} (per engine/job)")
+            lines.append(
+                f"# HELP {prom_name} DB output counter: {name} (per engine/job)"
+            )
             lines.append(f"# TYPE {prom_name} counter")
             for engine, job_id, counters, _ in snapshots:
                 val = counters.get(name, 0)
@@ -153,6 +156,7 @@ class DbMetrics:
 
 
 # ── Abstract base forwarder ─────────────────────────────────────────────────
+
 
 class BaseOutputForwarder(abc.ABC):
     """
@@ -233,6 +237,7 @@ class BaseOutputForwarder(abc.ABC):
         cbl_loaded = False
         try:
             from cbl_store import USE_CBL, CBLStore
+
             if USE_CBL:
                 entries = CBLStore().list_mappings()
                 for entry in entries:
@@ -249,7 +254,8 @@ class BaseOutputForwarder(abc.ABC):
                 cbl_loaded = True
         except Exception as exc:
             logger.warning(
-                "Could not load mappings from CBL (%s) – falling back to filesystem", exc
+                "Could not load mappings from CBL (%s) – falling back to filesystem",
+                exc,
             )
 
         if not cbl_loaded:
@@ -285,7 +291,10 @@ class BaseOutputForwarder(abc.ABC):
                 logger.warning(
                     "DUPLICATE MAPPING: '%s' and '%s' both match %s — "
                     "only '%s' will be used (first-match wins)",
-                    seen_matches[key], src, key, seen_matches[key],
+                    seen_matches[key],
+                    src,
+                    key,
+                    seen_matches[key],
                 )
             else:
                 seen_matches[key] = src
@@ -377,8 +386,13 @@ class BaseOutputForwarder(abc.ABC):
             logger.warning("No schema mapping loaded – skipping doc %s", doc_id)
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
-            return {"ok": False, "doc_id": doc_id, "error": "no_mapping",
-                    "retryable": False, "error_class": "config"}
+            return {
+                "ok": False,
+                "doc_id": doc_id,
+                "error": "no_mapping",
+                "retryable": False,
+                "error_class": "config",
+            }
 
         # Find the first matching mapper
         mapper = None
@@ -402,9 +416,13 @@ class BaseOutputForwarder(abc.ABC):
                 self._metrics.inc("mapper_errors_total")
                 self._metrics.inc("db_permanent_errors_total")
             logger.error("Mapping error for doc %s: %s", doc_id, exc)
-            return {"ok": False, "doc_id": doc_id,
-                    "error": f"mapping_error: {exc!s}"[:500],
-                    "retryable": False, "error_class": "mapping"}
+            return {
+                "ok": False,
+                "doc_id": doc_id,
+                "error": f"mapping_error: {exc!s}"[:500],
+                "retryable": False,
+                "error_class": "mapping",
+            }
 
         if self._metrics:
             self._metrics.inc("mapper_matched_total")
@@ -438,10 +456,19 @@ class BaseOutputForwarder(abc.ABC):
                     self._metrics.inc("mapper_ops_total", len(ops))
                     self._metrics.record_output_response_time(elapsed_ms / 1000)
 
-                logger.debug("%s: %d ops for %s (%.1fms)",
-                             self._engine.upper(), len(ops), doc_id, elapsed_ms)
-                return {"ok": True, "doc_id": doc_id, "ops": len(ops),
-                        "elapsed_ms": round(elapsed_ms, 1)}
+                logger.debug(
+                    "%s: %d ops for %s (%.1fms)",
+                    self._engine.upper(),
+                    len(ops),
+                    doc_id,
+                    elapsed_ms,
+                )
+                return {
+                    "ok": True,
+                    "doc_id": doc_id,
+                    "ops": len(ops),
+                    "elapsed_ms": round(elapsed_ms, 1),
+                }
 
             except Exception as exc:
                 last_exc = exc
@@ -453,17 +480,27 @@ class BaseOutputForwarder(abc.ABC):
                         self._metrics.inc("output_requests_total")
                         self._metrics.inc("output_errors_total")
                         self._metrics.inc("db_permanent_errors_total")
-                    logger.error("%s permanent error for doc %s [%s]: %s",
-                                 self._engine.upper(), doc_id, eclass, exc)
+                    logger.error(
+                        "%s permanent error for doc %s [%s]: %s",
+                        self._engine.upper(),
+                        doc_id,
+                        eclass,
+                        exc,
+                    )
 
                     if self._halt_on_failure:
                         from rest import OutputEndpointDown
+
                         raise OutputEndpointDown(
                             f"{self._engine.upper()} error for {doc_id} [{eclass}]: {exc}"
                         ) from exc
-                    return {"ok": False, "doc_id": doc_id,
-                            "error": str(exc)[:500],
-                            "retryable": False, "error_class": eclass}
+                    return {
+                        "ok": False,
+                        "doc_id": doc_id,
+                        "error": str(exc)[:500],
+                        "retryable": False,
+                        "error_class": eclass,
+                    }
 
                 # Transient error — retry
                 if self._metrics:
@@ -475,7 +512,10 @@ class BaseOutputForwarder(abc.ABC):
                         logger.warning(
                             "%s connection error – reconnecting pool "
                             "(attempt %d/%d): %s",
-                            self._engine.upper(), attempt, self._max_retries, exc,
+                            self._engine.upper(),
+                            attempt,
+                            self._max_retries,
+                            exc,
                         )
                         await self._reconnect_pool()
                         if self._metrics:
@@ -486,15 +526,19 @@ class BaseOutputForwarder(abc.ABC):
                             break
                 else:
                     logger.warning(
-                        "%s transient error for doc %s [%s] "
-                        "(attempt %d/%d): %s",
-                        self._engine.upper(), doc_id, eclass,
-                        attempt, self._max_retries, exc,
+                        "%s transient error for doc %s [%s] (attempt %d/%d): %s",
+                        self._engine.upper(),
+                        doc_id,
+                        eclass,
+                        attempt,
+                        self._max_retries,
+                        exc,
                     )
 
                 if attempt < self._max_retries:
-                    delay = min(self._backoff_base * (2 ** (attempt - 1)),
-                                self._backoff_max)
+                    delay = min(
+                        self._backoff_base * (2 ** (attempt - 1)), self._backoff_max
+                    )
                     await asyncio.sleep(delay)
 
         # All retries exhausted
@@ -506,18 +550,27 @@ class BaseOutputForwarder(abc.ABC):
             self._metrics.inc("db_retry_exhausted_total")
         logger.error(
             "%s retries exhausted for doc %s [%s] after %d attempts: %s",
-            self._engine.upper(), doc_id, eclass, self._max_retries, last_exc,
+            self._engine.upper(),
+            doc_id,
+            eclass,
+            self._max_retries,
+            last_exc,
         )
 
         if self._halt_on_failure:
             from rest import OutputEndpointDown
+
             raise OutputEndpointDown(
                 f"{self._engine.upper()} retries exhausted for {doc_id} "
                 f"[{eclass}]: {last_exc}"
             ) from last_exc
-        return {"ok": False, "doc_id": doc_id,
-                "error": str(last_exc)[:500],
-                "retryable": False, "error_class": eclass}
+        return {
+            "ok": False,
+            "doc_id": doc_id,
+            "error": str(last_exc)[:500],
+            "retryable": False,
+            "error_class": eclass,
+        }
 
     # ── stats logging ───────────────────────────────────────────────────
 
@@ -531,5 +584,9 @@ class BaseOutputForwarder(abc.ABC):
         hi = max(self._resp_times)
         logger.info(
             "%s stats: %d ops | avg=%.1fms | min=%.1fms | max=%.1fms",
-            self._engine.upper(), n, avg, lo, hi,
+            self._engine.upper(),
+            n,
+            avg,
+            lo,
+            hi,
         )

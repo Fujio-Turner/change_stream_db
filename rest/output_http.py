@@ -125,7 +125,9 @@ def serialize_doc(doc: dict, fmt: str) -> tuple[bytes | str, str]:
 
     if fmt == "bson":
         if bson is None:
-            raise RuntimeError("bson library not installed – pip install pymongo (provides bson)")
+            raise RuntimeError(
+                "bson library not installed – pip install pymongo (provides bson)"
+            )
         return bson.BSON.encode(doc), CONTENT_TYPES["bson"]
 
     if fmt == "yaml":
@@ -159,6 +161,7 @@ def check_serialization_library(out_fmt: str) -> tuple[str, str] | None:
 # Output / forwarding
 # ---------------------------------------------------------------------------
 
+
 class OutputEndpointDown(Exception):
     """Raised when the output target is unreachable and halt_on_failure is set."""
 
@@ -180,9 +183,16 @@ class OutputForwarder:
       - Writes JSON to stdout, no failure handling needed
     """
 
-    def __init__(self, session: aiohttp.ClientSession, out_cfg: dict, dry_run: bool,
-                 metrics=None, build_basic_auth_fn=None, build_auth_headers_fn=None,
-                 retryable_http_cls=None):
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        out_cfg: dict,
+        dry_run: bool,
+        metrics=None,
+        build_basic_auth_fn=None,
+        build_auth_headers_fn=None,
+        retryable_http_cls=None,
+    ):
         self._mode = out_cfg.get("mode", "stdout")
         self._target_url = out_cfg.get("target_url", "").rstrip("/")
         self._dry_run = dry_run
@@ -199,6 +209,7 @@ class OutputForwarder:
         self._ssl_ctx = None
         if out_cfg.get("accept_self_signed_certs", False):
             import ssl as _ssl
+
             self._ssl_ctx = _ssl.create_default_context()
             self._ssl_ctx.check_hostname = False
             self._ssl_ctx.verify_mode = _ssl.CERT_NONE
@@ -225,12 +236,15 @@ class OutputForwarder:
         self._extra_headers = req_opts.get("headers", {})
 
         # Output-specific retry (separate from the gateway retry)
-        out_retry = out_cfg.get("retry", {
-            "max_retries": 3,
-            "backoff_base_seconds": 1,
-            "backoff_max_seconds": 30,
-            "retry_on_status": [500, 502, 503, 504],
-        })
+        out_retry = out_cfg.get(
+            "retry",
+            {
+                "max_retries": 3,
+                "backoff_base_seconds": 1,
+                "backoff_max_seconds": 30,
+                "retry_on_status": [500, 502, 503, 504],
+            },
+        )
         _http_cls = retryable_http_cls or _RetryableHTTPLazy
         self._http = _http_cls(session, out_retry) if self._mode == "http" else None
 
@@ -258,18 +272,32 @@ class OutputForwarder:
                 self._metrics.inc("output_requests_total")
                 mk = self._method_key(method)
                 self._metrics.inc(f"output_{mk}_total")
-            return {"ok": True, "doc_id": doc.get("_id", doc.get("id", "unknown")), "method": method}
+            return {
+                "ok": True,
+                "doc_id": doc.get("_id", doc.get("id", "unknown")),
+                "method": method,
+            }
 
         doc_id = doc.get("_id", doc.get("id", "unknown"))
         encoded_doc_id = urllib.parse.quote(str(doc_id), safe="")
-        url = self._url_template.format(target_url=self._target_url, doc_id=encoded_doc_id)
+        url = self._url_template.format(
+            target_url=self._target_url, doc_id=encoded_doc_id
+        )
         body, content_type = serialize_doc(doc, self._output_format)
         body_len = len(body) if isinstance(body, (bytes, str)) else 0
 
         if self._dry_run:
-            log_event(logger, "info", "OUTPUT", "dry run",
-                      operation=infer_operation(doc=doc, method=method),
-                      doc_id=doc_id, http_method=method, url=url, bytes=body_len)
+            log_event(
+                logger,
+                "info",
+                "OUTPUT",
+                "dry run",
+                operation=infer_operation(doc=doc, method=method),
+                doc_id=doc_id,
+                http_method=method,
+                url=url,
+                bytes=body_len,
+            )
             return {"ok": True, "doc_id": doc_id, "method": method, "dry_run": True}
 
         assert self._http is not None
@@ -304,11 +332,19 @@ class OutputForwarder:
                 self._metrics.inc(f"output_{mk}_total")
                 self._metrics.inc("bytes_output_total", body_len)
                 self._metrics.record_output_response_time(elapsed_ms / 1000)
-            log_event(logger, "debug", "OUTPUT", "forwarded document",
-                      operation=infer_operation(doc=doc, method=method),
-                      doc_id=doc_id, http_method=method, url=url,
-                      status=status, elapsed_ms=round(elapsed_ms, 1),
-                      bytes=body_len)
+            log_event(
+                logger,
+                "debug",
+                "OUTPUT",
+                "forwarded document",
+                operation=infer_operation(doc=doc, method=method),
+                doc_id=doc_id,
+                http_method=method,
+                url=url,
+                status=status,
+                elapsed_ms=round(elapsed_ms, 1),
+                bytes=body_len,
+            )
             if self._metrics:
                 self._metrics.inc("output_success_total")
                 self._metrics.set("output_endpoint_up", 1)
@@ -322,10 +358,18 @@ class OutputForwarder:
                 self._metrics.inc(f"output_{mk}_errors_total")
                 self._metrics.inc("bytes_output_total", body_len)
                 self._metrics.record_output_response_time(elapsed_ms / 1000)
-            log_event(logger, "error", "OUTPUT", "client error",
-                      operation=infer_operation(doc=doc, method=method),
-                      doc_id=doc_id, http_method=method, url=url,
-                      status=exc.status, elapsed_ms=round(elapsed_ms, 1))
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "client error",
+                operation=infer_operation(doc=doc, method=method),
+                doc_id=doc_id,
+                http_method=method,
+                url=url,
+                status=exc.status,
+                elapsed_ms=round(elapsed_ms, 1),
+            )
             if self._halt_on_failure:
                 if self._metrics:
                     self._metrics.set("output_endpoint_up", 0)
@@ -334,10 +378,21 @@ class OutputForwarder:
                     f"halting to preserve checkpoint"
                 ) from exc
             else:
-                log_event(logger, "warn", "OUTPUT",
-                          "halt_on_failure=false – skipping doc",
-                          doc_id=doc_id, status=exc.status)
-                return {"ok": False, "doc_id": doc_id, "method": method, "status": exc.status, "error": exc.body[:500]}
+                log_event(
+                    logger,
+                    "warn",
+                    "OUTPUT",
+                    "halt_on_failure=false – skipping doc",
+                    doc_id=doc_id,
+                    status=exc.status,
+                )
+                return {
+                    "ok": False,
+                    "doc_id": doc_id,
+                    "method": method,
+                    "status": exc.status,
+                    "error": exc.body[:500],
+                }
 
         except _RedirectHTTPError as exc:
             elapsed_ms = (time.monotonic() - t_start) * 1000
@@ -347,10 +402,18 @@ class OutputForwarder:
                 self._metrics.inc(f"output_{mk}_errors_total")
                 self._metrics.inc("bytes_output_total", body_len)
                 self._metrics.record_output_response_time(elapsed_ms / 1000)
-            log_event(logger, "error", "OUTPUT", "redirect error",
-                      operation=infer_operation(doc=doc, method=method),
-                      doc_id=doc_id, http_method=method, url=url,
-                      status=exc.status, elapsed_ms=round(elapsed_ms, 1))
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "redirect error",
+                operation=infer_operation(doc=doc, method=method),
+                doc_id=doc_id,
+                http_method=method,
+                url=url,
+                status=exc.status,
+                elapsed_ms=round(elapsed_ms, 1),
+            )
             if self._halt_on_failure:
                 if self._metrics:
                     self._metrics.set("output_endpoint_up", 0)
@@ -358,12 +421,28 @@ class OutputForwarder:
                     f"Output endpoint returned redirect {exc.status} for {method} {url}"
                 ) from exc
             else:
-                log_event(logger, "warn", "OUTPUT",
-                          "halt_on_failure=false – skipping doc",
-                          doc_id=doc_id, status=exc.status)
-                return {"ok": False, "doc_id": doc_id, "method": method, "status": exc.status, "error": exc.body[:500]}
+                log_event(
+                    logger,
+                    "warn",
+                    "OUTPUT",
+                    "halt_on_failure=false – skipping doc",
+                    doc_id=doc_id,
+                    status=exc.status,
+                )
+                return {
+                    "ok": False,
+                    "doc_id": doc_id,
+                    "method": method,
+                    "status": exc.status,
+                    "error": exc.body[:500],
+                }
 
-        except (ConnectionError, _ServerHTTPError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        except (
+            ConnectionError,
+            _ServerHTTPError,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+        ) as exc:
             elapsed_ms = (time.monotonic() - t_start) * 1000
             await self._record_time(elapsed_ms)
             if self._metrics:
@@ -371,10 +450,17 @@ class OutputForwarder:
                 self._metrics.inc(f"output_{mk}_errors_total")
                 self._metrics.inc("bytes_output_total", body_len)
                 self._metrics.record_output_response_time(elapsed_ms / 1000)
-            log_event(logger, "error", "OUTPUT", "output failed after retries",
-                      operation=infer_operation(doc=doc, method=method),
-                      doc_id=doc_id, http_method=method, url=url,
-                      elapsed_ms=round(elapsed_ms, 1))
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "output failed after retries",
+                operation=infer_operation(doc=doc, method=method),
+                doc_id=doc_id,
+                http_method=method,
+                url=url,
+                elapsed_ms=round(elapsed_ms, 1),
+            )
             if self._halt_on_failure:
                 if self._metrics:
                     self._metrics.set("output_endpoint_up", 0)
@@ -383,10 +469,20 @@ class OutputForwarder:
                     f"halting to preserve checkpoint: {exc}"
                 ) from exc
             else:
-                log_event(logger, "warn", "OUTPUT",
-                          "halt_on_failure=false – skipping doc",
-                          doc_id=doc_id)
-                return {"ok": False, "doc_id": doc_id, "method": method, "status": 0, "error": str(exc)[:500]}
+                log_event(
+                    logger,
+                    "warn",
+                    "OUTPUT",
+                    "halt_on_failure=false – skipping doc",
+                    doc_id=doc_id,
+                )
+                return {
+                    "ok": False,
+                    "doc_id": doc_id,
+                    "method": method,
+                    "status": 0,
+                    "error": str(exc)[:500],
+                }
 
     async def test_reachable(self) -> bool:
         """Quick health check – HEAD or GET the target URL root."""
@@ -395,21 +491,38 @@ class OutputForwarder:
         assert self._http is not None
         try:
             t_start = time.monotonic()
-            kwargs: dict = {"auth": self._auth, "headers": self._headers,
-                            "timeout": aiohttp.ClientTimeout(total=self._hc_timeout),
-                            "allow_redirects": self._follow_redirects}
+            kwargs: dict = {
+                "auth": self._auth,
+                "headers": self._headers,
+                "timeout": aiohttp.ClientTimeout(total=self._hc_timeout),
+                "allow_redirects": self._follow_redirects,
+            }
             if self._ssl_ctx is not None:
                 kwargs["ssl"] = self._ssl_ctx
-            resp = await self._http.request("GET", self._hc_url or self._target_url, **kwargs)
+            resp = await self._http.request(
+                "GET", self._hc_url or self._target_url, **kwargs
+            )
             elapsed_ms = (time.monotonic() - t_start) * 1000
             resp.release()
-            log_event(logger, "info", "HTTP", "output endpoint reachable",
-                      operation="SELECT", url=self._target_url,
-                      status=resp.status, elapsed_ms=round(elapsed_ms, 1))
+            log_event(
+                logger,
+                "info",
+                "HTTP",
+                "output endpoint reachable",
+                operation="SELECT",
+                url=self._target_url,
+                status=resp.status,
+                elapsed_ms=round(elapsed_ms, 1),
+            )
             return True
         except Exception as exc:
-            log_event(logger, "error", "HTTP", "output endpoint unreachable: %s" % exc,
-                      url=self._target_url)
+            log_event(
+                logger,
+                "error",
+                "HTTP",
+                "output endpoint unreachable: %s" % exc,
+                url=self._target_url,
+            )
             return False
 
     def log_stats(self) -> None:
@@ -420,8 +533,13 @@ class OutputForwarder:
         avg = sum(self._resp_times) / n
         lo = min(self._resp_times)
         hi = max(self._resp_times)
-        log_event(logger, "info", "OUTPUT",
-                  "output stats: %d requests | avg=%.1fms | min=%.1fms | max=%.1fms" % (n, avg, lo, hi))
+        log_event(
+            logger,
+            "info",
+            "OUTPUT",
+            "output stats: %d requests | avg=%.1fms | min=%.1fms | max=%.1fms"
+            % (n, avg, lo, hi),
+        )
 
     async def start_heartbeat(self, shutdown_event: asyncio.Event) -> None:
         """Start the periodic health-check background task."""
@@ -451,11 +569,9 @@ class OutputForwarder:
             if self._metrics:
                 self._metrics.set("output_endpoint_up", 1 if ok else 0)
             if ok:
-                log_event(logger, "debug", "HTTP", "heartbeat OK",
-                          url=self._hc_url)
+                log_event(logger, "debug", "HTTP", "heartbeat OK", url=self._hc_url)
             else:
-                log_event(logger, "warn", "HTTP", "heartbeat FAILED",
-                          url=self._hc_url)
+                log_event(logger, "warn", "HTTP", "heartbeat FAILED", url=self._hc_url)
 
     async def _health_check(self) -> bool:
         """Single health-check probe."""
@@ -465,8 +581,12 @@ class OutputForwarder:
             self._metrics.inc("health_probes_total")
         try:
             timeout = aiohttp.ClientTimeout(total=self._hc_timeout)
-            kwargs: dict = {"auth": self._auth, "headers": self._headers, "timeout": timeout,
-                            "allow_redirects": self._follow_redirects}
+            kwargs: dict = {
+                "auth": self._auth,
+                "headers": self._headers,
+                "timeout": timeout,
+                "allow_redirects": self._follow_redirects,
+            }
             if self._ssl_ctx is not None:
                 kwargs["ssl"] = self._ssl_ctx
             t_start = time.monotonic()
@@ -475,15 +595,26 @@ class OutputForwarder:
             resp.release()
             if self._metrics:
                 self._metrics.record_health_probe_time(elapsed_ms / 1000)
-            log_event(logger, "debug", "HTTP", "health check",
-                      url=self._hc_url, status=resp.status,
-                      elapsed_ms=round(elapsed_ms, 1))
+            log_event(
+                logger,
+                "debug",
+                "HTTP",
+                "health check",
+                url=self._hc_url,
+                status=resp.status,
+                elapsed_ms=round(elapsed_ms, 1),
+            )
             return resp.status < 500
         except Exception as exc:
             if self._metrics:
                 self._metrics.inc("health_probe_failures_total")
-            log_event(logger, "warn", "HTTP", "health check failed: %s" % exc,
-                      url=self._hc_url)
+            log_event(
+                logger,
+                "warn",
+                "HTTP",
+                "health check failed: %s" % exc,
+                url=self._hc_url,
+            )
             return False
 
     # -- Internal --------------------------------------------------------------
@@ -503,7 +634,9 @@ class OutputForwarder:
                 self._resp_times.append(ms)
 
 
-def determine_method(change: dict, write_method: str = "PUT", delete_method: str = "DELETE") -> str:
+def determine_method(
+    change: dict, write_method: str = "PUT", delete_method: str = "DELETE"
+) -> str:
     if change.get("deleted"):
         return delete_method
     return write_method
@@ -519,10 +652,12 @@ class DeadLetterQueue:
 
     def __init__(self, path: str):
         from cbl_store import USE_CBL as _use_cbl
+
         self._use_cbl = _use_cbl
         self._store = None
         if self._use_cbl:
             from cbl_store import CBLStore
+
             self._store = CBLStore()
         self._path = Path(path) if path and not self._use_cbl else None
         self._lock = asyncio.Lock()
@@ -541,9 +676,16 @@ class DeadLetterQueue:
                 error=result.get("error", ""),
                 doc=doc,
             )
-            log_event(logger, "warn", "DLQ", "entry written to CBL",
-                      operation="INSERT", doc_id=result.get("doc_id"),
-                      seq=str(seq), storage="cbl")
+            log_event(
+                logger,
+                "warn",
+                "DLQ",
+                "entry written to CBL",
+                operation="INSERT",
+                doc_id=result.get("doc_id"),
+                seq=str(seq),
+                storage="cbl",
+            )
             return
         # Original file fallback
         if not self._path:
@@ -560,20 +702,40 @@ class DeadLetterQueue:
         async with self._lock:
             with open(self._path, "a") as f:
                 f.write(json.dumps(entry) + "\n")
-        log_event(logger, "warn", "DLQ", "entry written to file",
-                  operation="INSERT", doc_id=result.get("doc_id"),
-                  seq=str(seq), storage="file")
+        log_event(
+            logger,
+            "warn",
+            "DLQ",
+            "entry written to file",
+            operation="INSERT",
+            doc_id=result.get("doc_id"),
+            seq=str(seq),
+            storage="file",
+        )
 
     async def purge(self, dlq_id: str) -> None:
         """Remove a DLQ entry after successful reprocessing."""
         if self._use_cbl and self._store:
             self._store.delete_dlq_entry(dlq_id)
-            log_event(logger, "info", "DLQ", "entry purged after successful reprocessing",
-                      operation="DELETE", doc_id=dlq_id, storage="cbl")
+            log_event(
+                logger,
+                "info",
+                "DLQ",
+                "entry purged after successful reprocessing",
+                operation="DELETE",
+                doc_id=dlq_id,
+                storage="cbl",
+            )
             return
         # File-based DLQ does not support individual purge
-        log_event(logger, "debug", "DLQ", "file-based DLQ does not support purge",
-                  doc_id=dlq_id, storage="file")
+        log_event(
+            logger,
+            "debug",
+            "DLQ",
+            "file-based DLQ does not support purge",
+            doc_id=dlq_id,
+            storage="file",
+        )
 
     def list_pending(self) -> list[dict]:
         """Return all pending (not yet retried) DLQ entries."""
@@ -603,6 +765,7 @@ class DeadLetterQueue:
 # via constructor args; these are fallback defaults.
 # ---------------------------------------------------------------------------
 
+
 def _default_build_basic_auth(auth_cfg: dict) -> aiohttp.BasicAuth | None:
     if auth_cfg.get("method", "none") == "basic":
         username = auth_cfg.get("username", "")
@@ -627,6 +790,7 @@ def _default_build_auth_headers(auth_cfg: dict) -> dict:
 # At import time we don't know if they exist yet, so we resolve on first use
 # or accept them via constructor injection.
 # ---------------------------------------------------------------------------
+
 
 class _ClientHTTPError(Exception):
     def __init__(self, status: int, body: str):
@@ -654,6 +818,7 @@ class _RetryableHTTPLazy:
 
     def __init__(self, session: aiohttp.ClientSession, retry_cfg: dict):
         from main import RetryableHTTP
+
         self._inner = RetryableHTTP(session, retry_cfg)
 
     async def request(self, method: str, url: str, **kwargs) -> aiohttp.ClientResponse:

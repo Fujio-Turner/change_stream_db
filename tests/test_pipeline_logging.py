@@ -30,12 +30,15 @@ import pipeline_logging as pl
 # Redactor
 # ===================================================================
 
+
 class TestRedactorRedactString(unittest.TestCase):
     """Tests for Redactor.redact_string()."""
 
     def test_none_level_returns_unchanged(self):
         r = pl.Redactor("none")
-        self.assertEqual(r.redact_string("http://user:pass@host/db"), "http://user:pass@host/db")
+        self.assertEqual(
+            r.redact_string("http://user:pass@host/db"), "http://user:pass@host/db"
+        )
 
     def test_partial_redacts_url_userinfo(self):
         r = pl.Redactor("partial")
@@ -150,13 +153,19 @@ class TestRedactorRedactDict(unittest.TestCase):
 # LogKeyLevelFilter
 # ===================================================================
 
+
 class TestLogKeyLevelFilter(unittest.TestCase):
     """Tests for LogKeyLevelFilter."""
 
     def _make_record(self, level=logging.INFO, log_key=None):
         record = logging.LogRecord(
-            name="test", level=level, pathname="", lineno=0,
-            msg="test message", args=(), exc_info=None,
+            name="test",
+            level=level,
+            pathname="",
+            lineno=0,
+            msg="test message",
+            args=(),
+            exc_info=None,
         )
         if log_key is not None:
             record.log_key = log_key
@@ -223,6 +232,7 @@ class TestLogKeyLevelFilter(unittest.TestCase):
 # infer_operation
 # ===================================================================
 
+
 class TestInferOperation(unittest.TestCase):
     """Tests for infer_operation()."""
 
@@ -272,6 +282,7 @@ class TestInferOperation(unittest.TestCase):
 # log_event
 # ===================================================================
 
+
 class TestLogEvent(unittest.TestCase):
     """Tests for log_event()."""
 
@@ -280,7 +291,8 @@ class TestLogEvent(unittest.TestCase):
         logger.isEnabledFor.return_value = True
         pl.log_event(logger, "info", "CHANGES", "test message", doc_id="d1")
         logger.log.assert_called_once_with(
-            logging.INFO, "test message",
+            logging.INFO,
+            "test message",
             extra={"log_key": "CHANGES", "doc_id": "d1"},
         )
 
@@ -295,7 +307,8 @@ class TestLogEvent(unittest.TestCase):
         logger.isEnabledFor.return_value = True
         pl.log_event(logger, "trace", "HTTP", "trace msg")
         logger.log.assert_called_once_with(
-            pl.TRACE, "trace msg",
+            pl.TRACE,
+            "trace msg",
             extra={"log_key": "HTTP"},
         )
 
@@ -311,13 +324,19 @@ class TestLogEvent(unittest.TestCase):
 # RedactingFormatter
 # ===================================================================
 
+
 class TestRedactingFormatter(unittest.TestCase):
     """Tests for RedactingFormatter."""
 
     def _make_record(self, msg="test", level=logging.INFO, **extras):
         record = logging.LogRecord(
-            name="test", level=level, pathname="", lineno=0,
-            msg=msg, args=(), exc_info=None,
+            name="test",
+            level=level,
+            pathname="",
+            lineno=0,
+            msg=msg,
+            args=(),
+            exc_info=None,
         )
         for k, v in extras.items():
             setattr(record, k, v)
@@ -367,6 +386,7 @@ class TestRedactingFormatter(unittest.TestCase):
 # ===================================================================
 # configure_logging
 # ===================================================================
+
 
 class TestConfigureLogging(unittest.TestCase):
     """Tests for configure_logging()."""
@@ -427,8 +447,9 @@ class TestConfigureLogging(unittest.TestCase):
             }
             pl.configure_logging(cfg)
             root = logging.getLogger()
-            file_handlers = [h for h in root.handlers
-                             if isinstance(h, pl.ManagedRotatingFileHandler)]
+            file_handlers = [
+                h for h in root.handlers if isinstance(h, pl.ManagedRotatingFileHandler)
+            ]
             self.assertEqual(len(file_handlers), 1)
             # Clean up handler to release file
             for h in root.handlers[:]:
@@ -484,6 +505,7 @@ class TestConfigureLogging(unittest.TestCase):
 # ManagedRotatingFileHandler
 # ===================================================================
 
+
 class TestManagedRotatingFileHandler(unittest.TestCase):
     """Tests for ManagedRotatingFileHandler."""
 
@@ -499,7 +521,9 @@ class TestManagedRotatingFileHandler(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = os.path.join(tmpdir, "test.log")
             handler = pl.ManagedRotatingFileHandler(
-                log_path, max_size_mb=1, max_age_days=0,
+                log_path,
+                max_size_mb=1,
+                max_age_days=0,
             )
             # Create fake rotated files with old modification times
             old_file = log_path + ".1"
@@ -518,19 +542,20 @@ class TestManagedRotatingFileHandler(unittest.TestCase):
             log_path = os.path.join(tmpdir, "test.log")
             # Set very small rotated_logs_size_limit (1 byte effectively)
             handler = pl.ManagedRotatingFileHandler(
-                log_path, max_size_mb=1, max_age_days=30,
+                log_path,
+                max_size_mb=1,
+                max_age_days=30,
                 rotated_logs_size_limit_mb=0,
             )
             # Create fake rotated files
             for i in range(3):
-                rfile = log_path + f".{i+1}"
+                rfile = log_path + f".{i + 1}"
                 with open(rfile, "w") as f:
                     f.write("x" * 100)
 
             handler._cleanup_rotated_files()
             # All files should be removed since limit is 0
-            remaining = [f for f in os.listdir(tmpdir)
-                         if f.startswith("test.log.")]
+            remaining = [f for f in os.listdir(tmpdir) if f.startswith("test.log.")]
             self.assertEqual(len(remaining), 0)
             handler.close()
 
@@ -538,6 +563,7 @@ class TestManagedRotatingFileHandler(unittest.TestCase):
 # ===================================================================
 # TRACE level
 # ===================================================================
+
 
 class TestTraceLevel(unittest.TestCase):
     """Tests for custom TRACE level."""

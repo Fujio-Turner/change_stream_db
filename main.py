@@ -41,7 +41,14 @@ from rest import (
     VALID_OUTPUT_FORMATS,
 )
 from rest.output_http import check_serialization_library
-from cbl_store import USE_CBL, CBLStore, CBLMaintenanceScheduler, close_db, migrate_files_to_cbl, migrate_default_to_collections
+from cbl_store import (
+    USE_CBL,
+    CBLStore,
+    CBLMaintenanceScheduler,
+    close_db,
+    migrate_files_to_cbl,
+    migrate_default_to_collections,
+)
 from pipeline_logging import (
     configure_logging,
     log_event,
@@ -58,6 +65,7 @@ logger = logging.getLogger("changes_worker")
 # Prometheus Metrics
 # ---------------------------------------------------------------------------
 
+
 class MetricsCollector:
     """
     Thread-safe metrics collector that renders Prometheus text exposition format.
@@ -66,7 +74,9 @@ class MetricsCollector:
     on demand when the /_metrics endpoint is hit.
     """
 
-    def __init__(self, src: str, database: str, log_dir: str = "logs", cbl_db_dir: str = ""):
+    def __init__(
+        self, src: str, database: str, log_dir: str = "logs", cbl_db_dir: str = ""
+    ):
         self._lock = threading.Lock()
         self._start_time = time.monotonic()
         self._labels = f'src="{src}",database="{database}"'
@@ -104,8 +114,8 @@ class MetricsCollector:
         self.batches_failed_total: int = 0
 
         # Bytes tracking
-        self.bytes_received_total: int = 0     # bytes from _changes + bulk_get/GETs
-        self.bytes_output_total: int = 0       # bytes sent to output endpoint
+        self.bytes_received_total: int = 0  # bytes from _changes + bulk_get/GETs
+        self.bytes_output_total: int = 0  # bytes sent to output endpoint
 
         # _changes feed content tracking (always counted, regardless of filter settings)
         self.feed_deletes_seen_total: int = 0  # changes with deleted=true in the feed
@@ -229,174 +239,356 @@ class MetricsCollector:
             lines.append(f"# TYPE {name} gauge")
             lines.append(f"{name}{{{labels}}} {value}")
 
-        def _summary(name: str, help_text: str, sorted_data: list[float], s_count: int, s_sum: float):
+        def _summary(
+            name: str,
+            help_text: str,
+            sorted_data: list[float],
+            s_count: int,
+            s_sum: float,
+        ):
             lines.append(f"# HELP {name} {help_text}")
             lines.append(f"# TYPE {name} summary")
             for q in (0.5, 0.9, 0.99):
-                lines.append(f'{name}{{{labels},quantile="{q}"}} {_quantile(sorted_data, q):.6f}')
+                lines.append(
+                    f'{name}{{{labels},quantile="{q}"}} {_quantile(sorted_data, q):.6f}'
+                )
             lines.append(f"{name}_sum{{{labels}}} {s_sum:.6f}")
             lines.append(f"{name}_count{{{labels}}} {s_count}")
 
         # -- Process info --
-        _gauge("changes_worker_uptime_seconds",
-               "Time in seconds since the worker started.", f"{uptime:.3f}")
+        _gauge(
+            "changes_worker_uptime_seconds",
+            "Time in seconds since the worker started.",
+            f"{uptime:.3f}",
+        )
 
         # -- Poll loop --
-        _counter("changes_worker_poll_cycles_total",
-                 "Total number of _changes poll cycles completed.", self.poll_cycles_total)
-        _counter("changes_worker_poll_errors_total",
-                 "Total number of _changes poll errors.", self.poll_errors_total)
-        _gauge("changes_worker_last_poll_timestamp_seconds",
-               "Unix timestamp of the last successful _changes poll.", f"{self.last_poll_timestamp:.3f}")
-        _gauge("changes_worker_last_batch_size",
-               "Number of changes in the last batch received.", self.last_batch_size)
+        _counter(
+            "changes_worker_poll_cycles_total",
+            "Total number of _changes poll cycles completed.",
+            self.poll_cycles_total,
+        )
+        _counter(
+            "changes_worker_poll_errors_total",
+            "Total number of _changes poll errors.",
+            self.poll_errors_total,
+        )
+        _gauge(
+            "changes_worker_last_poll_timestamp_seconds",
+            "Unix timestamp of the last successful _changes poll.",
+            f"{self.last_poll_timestamp:.3f}",
+        )
+        _gauge(
+            "changes_worker_last_batch_size",
+            "Number of changes in the last batch received.",
+            self.last_batch_size,
+        )
 
         # -- Changes --
-        _counter("changes_worker_changes_received_total",
-                 "Total number of changes received from the _changes feed.", self.changes_received_total)
-        _counter("changes_worker_changes_processed_total",
-                 "Total number of changes processed and forwarded.", self.changes_processed_total)
-        _counter("changes_worker_changes_filtered_total",
-                 "Total number of changes filtered out (deletes + removes).", self.changes_filtered_total)
-        _counter("changes_worker_changes_deleted_total",
-                 "Total number of deleted changes filtered out.", self.changes_deleted_total)
-        _counter("changes_worker_changes_removed_total",
-                 "Total number of removed changes filtered out.", self.changes_removed_total)
+        _counter(
+            "changes_worker_changes_received_total",
+            "Total number of changes received from the _changes feed.",
+            self.changes_received_total,
+        )
+        _counter(
+            "changes_worker_changes_processed_total",
+            "Total number of changes processed and forwarded.",
+            self.changes_processed_total,
+        )
+        _counter(
+            "changes_worker_changes_filtered_total",
+            "Total number of changes filtered out (deletes + removes).",
+            self.changes_filtered_total,
+        )
+        _counter(
+            "changes_worker_changes_deleted_total",
+            "Total number of deleted changes filtered out.",
+            self.changes_deleted_total,
+        )
+        _counter(
+            "changes_worker_changes_removed_total",
+            "Total number of removed changes filtered out.",
+            self.changes_removed_total,
+        )
 
         # -- Feed content (always counted, regardless of filter settings) --
-        _counter("changes_worker_feed_deletes_seen_total",
-                 "Total changes with deleted=true seen in the feed.", self.feed_deletes_seen_total)
-        _counter("changes_worker_feed_removes_seen_total",
-                 "Total changes with removed=true seen in the feed.", self.feed_removes_seen_total)
+        _counter(
+            "changes_worker_feed_deletes_seen_total",
+            "Total changes with deleted=true seen in the feed.",
+            self.feed_deletes_seen_total,
+        )
+        _counter(
+            "changes_worker_feed_removes_seen_total",
+            "Total changes with removed=true seen in the feed.",
+            self.feed_removes_seen_total,
+        )
 
         # -- Bytes --
-        _counter("changes_worker_bytes_received_total",
-                 "Total bytes received from _changes feed, bulk_get, and individual doc GETs.", self.bytes_received_total)
-        _counter("changes_worker_bytes_output_total",
-                 "Total bytes sent to the output endpoint.", self.bytes_output_total)
+        _counter(
+            "changes_worker_bytes_received_total",
+            "Total bytes received from _changes feed, bulk_get, and individual doc GETs.",
+            self.bytes_received_total,
+        )
+        _counter(
+            "changes_worker_bytes_output_total",
+            "Total bytes sent to the output endpoint.",
+            self.bytes_output_total,
+        )
 
         # -- Doc fetching --
-        _counter("changes_worker_docs_fetched_total",
-                 "Total documents fetched via bulk_get or individual GET.", self.docs_fetched_total)
-        _counter("changes_worker_doc_fetch_requests_total",
-                 "Total doc fetch requests (bulk_get or individual batch).", self.doc_fetch_requests_total)
-        _counter("changes_worker_doc_fetch_errors_total",
-                 "Total doc fetch errors.", self.doc_fetch_errors_total)
+        _counter(
+            "changes_worker_docs_fetched_total",
+            "Total documents fetched via bulk_get or individual GET.",
+            self.docs_fetched_total,
+        )
+        _counter(
+            "changes_worker_doc_fetch_requests_total",
+            "Total doc fetch requests (bulk_get or individual batch).",
+            self.doc_fetch_requests_total,
+        )
+        _counter(
+            "changes_worker_doc_fetch_errors_total",
+            "Total doc fetch errors.",
+            self.doc_fetch_errors_total,
+        )
 
         # -- Output --
-        _counter("changes_worker_output_requests_total",
-                 "Total output requests sent to the downstream endpoint.", self.output_requests_total)
-        _counter("changes_worker_output_errors_total",
-                 "Total output request errors.", self.output_errors_total)
+        _counter(
+            "changes_worker_output_requests_total",
+            "Total output requests sent to the downstream endpoint.",
+            self.output_requests_total,
+        )
+        _counter(
+            "changes_worker_output_errors_total",
+            "Total output request errors.",
+            self.output_errors_total,
+        )
 
         # Output by HTTP method
-        lines.append("# HELP changes_worker_output_requests_by_method_total Output requests broken down by HTTP method.")
+        lines.append(
+            "# HELP changes_worker_output_requests_by_method_total Output requests broken down by HTTP method."
+        )
         lines.append("# TYPE changes_worker_output_requests_by_method_total counter")
-        lines.append(f'changes_worker_output_requests_by_method_total{{{labels},method="PUT"}} {self.output_put_total}')
-        lines.append(f'changes_worker_output_requests_by_method_total{{{labels},method="DELETE"}} {self.output_delete_total}')
+        lines.append(
+            f'changes_worker_output_requests_by_method_total{{{labels},method="PUT"}} {self.output_put_total}'
+        )
+        lines.append(
+            f'changes_worker_output_requests_by_method_total{{{labels},method="DELETE"}} {self.output_delete_total}'
+        )
 
-        lines.append("# HELP changes_worker_output_errors_by_method_total Output errors broken down by HTTP method.")
+        lines.append(
+            "# HELP changes_worker_output_errors_by_method_total Output errors broken down by HTTP method."
+        )
         lines.append("# TYPE changes_worker_output_errors_by_method_total counter")
-        lines.append(f'changes_worker_output_errors_by_method_total{{{labels},method="PUT"}} {self.output_put_errors_total}')
-        lines.append(f'changes_worker_output_errors_by_method_total{{{labels},method="DELETE"}} {self.output_delete_errors_total}')
+        lines.append(
+            f'changes_worker_output_errors_by_method_total{{{labels},method="PUT"}} {self.output_put_errors_total}'
+        )
+        lines.append(
+            f'changes_worker_output_errors_by_method_total{{{labels},method="DELETE"}} {self.output_delete_errors_total}'
+        )
 
-        _counter("changes_worker_output_success_total",
-                 "Total output requests that succeeded.", self.output_success_total)
-        _counter("changes_worker_output_skipped_total",
-                 "Total documents skipped at output (no mapper match or empty ops).", self.output_skipped_total)
-        _counter("changes_worker_dead_letter_total",
-                 "Total documents written to the dead letter queue.", self.dead_letter_total)
+        _counter(
+            "changes_worker_output_success_total",
+            "Total output requests that succeeded.",
+            self.output_success_total,
+        )
+        _counter(
+            "changes_worker_output_skipped_total",
+            "Total documents skipped at output (no mapper match or empty ops).",
+            self.output_skipped_total,
+        )
+        _counter(
+            "changes_worker_dead_letter_total",
+            "Total documents written to the dead letter queue.",
+            self.dead_letter_total,
+        )
 
-        _gauge("changes_worker_output_endpoint_up",
-               "Whether the output endpoint is reachable (1=up, 0=down).", self.output_endpoint_up)
+        _gauge(
+            "changes_worker_output_endpoint_up",
+            "Whether the output endpoint is reachable (1=up, 0=down).",
+            self.output_endpoint_up,
+        )
 
         # Output response time summary
-        _summary("changes_worker_output_response_time_seconds",
-                 "Output HTTP response time in seconds.",
-                 ort_sorted, ort_count, ort_sum)
+        _summary(
+            "changes_worker_output_response_time_seconds",
+            "Output HTTP response time in seconds.",
+            ort_sorted,
+            ort_count,
+            ort_sum,
+        )
 
         # -- Checkpoint --
-        _counter("changes_worker_checkpoint_saves_total",
-                 "Total checkpoint save operations.", self.checkpoint_saves_total)
-        _counter("changes_worker_checkpoint_save_errors_total",
-                 "Total checkpoint save errors (fell back to local file).", self.checkpoint_save_errors_total)
-        _counter("changes_worker_checkpoint_loads_total",
-                 "Total checkpoint load operations.", self.checkpoint_loads_total)
-        _counter("changes_worker_checkpoint_load_errors_total",
-                 "Total checkpoint load errors.", self.checkpoint_load_errors_total)
-        lines.append("# HELP changes_worker_checkpoint_seq Current checkpoint sequence value.")
+        _counter(
+            "changes_worker_checkpoint_saves_total",
+            "Total checkpoint save operations.",
+            self.checkpoint_saves_total,
+        )
+        _counter(
+            "changes_worker_checkpoint_save_errors_total",
+            "Total checkpoint save errors (fell back to local file).",
+            self.checkpoint_save_errors_total,
+        )
+        _counter(
+            "changes_worker_checkpoint_loads_total",
+            "Total checkpoint load operations.",
+            self.checkpoint_loads_total,
+        )
+        _counter(
+            "changes_worker_checkpoint_load_errors_total",
+            "Total checkpoint load errors.",
+            self.checkpoint_load_errors_total,
+        )
+        lines.append(
+            "# HELP changes_worker_checkpoint_seq Current checkpoint sequence value."
+        )
         lines.append("# TYPE changes_worker_checkpoint_seq gauge")
         # Sequence can be a non-numeric string (e.g. "12:34"), expose as info label
-        lines.append(f'changes_worker_checkpoint_seq{{{labels},seq="{self.checkpoint_seq}"}} 1')
+        lines.append(
+            f'changes_worker_checkpoint_seq{{{labels},seq="{self.checkpoint_seq}"}} 1'
+        )
 
         # -- Retries --
-        _counter("changes_worker_retries_total",
-                 "Total HTTP retry attempts across all requests.", self.retries_total)
-        _counter("changes_worker_retry_exhausted_total",
-                 "Total times all retries were exhausted.", self.retry_exhausted_total)
+        _counter(
+            "changes_worker_retries_total",
+            "Total HTTP retry attempts across all requests.",
+            self.retries_total,
+        )
+        _counter(
+            "changes_worker_retry_exhausted_total",
+            "Total times all retries were exhausted.",
+            self.retry_exhausted_total,
+        )
 
         # -- Batches --
-        _counter("changes_worker_batches_total",
-                 "Total batches processed.", self.batches_total)
-        _counter("changes_worker_batches_failed_total",
-                 "Total batches that failed (output down).", self.batches_failed_total)
+        _counter(
+            "changes_worker_batches_total",
+            "Total batches processed.",
+            self.batches_total,
+        )
+        _counter(
+            "changes_worker_batches_failed_total",
+            "Total batches that failed (output down).",
+            self.batches_failed_total,
+        )
 
         # -- Mapper (DB mode) --
-        _counter("changes_worker_mapper_matched_total",
-                 "Total documents matched by a schema mapper.", self.mapper_matched_total)
-        _counter("changes_worker_mapper_skipped_total",
-                 "Total documents skipped (no mapper match).", self.mapper_skipped_total)
-        _counter("changes_worker_mapper_errors_total",
-                 "Total mapper errors.", self.mapper_errors_total)
-        _counter("changes_worker_mapper_ops_total",
-                 "Total SQL operations generated by mappers.", self.mapper_ops_total)
+        _counter(
+            "changes_worker_mapper_matched_total",
+            "Total documents matched by a schema mapper.",
+            self.mapper_matched_total,
+        )
+        _counter(
+            "changes_worker_mapper_skipped_total",
+            "Total documents skipped (no mapper match).",
+            self.mapper_skipped_total,
+        )
+        _counter(
+            "changes_worker_mapper_errors_total",
+            "Total mapper errors.",
+            self.mapper_errors_total,
+        )
+        _counter(
+            "changes_worker_mapper_ops_total",
+            "Total SQL operations generated by mappers.",
+            self.mapper_ops_total,
+        )
 
         # -- DB transaction resilience --
-        _counter("changes_worker_db_retries_total",
-                 "Total DB transaction retry attempts.", self.db_retries_total)
-        _counter("changes_worker_db_retry_exhausted_total",
-                 "Total times all DB retries were exhausted.", self.db_retry_exhausted_total)
-        _counter("changes_worker_db_transient_errors_total",
-                 "Total transient DB errors (connection, deadlock, serialization).", self.db_transient_errors_total)
-        _counter("changes_worker_db_permanent_errors_total",
-                 "Total permanent DB errors (constraint, type mismatch).", self.db_permanent_errors_total)
-        _counter("changes_worker_db_pool_reconnects_total",
-                 "Total DB connection pool reconnections.", self.db_pool_reconnects_total)
+        _counter(
+            "changes_worker_db_retries_total",
+            "Total DB transaction retry attempts.",
+            self.db_retries_total,
+        )
+        _counter(
+            "changes_worker_db_retry_exhausted_total",
+            "Total times all DB retries were exhausted.",
+            self.db_retry_exhausted_total,
+        )
+        _counter(
+            "changes_worker_db_transient_errors_total",
+            "Total transient DB errors (connection, deadlock, serialization).",
+            self.db_transient_errors_total,
+        )
+        _counter(
+            "changes_worker_db_permanent_errors_total",
+            "Total permanent DB errors (constraint, type mismatch).",
+            self.db_permanent_errors_total,
+        )
+        _counter(
+            "changes_worker_db_pool_reconnects_total",
+            "Total DB connection pool reconnections.",
+            self.db_pool_reconnects_total,
+        )
 
         # -- Stream (continuous/websocket) --
-        _counter("changes_worker_stream_reconnects_total",
-                 "Total stream reconnections.", self.stream_reconnects_total)
-        _counter("changes_worker_stream_messages_total",
-                 "Total stream messages received.", self.stream_messages_total)
-        _counter("changes_worker_stream_parse_errors_total",
-                 "Total stream message parse errors.", self.stream_parse_errors_total)
+        _counter(
+            "changes_worker_stream_reconnects_total",
+            "Total stream reconnections.",
+            self.stream_reconnects_total,
+        )
+        _counter(
+            "changes_worker_stream_messages_total",
+            "Total stream messages received.",
+            self.stream_messages_total,
+        )
+        _counter(
+            "changes_worker_stream_parse_errors_total",
+            "Total stream message parse errors.",
+            self.stream_parse_errors_total,
+        )
 
         # -- Health check probes --
-        _counter("changes_worker_health_probes_total",
-                 "Total health check probes sent.", self.health_probes_total)
-        _counter("changes_worker_health_probe_failures_total",
-                 "Total health check probe failures.", self.health_probe_failures_total)
+        _counter(
+            "changes_worker_health_probes_total",
+            "Total health check probes sent.",
+            self.health_probes_total,
+        )
+        _counter(
+            "changes_worker_health_probe_failures_total",
+            "Total health check probe failures.",
+            self.health_probe_failures_total,
+        )
 
         # -- Active tasks gauge --
-        _gauge("changes_worker_active_tasks",
-               "Number of currently active document processing tasks.", self.active_tasks)
+        _gauge(
+            "changes_worker_active_tasks",
+            "Number of currently active document processing tasks.",
+            self.active_tasks,
+        )
 
         # -- Timing summaries --
-        _summary("changes_worker_changes_request_time_seconds",
-                 "Time to complete a _changes HTTP request in seconds.",
-                 crt_sorted, crt_count, crt_sum)
+        _summary(
+            "changes_worker_changes_request_time_seconds",
+            "Time to complete a _changes HTTP request in seconds.",
+            crt_sorted,
+            crt_count,
+            crt_sum,
+        )
 
-        _summary("changes_worker_batch_processing_time_seconds",
-                 "Time to process a batch of changes in seconds.",
-                 bpt_sorted, bpt_count, bpt_sum)
+        _summary(
+            "changes_worker_batch_processing_time_seconds",
+            "Time to process a batch of changes in seconds.",
+            bpt_sorted,
+            bpt_count,
+            bpt_sum,
+        )
 
-        _summary("changes_worker_doc_fetch_time_seconds",
-                 "Time to fetch documents (bulk_get or individual) in seconds.",
-                 dft_sorted, dft_count, dft_sum)
+        _summary(
+            "changes_worker_doc_fetch_time_seconds",
+            "Time to fetch documents (bulk_get or individual) in seconds.",
+            dft_sorted,
+            dft_count,
+            dft_sum,
+        )
 
-        _summary("changes_worker_health_probe_time_seconds",
-                 "Time for a health check probe in seconds.",
-                 hpt_sorted, hpt_count, hpt_sum)
+        _summary(
+            "changes_worker_health_probe_time_seconds",
+            "Time for a health check probe in seconds.",
+            hpt_sorted,
+            hpt_count,
+            hpt_sum,
+        )
 
         # ── SYSTEM metrics (psutil / gc / threading) ────────────────────
         try:
@@ -404,100 +596,174 @@ class MetricsCollector:
             cpu_times = proc.cpu_times()
             mem_info = proc.memory_info()
 
-            _gauge("changes_worker_process_cpu_percent",
-                   "Process CPU usage as a percentage of one core.",
-                   proc.cpu_percent(interval=0))
-            _counter("changes_worker_process_cpu_user_seconds_total",
-                     "User-space CPU seconds consumed by the worker process.",
-                     f"{cpu_times.user:.3f}")
-            _counter("changes_worker_process_cpu_system_seconds_total",
-                     "Kernel-space CPU seconds consumed by the worker process.",
-                     f"{cpu_times.system:.3f}")
-            _gauge("changes_worker_process_memory_rss_bytes",
-                   "Resident Set Size of the worker process in bytes.",
-                   mem_info.rss)
-            _gauge("changes_worker_process_memory_vms_bytes",
-                   "Virtual Memory Size of the worker process in bytes.",
-                   mem_info.vms)
-            _gauge("changes_worker_process_memory_percent",
-                   "Percentage of system RAM used by the worker process.",
-                   f"{proc.memory_percent():.2f}")
-            _gauge("changes_worker_process_threads",
-                   "Number of OS threads used by the worker process.",
-                   proc.num_threads())
+            _gauge(
+                "changes_worker_process_cpu_percent",
+                "Process CPU usage as a percentage of one core.",
+                proc.cpu_percent(interval=0),
+            )
+            _counter(
+                "changes_worker_process_cpu_user_seconds_total",
+                "User-space CPU seconds consumed by the worker process.",
+                f"{cpu_times.user:.3f}",
+            )
+            _counter(
+                "changes_worker_process_cpu_system_seconds_total",
+                "Kernel-space CPU seconds consumed by the worker process.",
+                f"{cpu_times.system:.3f}",
+            )
+            _gauge(
+                "changes_worker_process_memory_rss_bytes",
+                "Resident Set Size of the worker process in bytes.",
+                mem_info.rss,
+            )
+            _gauge(
+                "changes_worker_process_memory_vms_bytes",
+                "Virtual Memory Size of the worker process in bytes.",
+                mem_info.vms,
+            )
+            _gauge(
+                "changes_worker_process_memory_percent",
+                "Percentage of system RAM used by the worker process.",
+                f"{proc.memory_percent():.2f}",
+            )
+            _gauge(
+                "changes_worker_process_threads",
+                "Number of OS threads used by the worker process.",
+                proc.num_threads(),
+            )
             try:
-                _gauge("changes_worker_process_open_fds",
-                       "Number of open file descriptors.",
-                       proc.num_fds())
+                _gauge(
+                    "changes_worker_process_open_fds",
+                    "Number of open file descriptors.",
+                    proc.num_fds(),
+                )
             except AttributeError:
                 pass  # num_fds() not available on Windows
 
-            _gauge("changes_worker_python_threads_active",
-                   "Number of active Python threads.",
-                   threading.active_count())
+            _gauge(
+                "changes_worker_python_threads_active",
+                "Number of active Python threads.",
+                threading.active_count(),
+            )
 
             # GC stats per generation
             gc_counts = gc.get_count()
             gc_stats = gc.get_stats()
             for gen in range(3):
-                _gauge(f"changes_worker_python_gc_gen{gen}_count",
-                       f"Number of objects tracked by GC generation {gen}.",
-                       gc_counts[gen])
-                _counter(f"changes_worker_python_gc_gen{gen}_collections_total",
-                         f"Total GC collection runs for generation {gen}.",
-                         gc_stats[gen]["collections"])
+                _gauge(
+                    f"changes_worker_python_gc_gen{gen}_count",
+                    f"Number of objects tracked by GC generation {gen}.",
+                    gc_counts[gen],
+                )
+                _counter(
+                    f"changes_worker_python_gc_gen{gen}_collections_total",
+                    f"Total GC collection runs for generation {gen}.",
+                    gc_stats[gen]["collections"],
+                )
 
             # System-wide metrics
-            _gauge("changes_worker_system_cpu_count",
-                   "Number of logical CPU cores on the host.",
-                   psutil.cpu_count(logical=True))
-            _gauge("changes_worker_system_cpu_percent",
-                   "Host-wide CPU usage percentage.",
-                   psutil.cpu_percent(interval=0))
+            _gauge(
+                "changes_worker_system_cpu_count",
+                "Number of logical CPU cores on the host.",
+                psutil.cpu_count(logical=True),
+            )
+            _gauge(
+                "changes_worker_system_cpu_percent",
+                "Host-wide CPU usage percentage.",
+                psutil.cpu_percent(interval=0),
+            )
 
             vmem = psutil.virtual_memory()
-            _gauge("changes_worker_system_memory_total_bytes",
-                   "Total physical memory on the host.", vmem.total)
-            _gauge("changes_worker_system_memory_available_bytes",
-                   "Available physical memory on the host.", vmem.available)
-            _gauge("changes_worker_system_memory_used_bytes",
-                   "Used physical memory on the host.", vmem.used)
-            _gauge("changes_worker_system_memory_percent",
-                   "Host memory usage percentage.", vmem.percent)
+            _gauge(
+                "changes_worker_system_memory_total_bytes",
+                "Total physical memory on the host.",
+                vmem.total,
+            )
+            _gauge(
+                "changes_worker_system_memory_available_bytes",
+                "Available physical memory on the host.",
+                vmem.available,
+            )
+            _gauge(
+                "changes_worker_system_memory_used_bytes",
+                "Used physical memory on the host.",
+                vmem.used,
+            )
+            _gauge(
+                "changes_worker_system_memory_percent",
+                "Host memory usage percentage.",
+                vmem.percent,
+            )
 
             swap = psutil.swap_memory()
-            _gauge("changes_worker_system_swap_total_bytes",
-                   "Total swap space on the host.", swap.total)
-            _gauge("changes_worker_system_swap_used_bytes",
-                   "Used swap space on the host.", swap.used)
+            _gauge(
+                "changes_worker_system_swap_total_bytes",
+                "Total swap space on the host.",
+                swap.total,
+            )
+            _gauge(
+                "changes_worker_system_swap_used_bytes",
+                "Used swap space on the host.",
+                swap.used,
+            )
 
             try:
                 disk = psutil.disk_usage("/")
-                _gauge("changes_worker_system_disk_total_bytes",
-                       "Total disk space.", disk.total)
-                _gauge("changes_worker_system_disk_used_bytes",
-                       "Used disk space.", disk.used)
-                _gauge("changes_worker_system_disk_free_bytes",
-                       "Free disk space.", disk.free)
-                _gauge("changes_worker_system_disk_percent",
-                       "Disk usage percentage.", disk.percent)
+                _gauge(
+                    "changes_worker_system_disk_total_bytes",
+                    "Total disk space.",
+                    disk.total,
+                )
+                _gauge(
+                    "changes_worker_system_disk_used_bytes",
+                    "Used disk space.",
+                    disk.used,
+                )
+                _gauge(
+                    "changes_worker_system_disk_free_bytes",
+                    "Free disk space.",
+                    disk.free,
+                )
+                _gauge(
+                    "changes_worker_system_disk_percent",
+                    "Disk usage percentage.",
+                    disk.percent,
+                )
             except OSError:
                 pass
 
             net = psutil.net_io_counters()
             if net:
-                _counter("changes_worker_system_network_bytes_sent_total",
-                         "Total bytes sent over all network interfaces.", net.bytes_sent)
-                _counter("changes_worker_system_network_bytes_recv_total",
-                         "Total bytes received over all network interfaces.", net.bytes_recv)
-                _counter("changes_worker_system_network_packets_sent_total",
-                         "Total packets sent over all network interfaces.", net.packets_sent)
-                _counter("changes_worker_system_network_packets_recv_total",
-                         "Total packets received over all network interfaces.", net.packets_recv)
-                _counter("changes_worker_system_network_errin_total",
-                         "Total incoming network errors.", net.errin)
-                _counter("changes_worker_system_network_errout_total",
-                         "Total outgoing network errors.", net.errout)
+                _counter(
+                    "changes_worker_system_network_bytes_sent_total",
+                    "Total bytes sent over all network interfaces.",
+                    net.bytes_sent,
+                )
+                _counter(
+                    "changes_worker_system_network_bytes_recv_total",
+                    "Total bytes received over all network interfaces.",
+                    net.bytes_recv,
+                )
+                _counter(
+                    "changes_worker_system_network_packets_sent_total",
+                    "Total packets sent over all network interfaces.",
+                    net.packets_sent,
+                )
+                _counter(
+                    "changes_worker_system_network_packets_recv_total",
+                    "Total packets received over all network interfaces.",
+                    net.packets_recv,
+                )
+                _counter(
+                    "changes_worker_system_network_errin_total",
+                    "Total incoming network errors.",
+                    net.errin,
+                )
+                _counter(
+                    "changes_worker_system_network_errout_total",
+                    "Total outgoing network errors.",
+                    net.errout,
+                )
 
             # Log directory size
             log_dir = self._log_dir
@@ -506,11 +772,16 @@ class MetricsCollector:
                 for dirpath, _, filenames in os.walk(log_dir):
                     for fname in filenames:
                         try:
-                            total_log_bytes += os.path.getsize(os.path.join(dirpath, fname))
+                            total_log_bytes += os.path.getsize(
+                                os.path.join(dirpath, fname)
+                            )
                         except OSError:
                             pass
-                _gauge("changes_worker_log_dir_size_bytes",
-                       "Total size of the log directory in bytes.", total_log_bytes)
+                _gauge(
+                    "changes_worker_log_dir_size_bytes",
+                    "Total size of the log directory in bytes.",
+                    total_log_bytes,
+                )
 
             # CBL database size
             cbl_dir = self._cbl_db_dir
@@ -520,7 +791,9 @@ class MetricsCollector:
                     for dirpath, _, filenames in os.walk(cbl_dir):
                         for fname in filenames:
                             try:
-                                total_cbl_bytes += os.path.getsize(os.path.join(dirpath, fname))
+                                total_cbl_bytes += os.path.getsize(
+                                    os.path.join(dirpath, fname)
+                                )
                             except OSError:
                                 pass
                 else:
@@ -528,14 +801,18 @@ class MetricsCollector:
                         total_cbl_bytes = os.path.getsize(cbl_dir)
                     except OSError:
                         pass
-                _gauge("changes_worker_cbl_db_size_bytes",
-                       "Total size of the Couchbase Lite database in bytes.", total_cbl_bytes)
+                _gauge(
+                    "changes_worker_cbl_db_size_bytes",
+                    "Total size of the Couchbase Lite database in bytes.",
+                    total_cbl_bytes,
+                )
         except Exception:
             pass  # system metrics are best-effort
 
         # ── Per-engine / per-job DB metrics ────────────────────────────────
         try:
             from db.db_base import DbMetrics
+
             db_lines = DbMetrics.render_all()
             if db_lines:
                 lines.append("")
@@ -545,6 +822,7 @@ class MetricsCollector:
 
         lines.append("")
         return "\n".join(lines)
+
 
 async def _metrics_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
     """aiohttp handler for GET /_metrics"""
@@ -595,9 +873,13 @@ async def _shutdown_handler(request: aiohttp.web.Request) -> aiohttp.web.Respons
     """
     shutdown_event: asyncio.Event | None = request.app.get("shutdown_event")
     if shutdown_event is None:
-        return aiohttp.web.json_response({"error": "shutdown not supported"}, status=500)
+        return aiohttp.web.json_response(
+            {"error": "shutdown not supported"}, status=500
+        )
 
-    log_event(logger, "info", "CONTROL", "graceful shutdown requested via /_shutdown endpoint")
+    log_event(
+        logger, "info", "CONTROL", "graceful shutdown requested via /_shutdown endpoint"
+    )
 
     # Read shutdown config from the app (set by start_metrics_server)
     shutdown_cfg: dict = request.app.get("shutdown_cfg", {})
@@ -618,12 +900,20 @@ async def _shutdown_handler(request: aiohttp.web.Request) -> aiohttp.web.Respons
             if elapsed > drain_timeout:
                 tasks_remaining = metrics.active_tasks
                 drained = False
-                log_event(logger, "warn", "CONTROL",
-                          "shutdown drain timed out after %ds with %d tasks still active"
-                          % (drain_timeout, tasks_remaining))
+                log_event(
+                    logger,
+                    "warn",
+                    "CONTROL",
+                    "shutdown drain timed out after %ds with %d tasks still active"
+                    % (drain_timeout, tasks_remaining),
+                )
                 break
-            log_event(logger, "debug", "CONTROL",
-                      "waiting for %d active tasks to finish" % metrics.active_tasks)
+            log_event(
+                logger,
+                "debug",
+                "CONTROL",
+                "waiting for %d active tasks to finish" % metrics.active_tasks,
+            )
             await asyncio.sleep(0.5)
         if drained:
             log_event(logger, "info", "CONTROL", "all active tasks drained")
@@ -645,12 +935,17 @@ async def _shutdown_handler(request: aiohttp.web.Request) -> aiohttp.web.Respons
         else:
             summary["message"] = (
                 "shutdown complete – drain timed out, %d in-flight docs NOT delivered, "
-                "checkpoint was NOT advanced – they will be re-fetched on next startup" % tasks_remaining
+                "checkpoint was NOT advanced – they will be re-fetched on next startup"
+                % tasks_remaining
             )
     else:
-        summary["message"] = "shutdown complete – feeds stopped, outputs drained, database closed"
+        summary["message"] = (
+            "shutdown complete – feeds stopped, outputs drained, database closed"
+        )
 
-    log_event(logger, "info", "CONTROL", "graceful shutdown complete: %s" % summary["message"])
+    log_event(
+        logger, "info", "CONTROL", "graceful shutdown complete: %s" % summary["message"]
+    )
     return aiohttp.web.json_response(summary)
 
 
@@ -687,13 +982,16 @@ async def _status_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
     return aiohttp.web.json_response({"online": not is_offline})
 
 
-async def start_metrics_server(metrics: MetricsCollector, host: str, port: int,
-                               restart_event: asyncio.Event | None = None,
-                               shutdown_event: asyncio.Event | None = None,
-                               offline_event: asyncio.Event | None = None,
-                               cbl_scheduler: CBLMaintenanceScheduler | None = None,
-                               shutdown_cfg: dict | None = None,
-                               ) -> aiohttp.web.AppRunner:
+async def start_metrics_server(
+    metrics: MetricsCollector,
+    host: str,
+    port: int,
+    restart_event: asyncio.Event | None = None,
+    shutdown_event: asyncio.Event | None = None,
+    offline_event: asyncio.Event | None = None,
+    cbl_scheduler: CBLMaintenanceScheduler | None = None,
+    shutdown_cfg: dict | None = None,
+) -> aiohttp.web.AppRunner:
     """Start a lightweight HTTP server that serves /_metrics in Prometheus format."""
     from aiohttp import web
 
@@ -720,14 +1018,16 @@ async def start_metrics_server(metrics: MetricsCollector, host: str, port: int,
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     await site.start()
-    log_event(logger, "info", "METRICS", "metrics server listening",
-              host=host, port=port)
+    log_event(
+        logger, "info", "METRICS", "metrics server listening", host=host, port=port
+    )
     return runner
 
 
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
+
 
 def load_config(path: str | None = None) -> dict:
     """Load config from CBL (source of truth) or fall back to config.json.
@@ -814,9 +1114,7 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
     # -- gateway.src -----------------------------------------------------------
     src = gw.get("src", "sync_gateway")
     if src not in VALID_SOURCES:
-        errors.append(
-            f"gateway.src must be one of {VALID_SOURCES}, got '{src}'"
-        )
+        errors.append(f"gateway.src must be one of {VALID_SOURCES}, got '{src}'")
         return src, warnings, errors  # can't validate further
 
     # -- gateway basics --------------------------------------------------------
@@ -965,7 +1263,9 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
     out_cfg = cfg.get("output", {})
     out_mode = out_cfg.get("mode", "stdout")
     if out_mode not in ("stdout", "http", "db"):
-        errors.append(f"output.mode must be 'stdout', 'http', or 'db', got '{out_mode}'")
+        errors.append(
+            f"output.mode must be 'stdout', 'http', or 'db', got '{out_mode}'"
+        )
     if out_mode == "http" and not out_cfg.get("target_url"):
         errors.append("output.target_url is required when output.mode=http")
 
@@ -989,31 +1289,47 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
         write_method = out_cfg.get("write_method", "PUT").upper()
         delete_method = out_cfg.get("delete_method", "DELETE").upper()
         if write_method not in valid_methods:
-            errors.append(f"output.write_method must be one of {valid_methods}, got '{write_method}'")
+            errors.append(
+                f"output.write_method must be one of {valid_methods}, got '{write_method}'"
+            )
         if delete_method not in valid_methods:
-            errors.append(f"output.delete_method must be one of {valid_methods}, got '{delete_method}'")
+            errors.append(
+                f"output.delete_method must be one of {valid_methods}, got '{delete_method}'"
+            )
 
         req_timeout = out_cfg.get("request_timeout_seconds", 30)
         if req_timeout <= 0:
-            errors.append(f"output.request_timeout_seconds must be > 0, got {req_timeout}")
+            errors.append(
+                f"output.request_timeout_seconds must be > 0, got {req_timeout}"
+            )
 
         out_auth_method = out_cfg.get("target_auth", {}).get("method", "none")
         if out_auth_method == "basic":
             if not out_cfg.get("target_auth", {}).get("username"):
-                errors.append("output.target_auth.username is required when target_auth.method=basic")
+                errors.append(
+                    "output.target_auth.username is required when target_auth.method=basic"
+                )
             if not out_cfg.get("target_auth", {}).get("password"):
-                errors.append("output.target_auth.password is required when target_auth.method=basic")
+                errors.append(
+                    "output.target_auth.password is required when target_auth.method=basic"
+                )
         elif out_auth_method == "session":
             if not out_cfg.get("target_auth", {}).get("session_cookie"):
-                errors.append("output.target_auth.session_cookie is required when target_auth.method=session")
+                errors.append(
+                    "output.target_auth.session_cookie is required when target_auth.method=session"
+                )
         elif out_auth_method == "bearer":
             if not out_cfg.get("target_auth", {}).get("bearer_token"):
-                errors.append("output.target_auth.bearer_token is required when target_auth.method=bearer")
+                errors.append(
+                    "output.target_auth.bearer_token is required when target_auth.method=bearer"
+                )
 
         out_retry = out_cfg.get("retry", {})
         out_max_retries = out_retry.get("max_retries", 3)
         if out_max_retries < 0:
-            errors.append(f"output.retry.max_retries must be >= 0, got {out_max_retries}")
+            errors.append(
+                f"output.retry.max_retries must be >= 0, got {out_max_retries}"
+            )
 
         if not out_cfg.get("halt_on_failure", True):
             warnings.append(
@@ -1031,8 +1347,14 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
     metrics_cfg = cfg.get("metrics", {})
     if metrics_cfg.get("enabled", False):
         metrics_port = metrics_cfg.get("port", 9090)
-        if not isinstance(metrics_port, int) or metrics_port < 1 or metrics_port > 65535:
-            errors.append(f"metrics.port must be an integer between 1 and 65535, got {metrics_port}")
+        if (
+            not isinstance(metrics_port, int)
+            or metrics_port < 1
+            or metrics_port > 65535
+        ):
+            errors.append(
+                f"metrics.port must be an integer between 1 and 65535, got {metrics_port}"
+            )
 
     return src, warnings, errors
 
@@ -1070,12 +1392,16 @@ def build_auth_headers(auth_cfg: dict, src: str = "sync_gateway") -> dict:
     headers: dict[str, str] = {}
     if method == "bearer":
         if src == "edge_server":
-            logger.warning("Bearer token auth is not supported by Edge Server – falling back to basic")
+            logger.warning(
+                "Bearer token auth is not supported by Edge Server – falling back to basic"
+            )
         else:
             headers["Authorization"] = f"Bearer {auth_cfg['bearer_token']}"
     elif method == "session":
         if src == "couchdb":
-            logger.warning("Session cookie auth is not supported by CouchDB – falling back to basic")
+            logger.warning(
+                "Session cookie auth is not supported by CouchDB – falling back to basic"
+            )
         else:
             headers["Cookie"] = f"SyncGatewaySession={auth_cfg['session_cookie']}"
     return headers
@@ -1090,6 +1416,7 @@ def build_basic_auth(auth_cfg: dict) -> aiohttp.BasicAuth | None:
 # ---------------------------------------------------------------------------
 # Checkpoint persistence
 # ---------------------------------------------------------------------------
+
 
 class Checkpoint:
     """
@@ -1147,8 +1474,13 @@ class Checkpoint:
 
     # -- SG-backed load/save ---------------------------------------------------
 
-    async def load(self, http: "RetryableHTTP", base_url: str,
-                   auth: aiohttp.BasicAuth | None, headers: dict) -> str:
+    async def load(
+        self,
+        http: "RetryableHTTP",
+        base_url: str,
+        auth: aiohttp.BasicAuth | None,
+        headers: dict,
+    ) -> str:
         """GET {keyspace}/_local/checkpoint-{uuid} from Sync Gateway."""
         if not self._enabled:
             return self._seq
@@ -1162,30 +1494,52 @@ class Checkpoint:
             self._seq = str(data.get("SGs_Seq", "0"))
             self._rev = data.get("_rev")
             self._internal = data.get("remote", data.get("local_internal", 0))
-            log_event(logger, "info", "CHECKPOINT",
-                      "loaded checkpoint from Sync Gateway",
-                      operation="SELECT", seq=self._seq,
-                      doc_id=self._local_doc_id, storage="sg")
+            log_event(
+                logger,
+                "info",
+                "CHECKPOINT",
+                "loaded checkpoint from Sync Gateway",
+                operation="SELECT",
+                seq=self._seq,
+                doc_id=self._local_doc_id,
+                storage="sg",
+            )
             if self._metrics:
                 self._metrics.inc("checkpoint_loads_total")
         except ClientHTTPError as exc:
             if exc.status == 404:
-                log_event(logger, "info", "CHECKPOINT",
-                          "no existing checkpoint on SG – starting from 0",
-                          operation="SELECT", storage="sg")
+                log_event(
+                    logger,
+                    "info",
+                    "CHECKPOINT",
+                    "no existing checkpoint on SG – starting from 0",
+                    operation="SELECT",
+                    storage="sg",
+                )
                 self._seq = "0"
             else:
-                log_event(logger, "warn", "CHECKPOINT",
-                          "checkpoint load fell back to local storage",
-                          operation="SELECT", status=exc.status, storage="fallback")
+                log_event(
+                    logger,
+                    "warn",
+                    "CHECKPOINT",
+                    "checkpoint load fell back to local storage",
+                    operation="SELECT",
+                    status=exc.status,
+                    storage="fallback",
+                )
                 self._seq = self._load_fallback()
                 if self._metrics:
                     self._metrics.inc("checkpoint_loads_total")
                     self._metrics.inc("checkpoint_load_errors_total")
         except Exception as exc:
-            log_event(logger, "warn", "CHECKPOINT",
-                      "checkpoint load fell back to local storage: %s" % exc,
-                      operation="SELECT", storage="fallback")
+            log_event(
+                logger,
+                "warn",
+                "CHECKPOINT",
+                "checkpoint load fell back to local storage: %s" % exc,
+                operation="SELECT",
+                storage="fallback",
+            )
             self._seq = self._load_fallback()
             if self._metrics:
                 self._metrics.inc("checkpoint_loads_total")
@@ -1193,8 +1547,14 @@ class Checkpoint:
 
         return self._seq
 
-    async def save(self, seq: str, http: "RetryableHTTP", base_url: str,
-                   auth: aiohttp.BasicAuth | None, headers: dict) -> None:
+    async def save(
+        self,
+        seq: str,
+        http: "RetryableHTTP",
+        base_url: str,
+        auth: aiohttp.BasicAuth | None,
+        headers: dict,
+    ) -> None:
         """PUT {keyspace}/_local/checkpoint-{uuid} on Sync Gateway."""
         if not self._enabled:
             return
@@ -1215,18 +1575,32 @@ class Checkpoint:
             ic("checkpoint save", url, seq, self._internal)
             try:
                 req_headers = {**headers, "Content-Type": "application/json"}
-                resp = await http.request("PUT", url, json=body, auth=auth, headers=req_headers)
+                resp = await http.request(
+                    "PUT", url, json=body, auth=auth, headers=req_headers
+                )
                 resp_data = await resp.json()
                 resp.release()
                 self._rev = resp_data.get("rev", self._rev)
-                log_event(logger, "info", "CHECKPOINT",
-                          "saved checkpoint to Sync Gateway",
-                          operation="UPDATE", seq=seq,
-                          doc_id=self._local_doc_id, storage="sg")
+                log_event(
+                    logger,
+                    "info",
+                    "CHECKPOINT",
+                    "saved checkpoint to Sync Gateway",
+                    operation="UPDATE",
+                    seq=seq,
+                    doc_id=self._local_doc_id,
+                    storage="sg",
+                )
             except Exception as exc:
-                log_event(logger, "warn", "CHECKPOINT",
-                          "checkpoint save fell back to local storage: %s" % exc,
-                          operation="UPDATE", seq=seq, storage="fallback")
+                log_event(
+                    logger,
+                    "warn",
+                    "CHECKPOINT",
+                    "checkpoint save fell back to local storage: %s" % exc,
+                    operation="UPDATE",
+                    seq=seq,
+                    storage="fallback",
+                )
                 self._save_fallback(seq)
                 if self._metrics:
                     self._metrics.inc("checkpoint_save_errors_total")
@@ -1255,17 +1629,22 @@ class Checkpoint:
             ic("checkpoint saved to CBL", seq)
             return
         # Original file fallback
-        self._fallback_path.write_text(json.dumps({
-            "SGs_Seq": seq,
-            "time": int(time.time()),
-            "remote": self._internal,
-        }))
+        self._fallback_path.write_text(
+            json.dumps(
+                {
+                    "SGs_Seq": seq,
+                    "time": int(time.time()),
+                    "remote": self._internal,
+                }
+            )
+        )
         ic("checkpoint saved to file", seq)
 
 
 # ---------------------------------------------------------------------------
 # HTTP helpers with retry
 # ---------------------------------------------------------------------------
+
 
 class ShutdownRequested(Exception):
     """Raised when a shutdown signal interrupts a retryable operation."""
@@ -1277,7 +1656,9 @@ class RetryableHTTP:
         self._max_retries = retry_cfg.get("max_retries", 5)
         self._backoff_base = retry_cfg.get("backoff_base_seconds", 1)
         self._backoff_max = retry_cfg.get("backoff_max_seconds", 60)
-        self._retry_statuses = set(retry_cfg.get("retry_on_status", [500, 502, 503, 504]))
+        self._retry_statuses = set(
+            retry_cfg.get("retry_on_status", [500, 502, 503, 504])
+        )
         self._metrics = None
         self._shutdown_event: asyncio.Event | None = None
 
@@ -1292,7 +1673,9 @@ class RetryableHTTP:
         last_exc: Exception | None = None
         for attempt in range(1, self._max_retries + 1):
             if shutdown and shutdown.is_set():
-                raise ShutdownRequested(f"Shutdown requested before attempt #{attempt} for {method} {url}")
+                raise ShutdownRequested(
+                    f"Shutdown requested before attempt #{attempt} for {method} {url}"
+                )
 
             try:
                 resp = await self._session.request(method, url, **kwargs)
@@ -1300,44 +1683,75 @@ class RetryableHTTP:
                     return resp
                 body = await resp.text()
                 if resp.status in self._retry_statuses:
-                    log_event(logger, "warn", "RETRY",
-                              "retryable response",
-                              http_method=method, url=url,
-                              status=resp.status, attempt=attempt)
+                    log_event(
+                        logger,
+                        "warn",
+                        "RETRY",
+                        "retryable response",
+                        http_method=method,
+                        url=url,
+                        status=resp.status,
+                        attempt=attempt,
+                    )
                     resp.release()
                     if self._metrics:
                         self._metrics.inc("retries_total")
                 elif 400 <= resp.status < 500:
-                    log_event(logger, "error", "HTTP",
-                              "client error",
-                              http_method=method, url=url,
-                              status=resp.status)
+                    log_event(
+                        logger,
+                        "error",
+                        "HTTP",
+                        "client error",
+                        http_method=method,
+                        url=url,
+                        status=resp.status,
+                    )
                     raise ClientHTTPError(resp.status, body)
                 elif 300 <= resp.status < 400:
-                    log_event(logger, "warn", "HTTP",
-                              "redirect – not following",
-                              http_method=method, url=url,
-                              status=resp.status)
+                    log_event(
+                        logger,
+                        "warn",
+                        "HTTP",
+                        "redirect – not following",
+                        http_method=method,
+                        url=url,
+                        status=resp.status,
+                    )
                     raise RedirectHTTPError(resp.status, body)
                 else:
                     raise ServerHTTPError(resp.status, body)
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                log_event(logger, "warn", "RETRY",
-                          "connection error: %s" % exc,
-                          http_method=method, url=url, attempt=attempt)
+                log_event(
+                    logger,
+                    "warn",
+                    "RETRY",
+                    "connection error: %s" % exc,
+                    http_method=method,
+                    url=url,
+                    attempt=attempt,
+                )
                 last_exc = exc
                 if self._metrics:
                     self._metrics.inc("retries_total")
 
             if attempt < self._max_retries:
-                delay = min(self._backoff_base * (2 ** (attempt - 1)), self._backoff_max)
-                log_event(logger, "info", "RETRY",
-                          "backing off before retry",
-                          delay_seconds=delay, attempt=attempt)
+                delay = min(
+                    self._backoff_base * (2 ** (attempt - 1)), self._backoff_max
+                )
+                log_event(
+                    logger,
+                    "info",
+                    "RETRY",
+                    "backing off before retry",
+                    delay_seconds=delay,
+                    attempt=attempt,
+                )
                 if shutdown:
                     try:
                         await asyncio.wait_for(shutdown.wait(), timeout=delay)
-                        raise ShutdownRequested(f"Shutdown during backoff for {method} {url}")
+                        raise ShutdownRequested(
+                            f"Shutdown during backoff for {method} {url}"
+                        )
                     except asyncio.TimeoutError:
                         pass
                 else:
@@ -1345,7 +1759,9 @@ class RetryableHTTP:
 
         if self._metrics:
             self._metrics.inc("retry_exhausted_total")
-        raise ConnectionError(f"All {self._max_retries} retries exhausted for {method} {url}") from last_exc
+        raise ConnectionError(
+            f"All {self._max_retries} retries exhausted for {method} {url}"
+        ) from last_exc
 
 
 class ClientHTTPError(Exception):
@@ -1373,16 +1789,23 @@ class ServerHTTPError(Exception):
 # Fetch-docs helpers (bulk_get for SG/App Services, individual GET for Edge)
 # ---------------------------------------------------------------------------
 
+
 def _chunked(lst: list, size: int) -> list[list]:
     """Split a list into chunks of at most `size` items."""
-    return [lst[i:i + size] for i in range(0, len(lst), size)]
+    return [lst[i : i + size] for i in range(0, len(lst), size)]
 
 
-async def fetch_docs(http: RetryableHTTP, base_url: str, rows: list[dict],
-                     auth: aiohttp.BasicAuth | None, headers: dict,
-                     src: str, max_concurrent: int = 20,
-                     batch_size: int = 100,
-                     metrics: MetricsCollector | None = None) -> list[dict]:
+async def fetch_docs(
+    http: RetryableHTTP,
+    base_url: str,
+    rows: list[dict],
+    auth: aiohttp.BasicAuth | None,
+    headers: dict,
+    src: str,
+    max_concurrent: int = 20,
+    batch_size: int = 100,
+    metrics: MetricsCollector | None = None,
+) -> list[dict]:
     """
     Fetch full document bodies for _changes rows that only have id/rev.
 
@@ -1403,17 +1826,26 @@ async def fetch_docs(http: RetryableHTTP, base_url: str, rows: list[dict],
     for i, batch in enumerate(batches):
         ic(f"fetch_docs batch {i + 1}/{len(batches)}: {len(batch)} docs")
         if src == "edge_server":
-            results = await _fetch_docs_individually(http, base_url, batch, auth, headers, max_concurrent, metrics=metrics)
+            results = await _fetch_docs_individually(
+                http, base_url, batch, auth, headers, max_concurrent, metrics=metrics
+            )
         else:
-            results = await _fetch_docs_bulk_get(http, base_url, batch, auth, headers, metrics=metrics)
+            results = await _fetch_docs_bulk_get(
+                http, base_url, batch, auth, headers, metrics=metrics
+            )
         all_results.extend(results)
 
     return all_results
 
 
-async def _fetch_docs_bulk_get(http: RetryableHTTP, base_url: str, rows: list[dict],
-                               auth: aiohttp.BasicAuth | None, headers: dict,
-                               metrics: MetricsCollector | None = None) -> list[dict]:
+async def _fetch_docs_bulk_get(
+    http: RetryableHTTP,
+    base_url: str,
+    rows: list[dict],
+    auth: aiohttp.BasicAuth | None,
+    headers: dict,
+    metrics: MetricsCollector | None = None,
+) -> list[dict]:
     """Fetch full docs via _bulk_get (Sync Gateway / App Services)."""
     docs_req = [{"id": r["id"], "rev": r["changes"][0]["rev"]} for r in rows]
     if not docs_req:
@@ -1422,7 +1854,13 @@ async def _fetch_docs_bulk_get(http: RetryableHTTP, base_url: str, rows: list[di
     payload = {"docs": docs_req}
     ic(url, len(docs_req))
     t0 = time.monotonic()
-    resp = await http.request("POST", url, json=payload, auth=auth, headers={**headers, "Content-Type": "application/json"})
+    resp = await http.request(
+        "POST",
+        url,
+        json=payload,
+        auth=auth,
+        headers={**headers, "Content-Type": "application/json"},
+    )
     # _bulk_get returns multipart/mixed or JSON depending on SG version
     ct = resp.content_type or ""
     results: list[dict] = []
@@ -1454,10 +1892,15 @@ async def _fetch_docs_bulk_get(http: RetryableHTTP, base_url: str, rows: list[di
     return results
 
 
-async def _fetch_docs_individually(http: RetryableHTTP, base_url: str, rows: list[dict],
-                                   auth: aiohttp.BasicAuth | None, headers: dict,
-                                   max_concurrent: int,
-                                   metrics: MetricsCollector | None = None) -> list[dict]:
+async def _fetch_docs_individually(
+    http: RetryableHTTP,
+    base_url: str,
+    rows: list[dict],
+    auth: aiohttp.BasicAuth | None,
+    headers: dict,
+    max_concurrent: int,
+    metrics: MetricsCollector | None = None,
+) -> list[dict]:
     """
     Fetch docs one-by-one via GET /{keyspace}/{docid}?rev={rev}.
 
@@ -1479,7 +1922,9 @@ async def _fetch_docs_individually(http: RetryableHTTP, base_url: str, rows: lis
         ic("GET doc (edge_server)", url, rev)
         async with sem:
             try:
-                resp = await http.request("GET", url, params=params, auth=auth, headers=headers)
+                resp = await http.request(
+                    "GET", url, params=params, auth=auth, headers=headers
+                )
                 raw_bytes = await resp.read()
                 if metrics:
                     metrics.inc("bytes_received_total", len(raw_bytes))
@@ -1493,7 +1938,9 @@ async def _fetch_docs_individually(http: RetryableHTTP, base_url: str, rows: lis
                     metrics.inc("doc_fetch_errors_total")
 
     tasks = [asyncio.create_task(_get_one(r)) for r in rows]
-    ic(f"Fetching {len(tasks)} docs individually (Edge Server, concurrency={max_concurrent})")
+    ic(
+        f"Fetching {len(tasks)} docs individually (Edge Server, concurrency={max_concurrent})"
+    )
     await asyncio.gather(*tasks)
     if metrics:
         metrics.inc("doc_fetch_requests_total")
@@ -1501,14 +1948,19 @@ async def _fetch_docs_individually(http: RetryableHTTP, base_url: str, rows: lis
     return results
 
 
-
 # ---------------------------------------------------------------------------
 # Helpers: shared batch processing & continuous feed
 # ---------------------------------------------------------------------------
 
-def _build_changes_params(feed_cfg: dict, src: str, since: str,
-                          feed_type: str, timeout_ms: int,
-                          limit: int = 0) -> dict[str, str]:
+
+def _build_changes_params(
+    feed_cfg: dict,
+    src: str,
+    since: str,
+    feed_type: str,
+    timeout_ms: int,
+    limit: int = 0,
+) -> dict[str, str]:
     """Build query params for a _changes request."""
     params: dict[str, str] = {
         "feed": feed_type,
@@ -1533,8 +1985,9 @@ def _build_changes_params(feed_cfg: dict, src: str, since: str,
     return params
 
 
-async def _sleep_with_backoff(retry_cfg: dict, failure_count: int,
-                              shutdown_event: asyncio.Event) -> None:
+async def _sleep_with_backoff(
+    retry_cfg: dict, failure_count: int, shutdown_event: asyncio.Event
+) -> None:
     """Exponential backoff sleep using retry config."""
     base = retry_cfg.get("backoff_base_seconds", 1)
     max_s = retry_cfg.get("backoff_max_seconds", 60)
@@ -1585,8 +2038,14 @@ async def _process_changes_batch(
             metrics.set("checkpoint_seq", new_since)
         return new_since, False
 
-    log_event(logger, "debug", "CHANGES", "received _changes batch",
-              seq=since, batch_size=len(results))
+    log_event(
+        logger,
+        "debug",
+        "CHANGES",
+        "received _changes batch",
+        seq=since,
+        batch_size=len(results),
+    )
 
     # Count deletes/removes in the feed (always), then optionally filter
     filtered: list[dict] = []
@@ -1620,15 +2079,30 @@ async def _process_changes_batch(
             metrics.inc("changes_filtered_total", deleted_count + removed_count)
 
     if deleted_count or removed_count:
-        log_event(logger, "debug", "PROCESSING", "filtered changes batch",
-                  input_count=len(results), filtered_count=len(filtered))
+        log_event(
+            logger,
+            "debug",
+            "PROCESSING",
+            "filtered changes batch",
+            input_count=len(results),
+            filtered_count=len(filtered),
+        )
 
     # If include_docs was false, fetch full docs
     docs_by_id: dict[str, dict] = {}
     if not feed_cfg.get("include_docs") and filtered:
         batch_size = proc_cfg.get("get_batch_number", 100)
-        fetched = await fetch_docs(http, base_url, filtered, basic_auth, auth_headers,
-                                   src, max_concurrent, batch_size, metrics=metrics)
+        fetched = await fetch_docs(
+            http,
+            base_url,
+            filtered,
+            basic_auth,
+            auth_headers,
+            src,
+            max_concurrent,
+            batch_size,
+            metrics=metrics,
+        )
         for doc in fetched:
             docs_by_id[doc.get("_id", "")] = doc
         if metrics:
@@ -1651,24 +2125,43 @@ async def _process_changes_batch(
                     doc = docs_by_id.get(doc_id, change)
                 method = determine_method(
                     change,
-                    write_method=getattr(output, '_write_method', 'PUT'),
-                    delete_method=getattr(output, '_delete_method', 'DELETE'),
+                    write_method=getattr(output, "_write_method", "PUT"),
+                    delete_method=getattr(output, "_delete_method", "DELETE"),
                 )
                 op = infer_operation(change=change, doc=doc, method=method)
-                log_event(logger, "trace", "OUTPUT", "sending document",
-                          operation=op, doc_id=doc_id, mode=output._mode,
-                          http_method=method)
+                log_event(
+                    logger,
+                    "trace",
+                    "OUTPUT",
+                    "sending document",
+                    operation=op,
+                    doc_id=doc_id,
+                    mode=output._mode,
+                    http_method=method,
+                )
                 result = await output.send(doc, method)
                 result["_change"] = change
                 result["_doc"] = doc
                 if result.get("ok"):
-                    log_event(logger, "debug", "OUTPUT", "document forwarded",
-                              operation=op, doc_id=doc_id,
-                              status=result.get("status"))
+                    log_event(
+                        logger,
+                        "debug",
+                        "OUTPUT",
+                        "document forwarded",
+                        operation=op,
+                        doc_id=doc_id,
+                        status=result.get("status"),
+                    )
                 else:
-                    log_event(logger, "warn", "OUTPUT", "document delivery failed",
-                              operation=op, doc_id=doc_id,
-                              status=result.get("status"))
+                    log_event(
+                        logger,
+                        "warn",
+                        "OUTPUT",
+                        "document delivery failed",
+                        operation=op,
+                        doc_id=doc_id,
+                        status=result.get("status"),
+                    )
                 return result
             finally:
                 if metrics:
@@ -1676,7 +2169,7 @@ async def _process_changes_batch(
 
     if every_n_docs > 0 and sequential:
         for i in range(0, len(filtered), every_n_docs):
-            sub_batch = filtered[i:i + every_n_docs]
+            sub_batch = filtered[i : i + every_n_docs]
             for change in sub_batch:
                 try:
                     result = await process_one(change)
@@ -1690,18 +2183,43 @@ async def _process_changes_batch(
                 except (OutputEndpointDown, ShutdownRequested) as exc:
                     output_failed = True
                     is_shutdown = isinstance(exc, ShutdownRequested)
-                    logger.error("%s – not advancing checkpoint past since=%s: %s",
-                                 "SHUTDOWN" if is_shutdown else "OUTPUT DOWN", since, exc)
+                    logger.error(
+                        "%s – not advancing checkpoint past since=%s: %s",
+                        "SHUTDOWN" if is_shutdown else "OUTPUT DOWN",
+                        since,
+                        exc,
+                    )
                     # DLQ remaining docs in this sub-batch if shutdown + dlq_inflight_on_shutdown
-                    if is_shutdown and (shutdown_cfg or {}).get("dlq_inflight_on_shutdown", False) and dlq.enabled:
-                        remaining = sub_batch[sub_batch.index(change):]
+                    if (
+                        is_shutdown
+                        and (shutdown_cfg or {}).get("dlq_inflight_on_shutdown", False)
+                        and dlq.enabled
+                    ):
+                        remaining = sub_batch[sub_batch.index(change) :]
                         for rem in remaining:
-                            rem_doc = rem.get("doc", rem) if feed_cfg.get("include_docs") else docs_by_id.get(rem.get("id", ""), rem)
-                            await dlq.write(rem_doc, {"doc_id": rem.get("id", ""), "method": "PUT", "status": 0,
-                                                      "error": "shutdown_inflight"}, rem.get("seq", ""))
+                            rem_doc = (
+                                rem.get("doc", rem)
+                                if feed_cfg.get("include_docs")
+                                else docs_by_id.get(rem.get("id", ""), rem)
+                            )
+                            await dlq.write(
+                                rem_doc,
+                                {
+                                    "doc_id": rem.get("id", ""),
+                                    "method": "PUT",
+                                    "status": 0,
+                                    "error": "shutdown_inflight",
+                                },
+                                rem.get("seq", ""),
+                            )
                         if metrics:
                             metrics.inc("dead_letter_total", len(remaining))
-                        log_event(logger, "warn", "SHUTDOWN", "DLQ'd %d remaining docs from sub-batch" % len(remaining))
+                        log_event(
+                            logger,
+                            "warn",
+                            "SHUTDOWN",
+                            "DLQ'd %d remaining docs from sub-batch" % len(remaining),
+                        )
                     break
             if output_failed:
                 break
@@ -1736,16 +2254,24 @@ async def _process_changes_batch(
                         batch_fail += 1
                         if dlq.enabled and metrics:
                             metrics.inc("dead_letter_total")
-                        await dlq.write(result["_doc"], result, result["_change"].get("seq", ""))
+                        await dlq.write(
+                            result["_doc"], result, result["_change"].get("seq", "")
+                        )
         except (OutputEndpointDown, ShutdownRequested) as exc:
             output_failed = True
             is_shutdown = isinstance(exc, ShutdownRequested)
             logger.error(
                 "%s – not advancing checkpoint past since=%s: %s",
-                "SHUTDOWN" if is_shutdown else "OUTPUT DOWN", since, exc,
+                "SHUTDOWN" if is_shutdown else "OUTPUT DOWN",
+                since,
+                exc,
             )
             # DLQ all unprocessed docs if shutdown + dlq_inflight_on_shutdown
-            if is_shutdown and (shutdown_cfg or {}).get("dlq_inflight_on_shutdown", False) and dlq.enabled:
+            if (
+                is_shutdown
+                and (shutdown_cfg or {}).get("dlq_inflight_on_shutdown", False)
+                and dlq.enabled
+            ):
                 # In sequential mode, we know which docs haven't been tried yet
                 processed_ids = set()  # noqa: F841
                 if sequential:
@@ -1756,25 +2282,50 @@ async def _process_changes_batch(
                 # unfinished ones got cancelled — DLQ all filtered docs that didn't succeed
                 dlq_count = 0
                 for ch in filtered:
-                    ch_doc = ch.get("doc", ch) if feed_cfg.get("include_docs") else docs_by_id.get(ch.get("id", ""), ch)
-                    await dlq.write(ch_doc, {"doc_id": ch.get("id", ""), "method": "PUT", "status": 0,
-                                             "error": "shutdown_inflight"}, ch.get("seq", ""))
+                    ch_doc = (
+                        ch.get("doc", ch)
+                        if feed_cfg.get("include_docs")
+                        else docs_by_id.get(ch.get("id", ""), ch)
+                    )
+                    await dlq.write(
+                        ch_doc,
+                        {
+                            "doc_id": ch.get("id", ""),
+                            "method": "PUT",
+                            "status": 0,
+                            "error": "shutdown_inflight",
+                        },
+                        ch.get("seq", ""),
+                    )
                     dlq_count += 1
                 if metrics:
                     metrics.inc("dead_letter_total", dlq_count)
-                log_event(logger, "warn", "SHUTDOWN",
-                          "DLQ'd %d docs from batch (checkpoint not advanced)" % dlq_count)
+                log_event(
+                    logger,
+                    "warn",
+                    "SHUTDOWN",
+                    "DLQ'd %d docs from batch (checkpoint not advanced)" % dlq_count,
+                )
 
     if metrics:
         metrics.inc("changes_processed_total", len(filtered))
 
     total = batch_success + batch_fail
     if total > 0:
-        log_event(logger, "info", "PROCESSING",
-                  "batch complete: %d/%d succeeded, %d failed%s" % (
-                      batch_success, total, batch_fail,
-                      " (%d written to dead letter queue)" % batch_fail if batch_fail and dlq.enabled else "",
-                  ))
+        log_event(
+            logger,
+            "info",
+            "PROCESSING",
+            "batch complete: %d/%d succeeded, %d failed%s"
+            % (
+                batch_success,
+                total,
+                batch_fail,
+                " (%d written to dead letter queue)" % batch_fail
+                if batch_fail and dlq.enabled
+                else "",
+            ),
+        )
 
     output.log_stats()
 
@@ -1831,18 +2382,26 @@ async def _catch_up_normal(
     catchup_limit = feed_cfg.get("continuous_catchup_limit", 500)
     failure_count = 0
 
-    logger.info("CONTINUOUS catch-up: starting from since=%s (limit=%d)", since, catchup_limit)
+    logger.info(
+        "CONTINUOUS catch-up: starting from since=%s (limit=%d)", since, catchup_limit
+    )
 
     while not shutdown_event.is_set():
-        params = _build_changes_params(feed_cfg, src, since, "normal", timeout_ms,
-                                       limit=catchup_limit)
+        params = _build_changes_params(
+            feed_cfg, src, since, "normal", timeout_ms, limit=catchup_limit
+        )
         ic(changes_url, params, since, "catch-up")
 
         try:
             t0_changes = time.monotonic()
-            resp = await http.request("GET", changes_url, params=params,
-                                       auth=basic_auth, headers=auth_headers,
-                                       timeout=changes_http_timeout)
+            resp = await http.request(
+                "GET",
+                changes_url,
+                params=params,
+                auth=basic_auth,
+                headers=auth_headers,
+                timeout=changes_http_timeout,
+            )
             raw_body = await resp.read()
             body = json.loads(raw_body)
             if metrics:
@@ -1855,9 +2414,16 @@ async def _catch_up_normal(
             if metrics:
                 metrics.inc("poll_errors_total")
             raise
-        except (ConnectionError, ServerHTTPError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        except (
+            ConnectionError,
+            ServerHTTPError,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+        ) as exc:
             failure_count += 1
-            logger.error("Catch-up request failed (attempt #%d): %s", failure_count, exc)
+            logger.error(
+                "Catch-up request failed (attempt #%d): %s", failure_count, exc
+            )
             if metrics:
                 metrics.inc("poll_errors_total")
             await _sleep_with_backoff(retry_cfg, failure_count, shutdown_event)
@@ -1868,25 +2434,41 @@ async def _catch_up_normal(
         ic(len(results), last_seq, "catch-up batch")
 
         since, output_failed = await _process_changes_batch(
-            results, str(last_seq), since,
-            feed_cfg=feed_cfg, proc_cfg=proc_cfg, output=output, dlq=dlq,
-            checkpoint=checkpoint, http=http, base_url=base_url,
-            basic_auth=basic_auth, auth_headers=auth_headers,
-            semaphore=semaphore, src=src, metrics=metrics,
-            every_n_docs=every_n_docs, max_concurrent=max_concurrent,
+            results,
+            str(last_seq),
+            since,
+            feed_cfg=feed_cfg,
+            proc_cfg=proc_cfg,
+            output=output,
+            dlq=dlq,
+            checkpoint=checkpoint,
+            http=http,
+            base_url=base_url,
+            basic_auth=basic_auth,
+            auth_headers=auth_headers,
+            semaphore=semaphore,
+            src=src,
+            metrics=metrics,
+            every_n_docs=every_n_docs,
+            max_concurrent=max_concurrent,
             shutdown_cfg=shutdown_cfg,
         )
 
         if output_failed:
-            await _sleep_or_shutdown(feed_cfg.get("poll_interval_seconds", 10), shutdown_event)
+            await _sleep_or_shutdown(
+                feed_cfg.get("poll_interval_seconds", 10), shutdown_event
+            )
             continue
 
         if not results:
             logger.info("CONTINUOUS catch-up complete at since=%s", since)
             return since
 
-        logger.info("CONTINUOUS catch-up: got %d rows, fetching next batch from since=%s",
-                     len(results), since)
+        logger.info(
+            "CONTINUOUS catch-up: got %d rows, fetching next batch from since=%s",
+            len(results),
+            since,
+        )
 
     return since
 
@@ -1936,12 +2518,24 @@ async def _consume_continuous_stream(
 
     while not shutdown_event.is_set():
         try:
-            resp = await http.request("GET", changes_url, params=params,
-                                      auth=basic_auth, headers=auth_headers,
-                                      timeout=continuous_timeout)
-        except (ConnectionError, ServerHTTPError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            resp = await http.request(
+                "GET",
+                changes_url,
+                params=params,
+                auth=basic_auth,
+                headers=auth_headers,
+                timeout=continuous_timeout,
+            )
+        except (
+            ConnectionError,
+            ServerHTTPError,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+        ) as exc:
             failure_count += 1
-            logger.error("Continuous stream connect failed (attempt #%d): %s", failure_count, exc)
+            logger.error(
+                "Continuous stream connect failed (attempt #%d): %s", failure_count, exc
+            )
             if metrics:
                 metrics.inc("poll_errors_total")
             await _sleep_with_backoff(retry_cfg, failure_count, shutdown_event)
@@ -1976,7 +2570,9 @@ async def _consume_continuous_stream(
                     if metrics:
                         metrics.inc("stream_messages_total")
                 except json.JSONDecodeError:
-                    logger.warning("Continuous stream: unparseable line: %s", line[:200])
+                    logger.warning(
+                        "Continuous stream: unparseable line: %s", line[:200]
+                    )
                     if metrics:
                         metrics.inc("stream_parse_errors_total")
                     continue
@@ -1985,17 +2581,30 @@ async def _consume_continuous_stream(
                 ic(row.get("id"), row_seq, "continuous row")
 
                 since, output_failed = await _process_changes_batch(
-                    [row], row_seq, since,
-                    feed_cfg=feed_cfg, proc_cfg=proc_cfg, output=output, dlq=dlq,
-                    checkpoint=checkpoint, http=http, base_url=base_url,
-                    basic_auth=basic_auth, auth_headers=auth_headers,
-                    semaphore=semaphore, src=src, metrics=metrics,
-                    every_n_docs=every_n_docs, max_concurrent=max_concurrent,
+                    [row],
+                    row_seq,
+                    since,
+                    feed_cfg=feed_cfg,
+                    proc_cfg=proc_cfg,
+                    output=output,
+                    dlq=dlq,
+                    checkpoint=checkpoint,
+                    http=http,
+                    base_url=base_url,
+                    basic_auth=basic_auth,
+                    auth_headers=auth_headers,
+                    semaphore=semaphore,
+                    src=src,
+                    metrics=metrics,
+                    every_n_docs=every_n_docs,
+                    max_concurrent=max_concurrent,
                     shutdown_cfg=shutdown_cfg,
                 )
 
                 if output_failed:
-                    logger.warning("Output failed during continuous stream – dropping to catch-up")
+                    logger.warning(
+                        "Output failed during continuous stream – dropping to catch-up"
+                    )
                     break
 
             # Update params with latest since for reconnect
@@ -2070,6 +2679,7 @@ async def _consume_websocket_stream(
     ws_headers = dict(auth_headers) if auth_headers else {}
     if basic_auth:
         import base64
+
         credentials = f"{basic_auth.login}:{basic_auth.password}"
         ws_headers["Authorization"] = "Basic " + base64.b64encode(
             credentials.encode("utf-8")
@@ -2090,7 +2700,9 @@ async def _consume_websocket_stream(
             )
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
             failure_count += 1
-            logger.error("WebSocket connect failed (attempt #%d): %s", failure_count, exc)
+            logger.error(
+                "WebSocket connect failed (attempt #%d): %s", failure_count, exc
+            )
             if metrics:
                 metrics.inc("poll_errors_total")
             await _sleep_with_backoff(retry_cfg, failure_count, shutdown_event)
@@ -2121,7 +2733,9 @@ async def _consume_websocket_stream(
                         if metrics:
                             metrics.inc("stream_messages_total")
                     except json.JSONDecodeError:
-                        logger.warning("WebSocket: unparseable message (length=%d)", len(msg.data))
+                        logger.warning(
+                            "WebSocket: unparseable message (length=%d)", len(msg.data)
+                        )
                         if metrics:
                             metrics.inc("stream_parse_errors_total")
                         continue
@@ -2130,7 +2744,11 @@ async def _consume_websocket_stream(
                     rows = parsed if isinstance(parsed, list) else [parsed]
 
                     # Check for final message: dict with "last_seq" and no "id"
-                    if isinstance(parsed, dict) and "last_seq" in parsed and "id" not in parsed:
+                    if (
+                        isinstance(parsed, dict)
+                        and "last_seq" in parsed
+                        and "id" not in parsed
+                    ):
                         since = str(parsed["last_seq"])
                         ic(since, "websocket last_seq received")
                         payload["since"] = since
@@ -2143,24 +2761,45 @@ async def _consume_websocket_stream(
 
                     last_seq = str(change_rows[-1].get("seq", since))
                     ic(
-                        len(change_rows), last_seq, "websocket batch",
-                        [{k: r.get(k) for k in ("_id", "_rev", "_deleted", "_removed", "seq") if k in r}
-                         for r in change_rows],
+                        len(change_rows),
+                        last_seq,
+                        "websocket batch",
+                        [
+                            {
+                                k: r.get(k)
+                                for k in ("_id", "_rev", "_deleted", "_removed", "seq")
+                                if k in r
+                            }
+                            for r in change_rows
+                        ],
                     )
 
                     since, output_failed = await _process_changes_batch(
-                        change_rows, last_seq, since,
-                        feed_cfg=feed_cfg, proc_cfg=proc_cfg, output=output, dlq=dlq,
-                        checkpoint=checkpoint, http=http, base_url=base_url,
-                        basic_auth=basic_auth, auth_headers=auth_headers,
-                        semaphore=semaphore, src=src, metrics=metrics,
-                        every_n_docs=every_n_docs, max_concurrent=max_concurrent,
+                        change_rows,
+                        last_seq,
+                        since,
+                        feed_cfg=feed_cfg,
+                        proc_cfg=proc_cfg,
+                        output=output,
+                        dlq=dlq,
+                        checkpoint=checkpoint,
+                        http=http,
+                        base_url=base_url,
+                        basic_auth=basic_auth,
+                        auth_headers=auth_headers,
+                        semaphore=semaphore,
+                        src=src,
+                        metrics=metrics,
+                        every_n_docs=every_n_docs,
+                        max_concurrent=max_concurrent,
                         shutdown_cfg=shutdown_cfg,
                     )
                     payload["since"] = since
 
                     if output_failed:
-                        logger.warning("Output failed during WebSocket stream – reconnecting")
+                        logger.warning(
+                            "Output failed during WebSocket stream – reconnecting"
+                        )
                         break
 
                 elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSING):
@@ -2192,6 +2831,7 @@ async def _consume_websocket_stream(
 # DLQ replay
 # ---------------------------------------------------------------------------
 
+
 async def _replay_dead_letter_queue(
     dlq: "DeadLetterQueue",
     output: "OutputForwarder",
@@ -2210,7 +2850,12 @@ async def _replay_dead_letter_queue(
         log_event(logger, "info", "DLQ", "no pending dead-letter entries to replay")
         return {"total": 0, "succeeded": 0, "failed": 0}
 
-    log_event(logger, "info", "DLQ", "replaying %d dead-letter entries before processing new changes" % len(pending))
+    log_event(
+        logger,
+        "info",
+        "DLQ",
+        "replaying %d dead-letter entries before processing new changes" % len(pending),
+    )
 
     succeeded = 0
     failed = 0
@@ -2226,34 +2871,70 @@ async def _replay_dead_letter_queue(
         # Get the full doc data
         full_entry = dlq.get_entry_doc(dlq_id)
         if full_entry is None:
-            log_event(logger, "warn", "DLQ", "could not load DLQ entry for replay",
-                      doc_id=dlq_id)
+            log_event(
+                logger,
+                "warn",
+                "DLQ",
+                "could not load DLQ entry for replay",
+                doc_id=dlq_id,
+            )
             failed += 1
             continue
 
         doc = full_entry.get("doc_data", {})
-        log_event(logger, "info", "DLQ", "replaying DLQ entry",
-                  doc_id=doc_id, dlq_id=dlq_id, method=method)
+        log_event(
+            logger,
+            "info",
+            "DLQ",
+            "replaying DLQ entry",
+            doc_id=doc_id,
+            dlq_id=dlq_id,
+            method=method,
+        )
 
         try:
             result = await output.send(doc, method)
             if result.get("ok"):
                 await dlq.purge(dlq_id)
                 succeeded += 1
-                log_event(logger, "info", "DLQ", "DLQ entry replayed successfully – purged",
-                          doc_id=doc_id, dlq_id=dlq_id)
+                log_event(
+                    logger,
+                    "info",
+                    "DLQ",
+                    "DLQ entry replayed successfully – purged",
+                    doc_id=doc_id,
+                    dlq_id=dlq_id,
+                )
             else:
                 failed += 1
-                log_event(logger, "warn", "DLQ", "DLQ entry replay failed – keeping for next startup",
-                          doc_id=doc_id, dlq_id=dlq_id,
-                          status=result.get("status"))
+                log_event(
+                    logger,
+                    "warn",
+                    "DLQ",
+                    "DLQ entry replay failed – keeping for next startup",
+                    doc_id=doc_id,
+                    dlq_id=dlq_id,
+                    status=result.get("status"),
+                )
         except Exception as exc:
             failed += 1
-            log_event(logger, "warn", "DLQ", "DLQ entry replay error: %s" % exc,
-                      doc_id=doc_id, dlq_id=dlq_id)
+            log_event(
+                logger,
+                "warn",
+                "DLQ",
+                "DLQ entry replay error: %s" % exc,
+                doc_id=doc_id,
+                dlq_id=dlq_id,
+            )
 
     summary = {"total": len(pending), "succeeded": succeeded, "failed": failed}
-    log_event(logger, "info", "DLQ", "DLQ replay complete: %d/%d succeeded, %d failed" % (succeeded, len(pending), failed))
+    log_event(
+        logger,
+        "info",
+        "DLQ",
+        "DLQ replay complete: %d/%d succeeded, %d failed"
+        % (succeeded, len(pending), failed),
+    )
     return summary
 
 
@@ -2261,9 +2942,14 @@ async def _replay_dead_letter_queue(
 # Core: changes feed loop
 # ---------------------------------------------------------------------------
 
-async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
-                       metrics: MetricsCollector | None = None,
-                       restart_event: asyncio.Event | None = None) -> None:
+
+async def poll_changes(
+    cfg: dict,
+    src: str,
+    shutdown_event: asyncio.Event,
+    metrics: MetricsCollector | None = None,
+    restart_event: asyncio.Event | None = None,
+) -> None:
     gw = cfg["gateway"]
     auth_cfg = cfg["auth"]
     feed_cfg = cfg["changes_feed"]
@@ -2326,29 +3012,39 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
             db_engine = out_cfg.get("db", {}).get("engine", "postgres")
             if db_engine == "postgres":
                 from db.db_postgres import PostgresOutputForwarder
+
                 output = PostgresOutputForwarder(out_cfg, dry_run, metrics=metrics)
             elif db_engine == "mysql":
                 from db.db_mysql import MySQLOutputForwarder
+
                 output = MySQLOutputForwarder(out_cfg, dry_run, metrics=metrics)
             elif db_engine == "mssql":
                 from db.db_mssql import MSSQLOutputForwarder
+
                 output = MSSQLOutputForwarder(out_cfg, dry_run, metrics=metrics)
             elif db_engine == "oracle":
                 from db.db_oracle import OracleOutputForwarder
+
                 output = OracleOutputForwarder(out_cfg, dry_run, metrics=metrics)
             else:
                 raise ValueError(f"Unsupported db engine: {db_engine}")
             await output.connect()
             db_output = output
-            log_event(logger, "info", "OUTPUT",
-                      f"database output ready (engine={db_engine})")
+            log_event(
+                logger, "info", "OUTPUT", f"database output ready (engine={db_engine})"
+            )
         else:
-            output = OutputForwarder(session, out_cfg, dry_run, metrics=metrics,
-                                            build_basic_auth_fn=build_basic_auth,
-                                            build_auth_headers_fn=build_auth_headers,
-                                            retryable_http_cls=RetryableHTTP)
+            output = OutputForwarder(
+                session,
+                out_cfg,
+                dry_run,
+                metrics=metrics,
+                build_basic_auth_fn=build_basic_auth,
+                build_auth_headers_fn=build_auth_headers,
+                retryable_http_cls=RetryableHTTP,
+            )
             # Make output retries shutdown-aware
-            if hasattr(output, '_http') and output._http is not None:
+            if hasattr(output, "_http") and output._http is not None:
                 output._http.set_shutdown_event(shutdown_event)
 
         dlq = DeadLetterQueue(out_cfg.get("dead_letter_path", ""))
@@ -2358,12 +3054,20 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
         if output_mode == "http":
             if not await output.test_reachable():
                 if out_cfg.get("halt_on_failure", True):
-                    log_event(logger, "error", "OUTPUT",
-                              "output endpoint unreachable at startup – aborting")
+                    log_event(
+                        logger,
+                        "error",
+                        "OUTPUT",
+                        "output endpoint unreachable at startup – aborting",
+                    )
                     return
                 else:
-                    log_event(logger, "warn", "OUTPUT",
-                              "output endpoint unreachable at startup – continuing (halt_on_failure=false)")
+                    log_event(
+                        logger,
+                        "warn",
+                        "OUTPUT",
+                        "output endpoint unreachable at startup – continuing (halt_on_failure=false)",
+                    )
             # Start periodic heartbeat if configured
             await output.start_heartbeat(stop_event)
 
@@ -2375,33 +3079,45 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
         # ── Replay dead-letter queue before processing new changes ────
         if dlq.enabled and not stop_event.is_set():
             dlq_summary = await _replay_dead_letter_queue(
-                dlq, output, metrics, shutdown_event,
+                dlq,
+                output,
+                metrics,
+                shutdown_event,
             )
             if dlq_summary["total"] > 0:
-                log_event(logger, "info", "DLQ",
-                          "DLQ replay summary: %s" % dlq_summary)
+                log_event(logger, "info", "DLQ", "DLQ replay summary: %s" % dlq_summary)
 
         throttle = feed_cfg.get("throttle_feed", 0)
 
         # Source-specific feed type validation
         feed_type = feed_cfg.get("feed_type", "longpoll")
         if src == "edge_server" and feed_type == "websocket":
-            logger.warning("Edge Server does not support feed=websocket, falling back to longpoll")
+            logger.warning(
+                "Edge Server does not support feed=websocket, falling back to longpoll"
+            )
             feed_type = "longpoll"
         if src != "edge_server" and feed_type == "sse":
-            logger.warning("SSE feed is only supported by Edge Server, falling back to longpoll")
+            logger.warning(
+                "SSE feed is only supported by Edge Server, falling back to longpoll"
+            )
             feed_type = "longpoll"
         if src == "couchdb" and feed_type == "websocket":
-            logger.warning("CouchDB does not support feed=websocket, falling back to longpoll")
+            logger.warning(
+                "CouchDB does not support feed=websocket, falling back to longpoll"
+            )
             feed_type = "longpoll"
         if src == "couchdb" and feed_type == "sse":
-            logger.warning("CouchDB does not support feed=sse, use feed=eventsource instead")
+            logger.warning(
+                "CouchDB does not support feed=sse, use feed=eventsource instead"
+            )
             feed_type = "eventsource"
 
         # Edge Server caps timeout at 900000ms (15 min)
         timeout_ms = feed_cfg.get("timeout_ms", 60000)
         if src == "edge_server" and timeout_ms > 900000:
-            logger.warning("Edge Server max timeout is 900000ms – clamping from %d", timeout_ms)
+            logger.warning(
+                "Edge Server max timeout is 900000ms – clamping from %d", timeout_ms
+            )
             timeout_ms = 900000
 
         changes_url = f"{base_url}/_changes"
@@ -2409,22 +3125,38 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
         # Shared kwargs for _process_changes_batch / catch-up / continuous
         shutdown_cfg = cfg.get("shutdown", {})
         batch_kwargs = dict(
-            feed_cfg=feed_cfg, proc_cfg=proc_cfg, output=output, dlq=dlq,
-            checkpoint=checkpoint, http=http, base_url=base_url,
-            basic_auth=basic_auth, auth_headers=auth_headers,
-            semaphore=semaphore, src=src, metrics=metrics,
-            every_n_docs=every_n_docs, max_concurrent=max_concurrent,
+            feed_cfg=feed_cfg,
+            proc_cfg=proc_cfg,
+            output=output,
+            dlq=dlq,
+            checkpoint=checkpoint,
+            http=http,
+            base_url=base_url,
+            basic_auth=basic_auth,
+            auth_headers=auth_headers,
+            semaphore=semaphore,
+            src=src,
+            metrics=metrics,
+            every_n_docs=every_n_docs,
+            max_concurrent=max_concurrent,
             shutdown_cfg=shutdown_cfg,
         )
 
         try:
             # ── Continuous mode: 2-phase catch-up then stream ────────────────
             if feed_type == "continuous":
-                log_event(logger, "info", "CHANGES", "feed mode: continuous (catch-up → stream)")
+                log_event(
+                    logger,
+                    "info",
+                    "CHANGES",
+                    "feed mode: continuous (catch-up → stream)",
+                )
                 while not stop_event.is_set():
                     since = await _catch_up_normal(
-                        since=since, changes_url=changes_url,
-                        retry_cfg=retry_cfg, shutdown_event=stop_event,
+                        since=since,
+                        changes_url=changes_url,
+                        retry_cfg=retry_cfg,
+                        shutdown_event=stop_event,
                         timeout_ms=timeout_ms,
                         changes_http_timeout=changes_http_timeout,
                         **batch_kwargs,
@@ -2432,8 +3164,10 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
                     if stop_event.is_set():
                         break
                     since = await _consume_continuous_stream(
-                        since=since, changes_url=changes_url,
-                        retry_cfg=retry_cfg, session=session,
+                        since=since,
+                        changes_url=changes_url,
+                        retry_cfg=retry_cfg,
+                        session=session,
                         shutdown_event=stop_event,
                         timeout_ms=timeout_ms,
                         **batch_kwargs,
@@ -2442,11 +3176,18 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
 
             # ── WebSocket mode: catch-up then stream via ws:// ───────────────
             if feed_type == "websocket":
-                log_event(logger, "info", "CHANGES", "feed mode: websocket (catch-up → ws stream)")
+                log_event(
+                    logger,
+                    "info",
+                    "CHANGES",
+                    "feed mode: websocket (catch-up → ws stream)",
+                )
                 # Phase 1: catch up using normal HTTP requests
                 since = await _catch_up_normal(
-                    since=since, changes_url=changes_url,
-                    retry_cfg=retry_cfg, shutdown_event=stop_event,
+                    since=since,
+                    changes_url=changes_url,
+                    retry_cfg=retry_cfg,
+                    shutdown_event=stop_event,
                     timeout_ms=timeout_ms,
                     changes_http_timeout=changes_http_timeout,
                     **batch_kwargs,
@@ -2454,8 +3195,10 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
                 if not stop_event.is_set():
                     # Phase 2: switch to WebSocket stream
                     since = await _consume_websocket_stream(
-                        since=since, changes_url=changes_url,
-                        retry_cfg=retry_cfg, session=session,
+                        since=since,
+                        changes_url=changes_url,
+                        retry_cfg=retry_cfg,
+                        session=session,
                         shutdown_event=stop_event,
                         timeout_ms=timeout_ms,
                         **batch_kwargs,
@@ -2464,7 +3207,9 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
 
             # ── Polled mode (longpoll / normal / sse) ────────────────────────
             while not stop_event.is_set():
-                params = _build_changes_params(feed_cfg, src, since, feed_type, timeout_ms)
+                params = _build_changes_params(
+                    feed_cfg, src, since, feed_type, timeout_ms
+                )
                 # throttle_feed overrides limit – eat the feed one bite at a time
                 if throttle > 0:
                     params["limit"] = str(throttle)
@@ -2475,14 +3220,21 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
 
                 try:
                     t0_changes = time.monotonic()
-                    resp = await http.request("GET", changes_url, params=params,
-                                              auth=basic_auth, headers=auth_headers,
-                                              timeout=changes_http_timeout)
+                    resp = await http.request(
+                        "GET",
+                        changes_url,
+                        params=params,
+                        auth=basic_auth,
+                        headers=auth_headers,
+                        timeout=changes_http_timeout,
+                    )
                     raw_body = await resp.read()
                     body = json.loads(raw_body)
                     if metrics:
                         metrics.inc("bytes_received_total", len(raw_body))
-                        metrics.record_changes_request_time(time.monotonic() - t0_changes)
+                        metrics.record_changes_request_time(
+                            time.monotonic() - t0_changes
+                        )
                     resp.release()
                 except (ClientHTTPError, RedirectHTTPError) as exc:
                     logger.error("Non-retryable error polling _changes: %s", exc)
@@ -2493,7 +3245,9 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
                     logger.error("Retries exhausted polling _changes: %s", exc)
                     if metrics:
                         metrics.inc("poll_errors_total")
-                    await _sleep_or_shutdown(feed_cfg.get("poll_interval_seconds", 10), stop_event)
+                    await _sleep_or_shutdown(
+                        feed_cfg.get("poll_interval_seconds", 10), stop_event
+                    )
                     continue
 
                 results = body.get("results", [])
@@ -2501,33 +3255,45 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
                 ic(len(results), last_seq)
 
                 since, output_failed = await _process_changes_batch(
-                    results, str(last_seq), since,
+                    results,
+                    str(last_seq),
+                    since,
                     **batch_kwargs,
                 )
 
                 if output_failed:
                     logger.warning(
                         "Waiting %ds before retrying (checkpoint held at since=%s)",
-                        feed_cfg.get("poll_interval_seconds", 10), since,
+                        feed_cfg.get("poll_interval_seconds", 10),
+                        since,
                     )
-                    await _sleep_or_shutdown(feed_cfg.get("poll_interval_seconds", 10), stop_event)
+                    await _sleep_or_shutdown(
+                        feed_cfg.get("poll_interval_seconds", 10), stop_event
+                    )
                     continue
 
                 if not results:
-                    await _sleep_or_shutdown(feed_cfg.get("poll_interval_seconds", 10), stop_event)
+                    await _sleep_or_shutdown(
+                        feed_cfg.get("poll_interval_seconds", 10), stop_event
+                    )
                     continue
 
                 # When throttling: if we got a full batch there are more rows
                 # waiting — loop immediately for the next bite. Only sleep once
                 # we get a partial batch (caught up).
                 if throttle > 0 and len(results) >= throttle:
-                    logger.info("Throttle: got full batch (%d), fetching next bite immediately", len(results))
+                    logger.info(
+                        "Throttle: got full batch (%d), fetching next bite immediately",
+                        len(results),
+                    )
                     continue
 
-                await _sleep_or_shutdown(feed_cfg.get("poll_interval_seconds", 10), stop_event)
+                await _sleep_or_shutdown(
+                    feed_cfg.get("poll_interval_seconds", 10), stop_event
+                )
         finally:
             watcher_task.cancel()
-            await output.stop_heartbeat() if hasattr(output, 'stop_heartbeat') else None
+            await output.stop_heartbeat() if hasattr(output, "stop_heartbeat") else None
             if db_output is not None:
                 await db_output.close()
 
@@ -2542,6 +3308,7 @@ async def _sleep_or_shutdown(seconds: float, event: asyncio.Event) -> None:
 # ---------------------------------------------------------------------------
 # Test connection
 # ---------------------------------------------------------------------------
+
 
 async def test_connection(cfg: dict, src: str) -> bool:
     """
@@ -2570,15 +3337,17 @@ async def test_connection(cfg: dict, src: str) -> bool:
 
         # 1) Server root
         src_label = src.replace("_", " ").title()
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  Source type:           {src_label}")
         print(f"  Testing connection to: {root_url}")
         print(f"  Keyspace:              {base_url}")
         print(f"  Auth method:           {auth_cfg.get('method', 'basic')}")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
         try:
-            resp = await http.request("GET", f"{root_url}/", auth=basic_auth, headers=auth_headers)
+            resp = await http.request(
+                "GET", f"{root_url}/", auth=basic_auth, headers=auth_headers
+            )
             body = await resp.json()
             resp.release()
             print(f"  [✓] Server root reachable")
@@ -2592,7 +3361,9 @@ async def test_connection(cfg: dict, src: str) -> bool:
 
         # 2) Database / keyspace info
         try:
-            resp = await http.request("GET", f"{base_url}/", auth=basic_auth, headers=auth_headers)
+            resp = await http.request(
+                "GET", f"{base_url}/", auth=basic_auth, headers=auth_headers
+            )
             body = await resp.json()
             resp.release()
             db_name = body.get("db_name", body.get("name", "?"))
@@ -2605,15 +3376,19 @@ async def test_connection(cfg: dict, src: str) -> bool:
         # 3) _changes endpoint
         try:
             resp = await http.request(
-                "GET", f"{base_url}/_changes",
+                "GET",
+                f"{base_url}/_changes",
                 params={"since": "0", "limit": "1"},
-                auth=basic_auth, headers=auth_headers,
+                auth=basic_auth,
+                headers=auth_headers,
             )
             body = await resp.json()
             resp.release()
             last_seq = body.get("last_seq", "?")
             n_results = len(body.get("results", []))
-            print(f"  [✓] _changes endpoint OK  (last_seq={last_seq}, sample_results={n_results})")
+            print(
+                f"  [✓] _changes endpoint OK  (last_seq={last_seq}, sample_results={n_results})"
+            )
         except Exception as exc:
             print(f"  [✗] _changes endpoint FAILED: {exc}")
             ok = False
@@ -2631,24 +3406,32 @@ async def test_connection(cfg: dict, src: str) -> bool:
         # 5) Output / consumer endpoint (only when mode=http)
         out_cfg = cfg.get("output", {})
         if out_cfg.get("mode") == "http":
-            output = OutputForwarder(session, out_cfg, dry_run=False,
-                                                build_basic_auth_fn=build_basic_auth,
-                                                build_auth_headers_fn=build_auth_headers,
-                                                retryable_http_cls=RetryableHTTP)
+            output = OutputForwarder(
+                session,
+                out_cfg,
+                dry_run=False,
+                build_basic_auth_fn=build_basic_auth,
+                build_auth_headers_fn=build_auth_headers,
+                retryable_http_cls=RetryableHTTP,
+            )
             if await output.test_reachable():
-                print(f"  [✓] Output endpoint reachable ({out_cfg.get('target_url', '')})")
+                print(
+                    f"  [✓] Output endpoint reachable ({out_cfg.get('target_url', '')})"
+                )
             else:
-                print(f"  [✗] Output endpoint UNREACHABLE ({out_cfg.get('target_url', '')})")
+                print(
+                    f"  [✗] Output endpoint UNREACHABLE ({out_cfg.get('target_url', '')})"
+                )
                 ok = False
         else:
             print(f"  [–] Output mode=stdout (no endpoint to check)")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     if ok:
         print("  Result: ALL CHECKS PASSED ✓")
     else:
         print("  Result: SOME CHECKS FAILED ✗")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
     return ok
 
 
@@ -2656,18 +3439,28 @@ async def test_connection(cfg: dict, src: str) -> bool:
 # Entrypoint
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Couchbase _changes feed worker")
     parser.add_argument("--config", default="config.json", help="Path to config.json")
-    parser.add_argument("--test", action="store_true", help="Test connectivity and exit")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--test", action="store_true", help="Test connectivity and exit"
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     _ensure_full_logging_config(cfg)
     configure_logging(cfg.get("logging", {}))
 
-    log_event(logger, "info", "PROCESSING", "changes_worker v%s starting (CBL=%s)" % (__version__, USE_CBL))
+    log_event(
+        logger,
+        "info",
+        "PROCESSING",
+        "changes_worker v%s starting (CBL=%s)" % (__version__, USE_CBL),
+    )
 
     # Run migrations after logging is configured so we can see output
     if USE_CBL:
@@ -2690,9 +3483,7 @@ def main() -> None:
         for e in errors:
             logger.error("  ✗ %s", e)
         logger.error("=" * 60)
-        logger.error(
-            "Fix the errors above in %s and try again.", args.config
-        )
+        logger.error("Fix the errors above in %s and try again.", args.config)
         sys.exit(1)
 
     if warnings:
@@ -2722,6 +3513,7 @@ def main() -> None:
         maint_cfg = cbl_cfg.get("maintenance", cfg.get("cbl_maintenance", {}))
         if cbl_cfg.get("db_dir") or cbl_cfg.get("db_name"):
             from cbl_store import configure_cbl
+
             configure_cbl(cbl_cfg.get("db_dir"), cbl_cfg.get("db_name"))
         if maint_cfg.get("enabled", True):
             interval = maint_cfg.get("interval_hours", 24)
@@ -2735,13 +3527,20 @@ def main() -> None:
 
     if metrics_cfg.get("enabled", False):
         database = cfg.get("gateway", {}).get("database", "")
-        log_dir = cfg.get("logging", {}).get("file", {}).get("path", "logs/changes_worker.log")
+        log_dir = (
+            cfg.get("logging", {})
+            .get("file", {})
+            .get("path", "logs/changes_worker.log")
+        )
         log_dir = os.path.dirname(log_dir) or "logs"
         cbl_db_dir = ""
         if USE_CBL:
             from cbl_store import CBL_DB_DIR, CBL_DB_NAME
+
             cbl_db_dir = os.path.join(CBL_DB_DIR, f"{CBL_DB_NAME}.cblite2")
-        metrics = MetricsCollector(src, database, log_dir=log_dir, cbl_db_dir=cbl_db_dir)
+        metrics = MetricsCollector(
+            src, database, log_dir=log_dir, cbl_db_dir=cbl_db_dir
+        )
 
     loop = asyncio.new_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -2752,31 +3551,49 @@ def main() -> None:
             metrics_host = metrics_cfg.get("host", "0.0.0.0")
             metrics_port = metrics_cfg.get("port", 9090)
             metrics_runner = loop.run_until_complete(
-                start_metrics_server(metrics, metrics_host, metrics_port,
-                                     restart_event=restart_event,
-                                     shutdown_event=shutdown_event,
-                                     offline_event=offline_event,
-                                     cbl_scheduler=cbl_scheduler,
-                                     shutdown_cfg=cfg.get("shutdown", {}))
+                start_metrics_server(
+                    metrics,
+                    metrics_host,
+                    metrics_port,
+                    restart_event=restart_event,
+                    shutdown_event=shutdown_event,
+                    offline_event=offline_event,
+                    cbl_scheduler=cbl_scheduler,
+                    shutdown_cfg=cfg.get("shutdown", {}),
+                )
             )
 
         # ── Restart loop: reload config & re-enter poll_changes ──────
         while not shutdown_event.is_set():
             restart_event.clear()
-            log_event(logger, "info", "PROCESSING",
-                      f"starting changes feed (feed_type={cfg.get('changes_feed', {}).get('feed_type', 'longpoll')})")
+            log_event(
+                logger,
+                "info",
+                "PROCESSING",
+                f"starting changes feed (feed_type={cfg.get('changes_feed', {}).get('feed_type', 'longpoll')})",
+            )
 
-            loop.run_until_complete(poll_changes(
-                cfg, src, shutdown_event, metrics=metrics,
-                restart_event=restart_event,
-            ))
+            loop.run_until_complete(
+                poll_changes(
+                    cfg,
+                    src,
+                    shutdown_event,
+                    metrics=metrics,
+                    restart_event=restart_event,
+                )
+            )
 
             if shutdown_event.is_set():
                 break
 
             # If offline, wait until online or shutdown
             if offline_event.is_set():
-                log_event(logger, "info", "CONTROL", "worker is offline – waiting for /_online signal")
+                log_event(
+                    logger,
+                    "info",
+                    "CONTROL",
+                    "worker is offline – waiting for /_online signal",
+                )
                 while offline_event.is_set() and not shutdown_event.is_set():
                     loop.run_until_complete(asyncio.sleep(0.5))
                 if shutdown_event.is_set():
@@ -2793,7 +3610,9 @@ def main() -> None:
             if errors:
                 for e in errors:
                     logger.error("CONFIG ERROR: %s", e)
-                logger.error("Config has errors – keeping previous feed running would have stopped; shutting down")
+                logger.error(
+                    "Config has errors – keeping previous feed running would have stopped; shutting down"
+                )
                 break
             for w in warnings:
                 logger.warning("CONFIG WARNING: %s", w)

@@ -24,6 +24,7 @@ from schema.validator import validate_schema, validate_file
 # Helper: minimal valid mapping
 # ---------------------------------------------------------------------------
 
+
 def _base_mapping(**overrides) -> dict:
     """Return a minimal valid mapping dict with a single parent table."""
     m = {
@@ -77,6 +78,7 @@ def _parent_child_mapping(**child_overrides) -> dict:
 # validate_schema
 # ===================================================================
 
+
 class TestValidateSchemaStructure(unittest.TestCase):
     """Basic structural validation."""
 
@@ -94,7 +96,11 @@ class TestValidateSchemaStructure(unittest.TestCase):
         self.assertTrue(any("has no name" in e for e in errors))
 
     def test_table_invalid_sql_identifier(self):
-        mapping = {"tables": [{"name": "1bad-name!", "primary_key": "id", "columns": {"id": "$.id"}}]}
+        mapping = {
+            "tables": [
+                {"name": "1bad-name!", "primary_key": "id", "columns": {"id": "$.id"}}
+            ]
+        }
         warnings, errors = validate_schema(mapping)
         self.assertTrue(any("invalid SQL identifier" in e for e in errors))
 
@@ -120,17 +126,27 @@ class TestValidateSchemaStructure(unittest.TestCase):
         self.assertTrue(any("no columns" in e for e in errors))
 
     def test_column_invalid_sql_identifier(self):
-        mapping = {"tables": [{"name": "t", "primary_key": "id", "columns": {"bad col!": "$.x"}}]}
+        mapping = {
+            "tables": [
+                {"name": "t", "primary_key": "id", "columns": {"bad col!": "$.x"}}
+            ]
+        }
         warnings, errors = validate_schema(mapping)
         self.assertTrue(any("not a valid SQL identifier" in e for e in errors))
 
     def test_column_path_not_starting_with_dollar(self):
-        mapping = {"tables": [{"name": "t", "primary_key": "id", "columns": {"a": "name"}}]}
+        mapping = {
+            "tables": [{"name": "t", "primary_key": "id", "columns": {"a": "name"}}]
+        }
         warnings, errors = validate_schema(mapping)
         self.assertTrue(any("must start with '$'" in e for e in errors))
 
     def test_column_path_dict_not_starting_with_dollar(self):
-        mapping = {"tables": [{"name": "t", "primary_key": "id", "columns": {"a": {"path": "name"}}}]}
+        mapping = {
+            "tables": [
+                {"name": "t", "primary_key": "id", "columns": {"a": {"path": "name"}}}
+            ]
+        }
         warnings, errors = validate_schema(mapping)
         self.assertTrue(any("must start with '$'" in e for e in errors))
 
@@ -247,14 +263,13 @@ class TestValidateSchemaSampleDoc(unittest.TestCase):
 # validate_file
 # ===================================================================
 
+
 class TestValidateFile(unittest.TestCase):
     """Tests for validate_file()."""
 
     def test_valid_json_file(self):
         mapping = _base_mapping()
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(mapping, f)
             f.flush()
             tmp_path = f.name
@@ -269,9 +284,7 @@ class TestValidateFile(unittest.TestCase):
         self.assertTrue(any("Cannot read mapping file" in e for e in errors))
 
     def test_invalid_json(self):
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             f.write("{not valid json!!!")
             f.flush()
             tmp_path = f.name

@@ -24,16 +24,18 @@ except ImportError:
 
 # -- MySQL error classification --------------------------------------------------
 # MySQL error codes that are transient (worth retrying).
-_TRANSIENT_MYSQL_CODES = frozenset({
-    1040,   # Too many connections
-    1205,   # Lock wait timeout exceeded
-    1213,   # Deadlock found when trying to get lock
-    2002,   # Can't connect to local MySQL server
-    2003,   # Can't connect to MySQL server
-    2006,   # MySQL server has gone away
-    2013,   # Lost connection to MySQL server during query
-    2055,   # Lost connection to MySQL server
-})
+_TRANSIENT_MYSQL_CODES = frozenset(
+    {
+        1040,  # Too many connections
+        1205,  # Lock wait timeout exceeded
+        1213,  # Deadlock found when trying to get lock
+        2002,  # Can't connect to local MySQL server
+        2003,  # Can't connect to MySQL server
+        2006,  # MySQL server has gone away
+        2013,  # Lost connection to MySQL server during query
+        2055,  # Lost connection to MySQL server
+    }
+)
 
 
 class MySQLOutputForwarder(BaseOutputForwarder):
@@ -53,9 +55,7 @@ class MySQLOutputForwarder(BaseOutputForwarder):
 
     def __init__(self, out_cfg: dict, dry_run: bool = False, metrics=None):
         if aiomysql is None:
-            raise RuntimeError(
-                "aiomysql library not installed – pip install aiomysql"
-            )
+            raise RuntimeError("aiomysql library not installed – pip install aiomysql")
 
         super().__init__(out_cfg, dry_run, metrics=metrics)
 
@@ -80,6 +80,7 @@ class MySQLOutputForwarder(BaseOutputForwarder):
         ssl_ctx = None
         if self._ssl:
             import ssl as _ssl
+
             ssl_ctx = _ssl.create_default_context()
             ssl_ctx.check_hostname = False
             ssl_ctx.verify_mode = _ssl.CERT_NONE
@@ -98,8 +99,11 @@ class MySQLOutputForwarder(BaseOutputForwarder):
         )
         logger.info(
             "MySQL pool created: %s:%d/%s (pool %d–%d)",
-            self._host, self._port, self._database,
-            self._pool_min, self._pool_max,
+            self._host,
+            self._port,
+            self._database,
+            self._pool_min,
+            self._pool_max,
         )
 
     async def _close_pool(self) -> None:
@@ -149,13 +153,9 @@ class MySQLOutputForwarder(BaseOutputForwarder):
 
             col_list = ", ".join(f"`{c}`" for c in cols)
             val_list = ", ".join("%s" for _ in cols)
-            update_set = ", ".join(
-                f"`{c}` = VALUES(`{c}`)" for c in cols if c != pk
-            )
+            update_set = ", ".join(f"`{c}` = VALUES(`{c}`)" for c in cols if c != pk)
 
-            sql = (
-                f"INSERT INTO `{op.table}` ({col_list}) VALUES ({val_list})"
-            )
+            sql = f"INSERT INTO `{op.table}` ({col_list}) VALUES ({val_list})"
             if update_set:
                 sql += f" ON DUPLICATE KEY UPDATE {update_set}"
             return sql, vals
@@ -217,11 +217,14 @@ class MySQLOutputForwarder(BaseOutputForwarder):
                 await cur.execute("SELECT 1")
         logger.info(
             "MySQL reachable: %s:%d/%s",
-            self._host, self._port, self._database,
+            self._host,
+            self._port,
+            self._database,
         )
 
 
 # ── Introspection (standalone functions, not part of the forwarder) ──────
+
 
 async def introspect_tables(my_cfg: dict) -> list[dict]:
     """
@@ -235,6 +238,7 @@ async def introspect_tables(my_cfg: dict) -> list[dict]:
     ssl_ctx = None
     if my_cfg.get("ssl"):
         import ssl as _ssl
+
         ssl_ctx = _ssl.create_default_context()
         ssl_ctx.check_hostname = False
         ssl_ctx.verify_mode = _ssl.CERT_NONE
@@ -277,15 +281,25 @@ async def introspect_tables(my_cfg: dict) -> list[dict]:
             col_rows = await cur.fetchall()
 
             columns = []
-            for (col_name, data_type, column_type, is_nullable,
-                 default_val, char_max_len, num_prec, num_scale) in col_rows:
-                columns.append({
-                    "name": col_name,
-                    "type": data_type,
-                    "display_type": column_type,
-                    "nullable": is_nullable == "YES",
-                    "default": default_val,
-                })
+            for (
+                col_name,
+                data_type,
+                column_type,
+                is_nullable,
+                default_val,
+                char_max_len,
+                num_prec,
+                num_scale,
+            ) in col_rows:
+                columns.append(
+                    {
+                        "name": col_name,
+                        "type": data_type,
+                        "display_type": column_type,
+                        "nullable": is_nullable == "YES",
+                        "default": default_val,
+                    }
+                )
 
             # Get primary key columns
             await cur.execute(
@@ -318,13 +332,15 @@ async def introspect_tables(my_cfg: dict) -> list[dict]:
                 for r in fk_rows
             ]
 
-            result.append({
-                "table_name": table_name,
-                "schema": database,
-                "columns": columns,
-                "primary_key": pk_cols,
-                "foreign_keys": fks,
-            })
+            result.append(
+                {
+                    "table_name": table_name,
+                    "schema": database,
+                    "columns": columns,
+                    "primary_key": pk_cols,
+                    "foreign_keys": fks,
+                }
+            )
 
         await cur.close()
         return result
