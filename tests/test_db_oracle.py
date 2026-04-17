@@ -160,7 +160,7 @@ class TestDsnConstruction(unittest.TestCase):
 
     @patch("db.db_oracle.oracledb", new_callable=MagicMock)
     def test_dsn_from_host_port_db(self, mock_oracledb):
-        fwd = OracleOutputForwarder.__new__(OracleOutputForwarder)
+        OracleOutputForwarder.__new__(OracleOutputForwarder)
         # Manually call __init__ logic for DSN construction
         out_cfg = {
             "oracle": {
