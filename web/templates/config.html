@@ -7,6 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/tagify.css" rel="stylesheet" type="text/css" />
   <script src="/static/js/tailwind.js"></script>
   <script src="/static/js/tagify.min.js"></script>
@@ -20,32 +21,13 @@
     })();
   </script>
 </head>
-<body class="min-h-screen flex flex-col bg-base-200">
+<body class="min-h-screen bg-base-200">
+  <div id="sidebar-root"></div>
 
-  <!-- Navbar -->
-  <nav class="navbar bg-base-100 shadow-sm px-4">
-    <div class="flex-1">
-      <a href="/" class="text-xl font-bold">Changes Worker Admin</a>
-    </div>
-    <div class="flex-none">
-      <ul class="menu menu-horizontal px-1 gap-1">
-        <li><a href="/">Dashboard</a></li>
-        <li><a href="/config" class="active">Config</a></li>
-        <li><a href="/schema">Schema Mappings</a></li>
-        <li><a href="/transforms">Transforms</a></li>
-        <li><a href="/wizard">Wizard</a></li>
-        </ul>
-      <label class="label cursor-pointer gap-2 ml-4">
-        <span class="label-text text-sm">Dark</span>
-        <input type="checkbox" id="themeToggle" class="toggle toggle-sm" />
-        <span class="label-text text-sm">Light</span>
-      </label>
-    </div>
-  </nav>
-
+  <div class="sidebar-main">
   <!-- Main content -->
-  <main class="flex-1 container mx-auto p-6 max-w-4xl">
-    <h1 class="text-2xl font-bold mb-4">Configuration Editor</h1>
+  <main class="container mx-auto p-6 max-w-4xl">
+    <h1 class="text-2xl font-bold mb-4">Settings: Configuration Editor</h1>
 
     <!-- Tabs: Form / Raw JSON -->
     <div role="tablist" class="tabs tabs-bordered mb-4">
@@ -61,9 +43,9 @@
     <!-- Form View -->
     <div id="viewForm">
 
-      <!-- ── GROUP: INPUT ── -->
+      <!-- ── GROUP: SOURCE ── -->
       <div class="flex items-center gap-3 mt-0 mb-2">
-        <div class="text-xs font-bold tracking-widest uppercase opacity-50">INPUT</div>
+        <div class="text-xs font-bold tracking-widest uppercase opacity-50">SOURCE</div>
         <div class="flex-1 border-t border-base-content/10"></div>
       </div>
 
@@ -917,25 +899,11 @@
       <button class="btn btn-primary" onclick="saveConfig()">Save Config</button>
       <button class="btn btn-ghost" onclick="loadConfig()">Reset</button>
     </div>
-  </main>
-
-  <!-- Footer -->
-  <footer class="footer footer-center p-4 bg-base-100 text-base-content">
-    <p>Changes Worker v1.4.0</p>
-  </footer>
 
   <!-- Toast container -->
   <div id="toastContainer" class="toast toast-end toast-bottom z-50"></div>
 
 <script>
-  // Theme toggle (persisted)
-  var themeToggle = document.getElementById('themeToggle');
-  themeToggle.checked = (localStorage.getItem('cw_theme') || 'dark') === 'light';
-  themeToggle.addEventListener('change', function() {
-    var theme = themeToggle.checked ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('cw_theme', theme);
-  });
 
   // Expand / collapse all sections
   function toggleAllSections(show) {
@@ -1418,9 +1386,28 @@
       if (!res.ok) throw new Error('HTTP ' + res.status);
       clearValidationHighlights();
       showToast('Config saved successfully', 'success');
+      showRestartRequiredToast();
     } catch (err) {
       showToast('Failed to save config: ' + err.message, 'error');
     }
+  }
+
+  function showRestartRequiredToast() {
+    var container = document.getElementById('toastContainer');
+    var id = 'restartRequiredToast';
+    if (document.getElementById(id)) return;
+    var el = document.createElement('div');
+    el.id = id;
+    el.className = 'alert alert-warning shadow-lg';
+    el.style.cssText = 'border-left:4px solid #f59e0b;cursor:pointer';
+    el.innerHTML = '<span>⚠️ Changes saved but won\'t take effect until you <b>Restart</b> the worker.</span>' +
+      '<button class="btn btn-xs btn-ghost" onclick="this.parentElement.remove()">✕</button>';
+    el.querySelector('span').addEventListener('click', function () {
+      var btn = document.getElementById('restartBtn');
+      if (btn) btn.click();
+      el.remove();
+    });
+    container.appendChild(el);
   }
 
   // Initialize Tagify on Channels input
@@ -1580,6 +1567,10 @@
   // Load on page init
   loadConfig();
 </script>
+
+  </main>
+  </div><!-- /sidebar-main -->
+  <script src="/static/js/sidebar.js"></script>
 
 </body>
 </html>

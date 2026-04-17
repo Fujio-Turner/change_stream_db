@@ -554,6 +554,10 @@ async def _restart_handler(request: aiohttp.web.Request) -> aiohttp.web.Response
     restart_event: asyncio.Event | None = request.app.get("restart_event")
     if restart_event is None:
         return aiohttp.web.json_response({"error": "restart not supported"}, status=500)
+    # If offline, clear the offline flag so the restart loop resumes
+    offline_event: asyncio.Event | None = request.app.get("offline_event")
+    if offline_event is not None and offline_event.is_set():
+        offline_event.clear()
     log_event(logger, "info", "CONTROL", "restart requested via /_restart endpoint")
     restart_event.set()
     return aiohttp.web.json_response({"ok": True, "message": "restart signal sent"})
@@ -569,9 +573,43 @@ async def _shutdown_handler(request: aiohttp.web.Request) -> aiohttp.web.Respons
     return aiohttp.web.json_response({"ok": True, "message": "shutdown signal sent"})
 
 
+async def _offline_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """POST /_offline — pause the changes feed. Worker stays alive."""
+    offline_event: asyncio.Event | None = request.app.get("offline_event")
+    restart_event: asyncio.Event | None = request.app.get("restart_event")
+    if offline_event is None or restart_event is None:
+        return aiohttp.web.json_response({"error": "offline not supported"}, status=500)
+    if offline_event.is_set():
+        return aiohttp.web.json_response({"ok": True, "message": "already offline"})
+    log_event(logger, "info", "CONTROL", "offline requested via /_offline endpoint")
+    offline_event.set()
+    restart_event.set()  # break the current feed loop
+    return aiohttp.web.json_response({"ok": True, "message": "going offline"})
+
+
+async def _online_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """POST /_online — resume the changes feed with current config."""
+    offline_event: asyncio.Event | None = request.app.get("offline_event")
+    if offline_event is None:
+        return aiohttp.web.json_response({"error": "online not supported"}, status=500)
+    if not offline_event.is_set():
+        return aiohttp.web.json_response({"ok": True, "message": "already online"})
+    log_event(logger, "info", "CONTROL", "online requested via /_online endpoint")
+    offline_event.clear()
+    return aiohttp.web.json_response({"ok": True, "message": "going online"})
+
+
+async def _status_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """GET /_status — return worker online/offline state."""
+    offline_event: asyncio.Event | None = request.app.get("offline_event")
+    is_offline = offline_event.is_set() if offline_event is not None else False
+    return aiohttp.web.json_response({"online": not is_offline})
+
+
 async def start_metrics_server(metrics: MetricsCollector, host: str, port: int,
                                restart_event: asyncio.Event | None = None,
                                shutdown_event: asyncio.Event | None = None,
+                               offline_event: asyncio.Event | None = None,
                                ) -> aiohttp.web.AppRunner:
     """Start a lightweight HTTP server that serves /_metrics in Prometheus format."""
     from aiohttp import web
@@ -582,10 +620,15 @@ async def start_metrics_server(metrics: MetricsCollector, host: str, port: int,
         app["restart_event"] = restart_event
     if shutdown_event is not None:
         app["shutdown_event"] = shutdown_event
+    if offline_event is not None:
+        app["offline_event"] = offline_event
     app.router.add_get("/_metrics", _metrics_handler)
     app.router.add_get("/metrics", _metrics_handler)
     app.router.add_post("/_restart", _restart_handler)
     app.router.add_post("/_shutdown", _shutdown_handler)
+    app.router.add_post("/_offline", _offline_handler)
+    app.router.add_post("/_online", _online_handler)
+    app.router.add_get("/_status", _status_handler)
 
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
@@ -2423,6 +2466,7 @@ def main() -> None:
 
     shutdown_event = asyncio.Event()
     restart_event = asyncio.Event()
+    offline_event = asyncio.Event()
 
     def _signal_handler() -> None:
         logger.info("Shutdown signal received")
@@ -2469,7 +2513,8 @@ def main() -> None:
             metrics_runner = loop.run_until_complete(
                 start_metrics_server(metrics, metrics_host, metrics_port,
                                      restart_event=restart_event,
-                                     shutdown_event=shutdown_event)
+                                     shutdown_event=shutdown_event,
+                                     offline_event=offline_event)
             )
 
         # ── Restart loop: reload config & re-enter poll_changes ──────
@@ -2485,6 +2530,17 @@ def main() -> None:
 
             if shutdown_event.is_set():
                 break
+
+            # If offline, wait until online or shutdown
+            if offline_event.is_set():
+                log_event(logger, "info", "CONTROL", "worker is offline – waiting for /_online signal")
+                while offline_event.is_set() and not shutdown_event.is_set():
+                    import time
+                    time.sleep(0.5)
+                if shutdown_event.is_set():
+                    break
+                restart_event.clear()
+                log_event(logger, "info", "CONTROL", "worker is back online")
 
             # restart_event was set — reload config and restart
             log_event(logger, "info", "CONTROL", "reloading config for restart")

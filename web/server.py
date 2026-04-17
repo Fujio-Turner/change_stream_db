@@ -69,6 +69,10 @@ async def page_wizard(request):
     return web.FileResponse(WEB / "templates" / "wizard.html")
 
 
+async def page_help(request):
+    return web.FileResponse(WEB / "templates" / "help.html")
+
+
 # --- Config API ---
 
 async def get_config(request):
@@ -321,6 +325,81 @@ async def get_metrics(request):
                 return web.Response(text=text, content_type="text/plain", headers=cors_headers())
     except Exception as exc:
         return json_response({"error": "metrics_unreachable", "detail": str(exc)})
+
+
+# --- Worker Control API ---
+
+async def post_restart(request):
+    """Proxy POST to the worker's /_restart endpoint."""
+    result = await _signal_worker_restart()
+    if result == "ok":
+        return json_response({"ok": True, "message": "restart signal sent"})
+    return json_response({"ok": False, "error": result}, status=502)
+
+
+async def post_shutdown(request):
+    """Proxy POST to the worker's /_shutdown endpoint."""
+    import os
+    import aiohttp as _aiohttp
+    worker_host = os.environ.get("METRICS_HOST")
+    if not worker_host:
+        return json_response({"ok": False, "error": "skipped"}, status=400)
+    try:
+        cfg = CBLStore().load_config() if USE_CBL else json.loads(CONFIG_PATH.read_text())
+        port = cfg.get("metrics", {}).get("port", 9090)
+    except Exception:
+        port = 9090
+    url = f"http://{worker_host}:{port}/_shutdown"
+    try:
+        async with _aiohttp.ClientSession() as session:
+            async with session.post(url, timeout=_aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    return json_response({"ok": True, "message": "shutdown signal sent"})
+                return json_response({"ok": False, "error": f"HTTP {resp.status}"}, status=502)
+    except Exception as exc:
+        return json_response({"ok": False, "error": str(exc)}, status=502)
+
+
+async def _worker_control(endpoint: str, method: str = "POST"):
+    """Generic helper to proxy a request to the worker's metrics server."""
+    import os
+    import aiohttp as _aiohttp
+    worker_host = os.environ.get("METRICS_HOST")
+    if not worker_host:
+        return {"ok": False, "error": "skipped"}
+    try:
+        cfg = CBLStore().load_config() if USE_CBL else json.loads(CONFIG_PATH.read_text())
+        port = cfg.get("metrics", {}).get("port", 9090)
+    except Exception:
+        port = 9090
+    url = f"http://{worker_host}:{port}/{endpoint}"
+    try:
+        async with _aiohttp.ClientSession() as session:
+            req = session.post if method == "POST" else session.get
+            async with req(url, timeout=_aiohttp.ClientTimeout(total=5)) as resp:
+                return await resp.json()
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+async def post_offline(request):
+    """Proxy POST to the worker's /_offline endpoint."""
+    result = await _worker_control("_offline")
+    status = 200 if result.get("ok") else 502
+    return json_response(result, status=status)
+
+
+async def post_online(request):
+    """Proxy POST to the worker's /_online endpoint."""
+    result = await _worker_control("_online")
+    status = 200 if result.get("ok") else 502
+    return json_response(result, status=status)
+
+
+async def get_worker_status(request):
+    """Proxy GET to the worker's /_status endpoint."""
+    result = await _worker_control("_status", method="GET")
+    return json_response(result)
 
 
 # --- Sample Doc API (fetch one doc from changes feed in dry-run mode) ---
@@ -797,6 +876,7 @@ def create_app():
     app.router.add_get("/schema", page_schema)
     app.router.add_get("/transforms", page_transforms)
     app.router.add_get("/wizard", page_wizard)
+    app.router.add_get("/help", page_help)
 
     # Config API
     app.router.add_get("/api/config", get_config)
@@ -823,6 +903,13 @@ def create_app():
 
     # Metrics API
     app.router.add_get("/api/metrics", get_metrics)
+
+    # Worker Control API
+    app.router.add_post("/api/restart", post_restart)
+    app.router.add_post("/api/shutdown", post_shutdown)
+    app.router.add_post("/api/offline", post_offline)
+    app.router.add_post("/api/online", post_online)
+    app.router.add_get("/api/worker-status", get_worker_status)
 
     # Sample Doc API
     app.router.add_get("/api/sample-doc", get_sample_doc)

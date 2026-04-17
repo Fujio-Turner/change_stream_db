@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Changes Worker -- Help &amp; Reference</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
+  <script src="/static/js/tailwind.js"></script>
+  <script>
+    (function(){
+      var t = localStorage.getItem('cw_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+</head>
+<body class="min-h-screen bg-base-200">
+  <div id="sidebar-root"></div>
+
+  <div class="sidebar-main">
+  <main class="container mx-auto p-6 space-y-6 max-w-5xl">
+
+    <!-- Header -->
+    <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h1 class="text-2xl font-bold mb-2">Help &amp; Reference</h1>
+        <p class="opacity-70 mb-4">Everything you need to know about configuring and operating Changes Worker.</p>
+        <div class="flex flex-wrap gap-2">
+          <a href="#overview" class="badge badge-primary badge-outline">Overview</a>
+          <a href="#pipeline" class="badge badge-info badge-outline">Pipeline</a>
+          <a href="#config" class="badge badge-warning badge-outline">Configuration</a>
+          <a href="#feeds" class="badge badge-secondary badge-outline">Feed Types</a>
+          <a href="#processing" class="badge badge-accent badge-outline">Processing</a>
+          <a href="#checkpoint" class="badge badge-primary badge-outline">Checkpoints</a>
+          <a href="#failures" class="badge badge-error badge-outline">Failure Modes</a>
+          <a href="#dlq" class="badge badge-warning badge-outline">Dead Letter Queue</a>
+          <a href="#endpoints" class="badge badge-info badge-outline">API Endpoints</a>
+          <a href="#metrics" class="badge badge-accent badge-outline">Metrics</a>
+          <a href="#recipes" class="badge badge-ghost badge-outline">Recipes</a>
+          <a href="#mapping" class="badge badge-secondary badge-outline">Schema Mapping</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Overview -->
+    <div id="overview" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3">Overview</h2>
+        <p class="opacity-80">Changes Worker is a production-ready <code class="bg-base-200 px-1 rounded">_changes</code> feed processor for <strong>Couchbase Sync Gateway</strong>, <strong>Capella App Services</strong>, <strong>Edge Server</strong>, and <strong>CouchDB</strong>. It consumes document changes in real-time or via polling, optionally transforms and maps them using 58 built-in functions, and forwards the results to HTTP endpoints, stdout, or relational databases (PostgreSQL, MySQL, MS SQL, Oracle).</p>
+        <p class="opacity-80 mt-2">The system supports at-least-once delivery semantics, checkpoint-based resumption, automatic retries with exponential backoff, and a dead letter queue for failed documents.</p>
+      </div>
+    </div>
+
+    <!-- Pipeline -->
+    <div id="pipeline" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-info">Pipeline</span> Three-Stage Pipeline
+        </h2>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th>Stage</th><th>What It Does</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-semibold text-success">Source (LEFT)</td>
+                <td>Consumes the <code>_changes</code> feed via longpoll, continuous (2-phase catch-up + streaming), websocket, SSE, or eventsource. Returns batches of changes with a <code>last_seq</code> sequence number.</td>
+              </tr>
+              <tr>
+                <td class="font-semibold text-info">Process (MIDDLE)</td>
+                <td>Filters changes (optionally skip deletes/removes), fetches full document bodies via <code>_bulk_get</code> or individual GETs, applies schema mapping and transforms, and manages checkpoint persistence.</td>
+              </tr>
+              <tr>
+                <td class="font-semibold text-warning">Output (RIGHT)</td>
+                <td>Forwards each document to the configured output: HTTP endpoint (configurable method: PUT/POST/PATCH/DELETE), stdout, or RDBMS (UPSERT/DELETE with optional multi-table transactions). Tracks success/failure per document.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Configuration Reference -->
+    <div id="config" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-warning">Config</span> Configuration Reference
+        </h2>
+        <p class="opacity-70 mb-3">All settings are managed via the <a href="/config" class="link link-primary">Settings</a> page. Key sections:</p>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-40">Section</th><th>Key Settings</th></tr></thead>
+            <tbody>
+              <tr><td class="font-semibold">Gateway</td><td><code>src</code> (sync_gateway / app_services / edge_server / couchdb), <code>url</code>, <code>database</code>, <code>scope</code>, <code>collection</code>, <code>accept_self_signed_certs</code></td></tr>
+              <tr><td class="font-semibold">Auth</td><td><code>method</code> (basic / session / bearer / none), <code>username</code>, <code>password</code>, <code>bearer_token</code>, <code>session_cookie</code></td></tr>
+              <tr><td class="font-semibold">Changes Feed</td><td><code>feed_type</code>, <code>poll_interval_seconds</code>, <code>active_only</code>, <code>include_docs</code>, <code>channels</code> (array), <code>throttle_feed</code>, <code>http_timeout_seconds</code></td></tr>
+              <tr><td class="font-semibold">Processing</td><td><code>sequential</code> (true = in-order), <code>max_concurrent</code> (parallel limit), <code>ignore_delete</code>, <code>ignore_remove</code>, <code>dry_run</code></td></tr>
+              <tr><td class="font-semibold">Output (HTTP)</td><td><code>mode</code> (stdout / http / db), <code>target_url</code>, <code>output_format</code> (json / xml / form / msgpack / csv), <code>write_method</code> (PUT / POST), <code>halt_on_failure</code></td></tr>
+              <tr><td class="font-semibold">Output (DB)</td><td><code>engine</code> (postgres / mysql / mssql / oracle), <code>host</code>, <code>port</code>, <code>database</code>, <code>schema</code>, <code>table</code>, <code>pool_size</code>, <code>ssl</code>, <code>mapping.mode</code> (jsonb / columns)</td></tr>
+              <tr><td class="font-semibold">Checkpoint</td><td><code>enabled</code>, <code>client_id</code>, <code>every_n_docs</code> (sub-batch checkpointing, sequential only)</td></tr>
+              <tr><td class="font-semibold">Metrics</td><td><code>enabled</code>, <code>host</code> (bind address), <code>port</code> (default 9090)</td></tr>
+              <tr><td class="font-semibold">Logging</td><td><code>redaction_level</code>, <code>console.log_level</code>, <code>file.log_level</code>, <code>file.rotation</code> (max_size, max_age)</td></tr>
+              <tr><td class="font-semibold">Couchbase Lite</td><td><code>db_dir</code>, <code>db_name</code>, <code>maintenance.enabled</code>, <code>maintenance.interval_hours</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feed Types -->
+    <div id="feeds" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-secondary">Feeds</span> Feed Types
+        </h2>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-36">Feed Type</th><th>Description</th><th class="w-56">Best For</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono font-semibold">longpoll</td><td>Periodic HTTP requests with server-side wait. Default mode.</td><td>Simple deployments, behind load balancers</td></tr>
+              <tr><td class="font-mono font-semibold">normal</td><td>Immediate response, no server wait.</td><td>Quick polling, testing</td></tr>
+              <tr><td class="font-mono font-semibold">continuous</td><td>2-phase: batched catch-up then real-time HTTP streaming.</td><td>Low-latency notifications, large initial catch-ups</td></tr>
+              <tr><td class="font-mono font-semibold">websocket</td><td>Persistent bi-directional WebSocket connection.</td><td>SG &amp; App Services only. Real-time with reliable framing</td></tr>
+              <tr><td class="font-mono font-semibold">sse</td><td>Server-Sent Events streaming.</td><td>Edge Server only</td></tr>
+              <tr><td class="font-mono font-semibold">eventsource</td><td>EventSource streaming.</td><td>CouchDB only</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Processing -->
+    <div id="processing" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-accent">Process</span> Sequential vs Parallel
+        </h2>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-40">Mode</th><th>Behavior</th><th>Trade-offs</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-semibold">Sequential<br><code class="text-xs">sequential: true</code></td>
+                <td>Documents processed one at a time, in feed order. Supports <code>every_n_docs</code> sub-batch checkpointing.</td>
+                <td>Safest — no race conditions, no duplicates, no reordering. Slower on large batches.</td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Parallel<br><code class="text-xs">sequential: false</code></td>
+                <td>Documents processed concurrently via <code>asyncio.gather</code>, limited by <code>max_concurrent</code> (default 20).</td>
+                <td>Much faster. Delivery order not guaranteed. Partial failure can cause re-delivery. Endpoint must be idempotent (use PUT).</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Checkpoint -->
+    <div id="checkpoint" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-primary">Checkpoint</span> Checkpoint Strategy
+        </h2>
+        <p class="opacity-80 mb-3">The checkpoint records the highest sequence that has been fully processed. On restart, the worker resumes from this point — no changes are re-processed.</p>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-44">Strategy</th><th>How It Works</th><th>When To Use</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-semibold">Per-Batch (default)</td>
+                <td>Checkpoint saves once after the entire batch is processed. If the worker crashes mid-batch, it re-processes the whole batch.</td>
+                <td>Most deployments. Simple and safe.</td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Per-N-Docs<br><code class="text-xs">every_n_docs: 1000</code></td>
+                <td>Checkpoint saves every N documents within a batch. Crash loses at most N docs. Sequential mode only.</td>
+                <td>Large catch-ups from <code>since=0</code> with 100K+ docs.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-sm opacity-60 mt-3">Storage: primary on Sync Gateway as <code>_local/checkpoint-{uuid}</code>. Fallback to Couchbase Lite or <code>checkpoint.json</code> file.</p>
+      </div>
+    </div>
+
+    <!-- Failure Modes -->
+    <div id="failures" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-error">Failures</span> Failure Modes &amp; Recovery
+        </h2>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-40"><code>halt_on_failure</code></th><th>On Output Failure</th><th>Checkpoint</th><th>Recovery</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-semibold text-success">true (default)</td>
+                <td>Stop processing the batch. Retry with exponential backoff on next poll cycle.</td>
+                <td class="text-error font-semibold">NOT advanced</td>
+                <td>Batch is re-fetched and re-processed. No data loss. Endpoint must recover before processing resumes.</td>
+              </tr>
+              <tr>
+                <td class="font-semibold text-warning">false</td>
+                <td>Skip the failed document. Write to dead letter queue (DLQ).</td>
+                <td class="text-success font-semibold">Advances</td>
+                <td>Failed docs are in the DLQ for manual replay. Processing continues with remaining docs.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="alert alert-info mt-4 text-sm">
+          <span><strong>Parallel mode + partial failure:</strong> If some tasks succeed before a failure, those docs were already delivered. With <code>halt_on_failure=true</code>, the checkpoint does NOT advance, so the next cycle re-delivers them. Your endpoint must be idempotent (PUT is safe).</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dead Letter Queue -->
+    <div id="dlq" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-warning">DLQ</span> Dead Letter Queue
+        </h2>
+        <p class="opacity-80 mb-3">When <code>halt_on_failure: false</code>, failed documents are written to the dead letter queue with full context for later replay.</p>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-44">Storage</th><th>Location</th><th>Persistence</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-semibold">Couchbase Lite</td>
+                <td><code>changes-worker.dlq</code> collection</td>
+                <td>Persists across restarts via Docker volume at <code>/app/data</code></td>
+              </tr>
+              <tr>
+                <td class="font-semibold">File fallback</td>
+                <td><code>failed_docs.jsonl</code> (configurable via <code>dead_letter_path</code>)</td>
+                <td>Lost on container restart unless volume-mounted</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-sm opacity-60 mt-3">Each DLQ entry includes: <code>doc_id</code>, <code>seq</code>, <code>method</code>, <code>status</code>, <code>error</code>, <code>timestamp</code>, and full <code>doc</code> body. The DLQ is <strong>not automatically drained</strong> — an operator or external process must replay failed entries.</p>
+      </div>
+    </div>
+
+    <!-- API Endpoints -->
+    <div id="endpoints" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-info">API</span> Monitoring &amp; API Endpoints
+        </h2>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-52">Endpoint</th><th class="w-24">Method</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr class="border-t-2"><td colspan="3" class="text-xs font-bold opacity-50 uppercase">Worker (port 9090)</td></tr>
+              <tr><td class="font-mono text-sm">/_metrics</td><td>GET</td><td>Prometheus metrics in text exposition format</td></tr>
+              <tr><td class="font-mono text-sm">/_restart</td><td>POST</td><td>Trigger feed restart with updated config</td></tr>
+              <tr class="border-t-2"><td colspan="3" class="text-xs font-bold opacity-50 uppercase">Admin UI (port 8080)</td></tr>
+              <tr><td class="font-mono text-sm">/api/metrics</td><td>GET</td><td>Proxy to worker's Prometheus metrics</td></tr>
+              <tr><td class="font-mono text-sm">/api/status</td><td>GET</td><td>CBL availability status</td></tr>
+              <tr><td class="font-mono text-sm">/api/config</td><td>GET / PUT</td><td>Read or write configuration</td></tr>
+              <tr><td class="font-mono text-sm">/api/mappings</td><td>GET</td><td>List all schema mapping files</td></tr>
+              <tr><td class="font-mono text-sm">/api/mappings/{name}</td><td>GET / PUT / DELETE</td><td>CRUD for individual mapping files</td></tr>
+              <tr><td class="font-mono text-sm">/api/dlq</td><td>GET / DELETE</td><td>List or clear dead letter queue</td></tr>
+              <tr><td class="font-mono text-sm">/api/dlq/count</td><td>GET</td><td>DLQ entry count</td></tr>
+              <tr><td class="font-mono text-sm">/api/dlq/{id}</td><td>GET / DELETE</td><td>Get or delete a DLQ entry</td></tr>
+              <tr><td class="font-mono text-sm">/api/dlq/{id}/retry</td><td>POST</td><td>Mark DLQ entry as retried</td></tr>
+              <tr><td class="font-mono text-sm">/api/sample-doc</td><td>GET</td><td>Fetch random doc from changes feed</td></tr>
+              <tr><td class="font-mono text-sm">/api/db/drivers</td><td>GET</td><td>List installed RDBMS drivers</td></tr>
+              <tr><td class="font-mono text-sm">/api/db/test</td><td>POST</td><td>Test RDBMS connection</td></tr>
+              <tr><td class="font-mono text-sm">/api/db/introspect</td><td>POST</td><td>Introspect table schemas from live DB</td></tr>
+              <tr><td class="font-mono text-sm">/api/db/parse-ddl</td><td>POST</td><td>Parse CREATE TABLE DDL statements</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Key Metrics -->
+    <div id="metrics" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-accent">Metrics</span> Key Prometheus Metrics
+        </h2>
+        <p class="opacity-70 mb-3">Exposed at <code>/_metrics</code> on the worker port (default 9090). Proxied via <code>/api/metrics</code> on the admin UI.</p>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_uptime_seconds</td><td>gauge</td><td>Time since worker started</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_poll_cycles_total</td><td>counter</td><td>Completed _changes poll cycles</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_poll_errors_total</td><td>counter</td><td>Failed _changes requests</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_changes_received_total</td><td>counter</td><td>Total change notifications received</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_changes_processed_total</td><td>counter</td><td>Changes forwarded to output stage</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_changes_filtered_total</td><td>counter</td><td>Changes skipped by filters (deletes + removes)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_output_requests_total</td><td>counter</td><td>HTTP requests sent to output target</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_output_success_total</td><td>counter</td><td>Successful output deliveries</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_output_errors_total</td><td>counter</td><td>Failed output deliveries</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_dead_letter_total</td><td>counter</td><td>Documents written to DLQ</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_output_endpoint_up</td><td>gauge</td><td>Output endpoint reachable (1=up, 0=down)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_checkpoint_seq</td><td>gauge</td><td>Current checkpoint sequence value</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_bytes_received_total</td><td>counter</td><td>Bytes downloaded from changes feed + doc fetches</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_bytes_output_total</td><td>counter</td><td>Bytes sent to output endpoint</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_output_response_time_seconds</td><td>summary</td><td>Output response time (p50, p90, p99)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mockup-code mt-4">
+          <pre><code># Example PromQL alert: DLQ is receiving docs
+rate(changes_worker_dead_letter_total[5m]) > 0
+
+# Example: error ratio on output
+rate(changes_worker_output_errors_total[5m]) / rate(changes_worker_output_requests_total[5m]) > 0.1</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recommended Configurations -->
+    <div id="recipes" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-ghost">Recipes</span> Recommended Configurations
+        </h2>
+
+        <h3 class="font-semibold mt-4 mb-2">Maximum Safety <span class="badge badge-success badge-sm">no data loss</span></h3>
+        <div class="mockup-code mb-4">
+          <pre><code>{
+  "processing": { "sequential": true, "max_concurrent": 1 },
+  "checkpoint": { "every_n_docs": 1000 },
+  "output":     { "halt_on_failure": true }
+}</code></pre>
+        </div>
+        <p class="text-sm opacity-70 mb-4">Sequential, one doc at a time. Checkpoint every 1000 docs. Any failure freezes the checkpoint. Slowest but safest.</p>
+
+        <h3 class="font-semibold mt-4 mb-2">Maximum Throughput <span class="badge badge-info badge-sm">at-least-once</span></h3>
+        <div class="mockup-code mb-4">
+          <pre><code>{
+  "processing": { "sequential": false, "max_concurrent": 50 },
+  "output":     { "halt_on_failure": true, "write_method": "PUT" }
+}</code></pre>
+        </div>
+        <p class="text-sm opacity-70 mb-4">Parallel with 50 concurrent tasks. Failure stops the batch and re-delivers. Requires an idempotent endpoint (PUT).</p>
+
+        <h3 class="font-semibold mt-4 mb-2">Best Effort <span class="badge badge-warning badge-sm">skip failures</span></h3>
+        <div class="mockup-code mb-4">
+          <pre><code>{
+  "processing": { "sequential": false, "max_concurrent": 20 },
+  "output":     { "halt_on_failure": false, "dead_letter_path": "failed_docs.jsonl" }
+}</code></pre>
+        </div>
+        <p class="text-sm opacity-70">Failed docs go to the DLQ and are skipped. Fastest, but data can be lost if the DLQ is not drained. Good for analytics / search indexing.</p>
+      </div>
+    </div>
+
+    <!-- Schema Mapping -->
+    <div id="mapping" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-secondary">Mapping</span> Schema Mapping Overview
+        </h2>
+        <p class="opacity-80 mb-3">Schema mappings define how JSON documents from the changes feed are transformed into relational table rows or remapped JSON structures.</p>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-44">Concept</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-semibold">source.match</td><td>Routes documents to the correct mapping based on a field value (e.g., <code>type: "order"</code>) or ID prefix.</td></tr>
+              <tr><td class="font-semibold">Tables</td><td>Each mapping can target one or more SQL tables. Parent tables hold flat fields; child tables hold array elements with foreign keys back to the parent.</td></tr>
+              <tr><td class="font-semibold">Columns</td><td>Map source JSON paths (e.g., <code>$.customer.name</code>) to target column names. Paths use simplified JSONPath syntax.</td></tr>
+              <tr><td class="font-semibold">Transforms</td><td>58 built-in functions across 6 categories. Can be chained: <code>trim().lowercase()</code>. See the <a href="/transforms" class="link link-primary">Glossary</a> for the full list.</td></tr>
+              <tr><td class="font-semibold">Foreign Keys</td><td>Child tables reference parent tables via <code>foreign_key.column</code> → <code>foreign_key.references</code>.</td></tr>
+              <tr><td class="font-semibold">Replace Strategy</td><td><code>delete_insert</code> (delete all child rows, re-insert) or <code>merge</code> (upsert individual rows).</td></tr>
+              <tr><td class="font-semibold">JSON Output</td><td>Alternative to tables — remaps JSON keys with optional transforms for JSON-to-JSON pipelines.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-sm opacity-60 mt-3">Use the <a href="/schema" class="link link-primary">Schema Mapping</a> page to visually create and edit mappings with drag-and-drop field mapping, live coverage stats, and relationship diagrams.</p>
+      </div>
+    </div>
+
+  </main>
+  </div><!-- /sidebar-main -->
+
+  <script src="/static/js/sidebar.js"></script>
+
+</body>
+</html>

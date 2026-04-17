@@ -7,6 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
   <script src="/static/js/tailwind.js"></script>
   <script src="/static/js/echarts.min.js"></script>
   <script>
@@ -28,30 +29,11 @@
     .ac-cat { padding: 3px 8px; font-size: 10px; font-weight: 700; opacity: 0.5; text-transform: uppercase; }
   </style>
 </head>
-<body class="min-h-screen flex flex-col bg-base-200">
+<body class="min-h-screen bg-base-200">
+  <div id="sidebar-root"></div>
 
-  <!-- Navbar -->
-  <nav class="navbar bg-base-100 shadow-sm px-4">
-    <div class="flex-1">
-      <a href="/" class="text-xl font-bold">Changes Worker Admin</a>
-    </div>
-    <div class="flex-none">
-      <ul class="menu menu-horizontal px-1 gap-1">
-        <li><a href="/">Dashboard</a></li>
-        <li><a href="/config">Config</a></li>
-        <li><a href="/schema" class="active">Schema Mappings</a></li>
-        <li><a href="/transforms">Transforms</a></li>
-        <li><a href="/wizard">Wizard</a></li>
-        </ul>
-      <label class="label cursor-pointer gap-2 ml-4">
-        <span class="label-text text-sm">Dark</span>
-        <input type="checkbox" id="themeToggle" class="toggle toggle-sm" />
-        <span class="label-text text-sm">Light</span>
-      </label>
-    </div>
-  </nav>
-
-  <main class="flex-1 flex flex-col w-full p-6 gap-4" style="min-height: calc(100vh - 132px);">
+  <div class="sidebar-main">
+  <main class="flex flex-col w-full p-6 gap-4" style="min-height: calc(100vh - 32px);">
 
     <!-- Top action bar -->
     <div class="card bg-base-100 shadow-sm rounded-2xl">
@@ -232,15 +214,15 @@ CREATE TABLE order_items (
         <p class="text-sm opacity-60 mb-4">Copy the context JSON below and paste it into your AI assistant (ChatGPT, Claude, etc.). Then paste the AI's response back to import it.</p>
 
         <div class="tabs tabs-boxed mb-3">
-          <a class="tab tab-active" id="aiTabExport" onclick="switchAITab('export')">① Export Context</a>
-          <a class="tab" id="aiTabImport" onclick="switchAITab('import')">② Import AI Response</a>
+          <a class="tab tab-active" id="aiTabExport" onclick="switchAITab('export')">1. Export Context</a>
+          <a class="tab" id="aiTabImport" onclick="switchAITab('import')">2. Import AI Response</a>
         </div>
 
         <!-- Export panel -->
         <div id="aiPanelExport" class="flex-1 flex flex-col min-h-0">
           <div class="flex gap-2 mb-2">
-            <button class="btn btn-sm btn-primary" onclick="copyAIContext()">📋 Copy to Clipboard</button>
-            <button class="btn btn-sm btn-secondary" onclick="downloadAIContext()">💾 Download JSON</button>
+            <button class="btn btn-sm btn-primary" onclick="copyAIContext()">Copy to Clipboard</button>
+            <button class="btn btn-sm btn-secondary" onclick="downloadAIContext()">Download JSON</button>
           </div>
           <textarea id="aiContextOutput" class="textarea textarea-bordered w-full font-mono text-xs flex-1" style="min-height: 350px;" readonly></textarea>
         </div>
@@ -250,7 +232,7 @@ CREATE TABLE order_items (
           <p class="text-sm opacity-60 mb-2">Paste the AI-generated mapping JSON below, or upload a file:</p>
           <div class="flex gap-2 mb-2">
             <label class="btn btn-sm btn-secondary">
-              📂 Upload JSON File
+              Upload JSON File
               <input type="file" accept=".json,application/json" class="hidden" onchange="uploadAIResponse(event)" />
             </label>
           </div>
@@ -302,7 +284,7 @@ CREATE TABLE order_items (
             <div id="panelLive" class="flex-1 flex-col hidden">
               <div class="flex items-center gap-2 mb-3">
                 <button class="btn btn-primary btn-sm" onclick="fetchLiveSample()" id="btnFetchSample">
-                  🎲 Fetch Another Random Sample
+                  Fetch Another Random Sample
                 </button>
                 <span id="liveSampleStatus" class="text-sm opacity-60"></span>
               </div>
@@ -548,30 +530,26 @@ CREATE TABLE order_items (
       </div>
     </div>
 
-  </main>
-
   <!-- Toast container -->
   <div id="toastContainer" class="toast toast-end toast-bottom z-50"></div>
 
-  <footer class="footer footer-center p-4 bg-base-100 text-base-content">
-    <p>Changes Worker v1.4.0</p>
-  </footer>
-
 <script>
-// ── Theme toggle ─────────────────────────────────────────────
-var themeToggle = document.getElementById('themeToggle');
-themeToggle.checked = (localStorage.getItem('cw_theme') || 'dark') === 'light';
-themeToggle.addEventListener('change', function() {
-  var theme = themeToggle.checked ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', theme);
-  localStorage.setItem('cw_theme', theme);
-  if (chartInstance) chartInstance.dispose();
-  if (treeChartInstance) treeChartInstance.dispose();
-  chartInstance = echarts.init(document.getElementById('chart'));
-  treeChartInstance = echarts.init(document.getElementById('chartTree'));
-  renderDiagram();
-  renderTreeDiagram();
-});
+// Re-init charts on theme change (attached after sidebar.js creates #themeToggle)
+function _attachThemeChartListener() {
+  var el = document.getElementById('themeToggle');
+  if (!el) return;
+  el.addEventListener('change', function() {
+    if (typeof chartInstance !== 'undefined' && chartInstance) chartInstance.dispose();
+    if (typeof treeChartInstance !== 'undefined' && treeChartInstance) treeChartInstance.dispose();
+    chartInstance = echarts.init(document.getElementById('chart'));
+    treeChartInstance = echarts.init(document.getElementById('chartTree'));
+    renderDiagram();
+    renderTreeDiagram();
+  });
+}
+// Defer until after sidebar.js has run
+if (document.getElementById('themeToggle')) _attachThemeChartListener();
+else document.addEventListener('DOMContentLoaded', _attachThemeChartListener);
 
 // ── State ────────────────────────────────────────────────────
 var tables = [];
@@ -1833,6 +1811,7 @@ async function saveMapping() {
       });
     }
     showStatus('Saved ' + filename, 'success');
+    showRestartRequiredToast();
     loadFileList();
   } catch (e) { showStatus('Save failed: ' + e.message, 'error'); }
 }
@@ -2088,6 +2067,24 @@ async function validateMapping() {
 
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function showRestartRequiredToast() {
+  var container = document.getElementById('toastContainer');
+  var id = 'restartRequiredToast';
+  if (document.getElementById(id)) return;
+  var el = document.createElement('div');
+  el.id = id;
+  el.className = 'alert alert-warning shadow-lg';
+  el.style.cssText = 'border-left:4px solid #f59e0b;cursor:pointer';
+  el.innerHTML = '<span>⚠️ Changes saved but won\'t take effect until you <b>Restart</b> the worker.</span>' +
+    '<button class="btn btn-xs btn-ghost" onclick="this.parentElement.remove()">✕</button>';
+  el.querySelector('span').addEventListener('click', function () {
+    var btn = document.getElementById('restartBtn');
+    if (btn) btn.click();
+    el.remove();
+  });
+  container.appendChild(el);
 }
 
 function showStatus(msg, type) {
@@ -2808,6 +2805,10 @@ function importAIResponse() {
 loadFileList(true);
 loadDbDrivers();
 </script>
+
+  </main>
+  </div><!-- /sidebar-main -->
+  <script src="/static/js/sidebar.js"></script>
 
 </body>
 </html>

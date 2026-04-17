@@ -7,6 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
   <script src="/static/js/tailwind.js"></script>
   <script src="/static/js/echarts.min.js"></script>
   <script>
@@ -28,32 +29,17 @@
     .stat-tip { display: inline-flex; align-items: center; gap: 0.35rem; }
     .stat-tip .tip-q { font-size: 0.6rem; opacity: 0.4; cursor: help; border: 1px solid currentColor; border-radius: 50%; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
     .stat-tip .tip-q:hover { opacity: 0.8; }
+    /* Pipeline stage border accents */
+    .border-source  { border-left: 3px solid var(--color-success); }
+    .border-process { border-left: 3px solid var(--color-info); }
+    .border-output  { border-left: 3px solid var(--color-warning); }
   </style>
 </head>
-<body class="min-h-screen flex flex-col bg-base-200">
+<body class="min-h-screen bg-base-200">
+  <div id="sidebar-root"></div>
 
-  <!-- Navbar -->
-  <nav class="navbar bg-base-100 shadow-sm px-4">
-    <div class="flex-1">
-      <a href="/" class="text-xl font-bold">Changes Worker Admin</a>
-    </div>
-    <div class="flex-none">
-      <ul class="menu menu-horizontal px-1 gap-1">
-        <li><a href="/" class="active">Dashboard</a></li>
-        <li><a href="/config">Config</a></li>
-        <li><a href="/schema">Schema Mappings</a></li>
-        <li><a href="/transforms">Transforms</a></li>
-        <li><a href="/wizard">Wizard</a></li>
-        </ul>
-      <label class="label cursor-pointer gap-2 ml-4">
-        <span class="label-text text-sm">Dark</span>
-        <input type="checkbox" id="themeToggle" class="toggle toggle-sm" />
-        <span class="label-text text-sm">Light</span>
-      </label>
-    </div>
-  </nav>
-
-  <main class="flex-1 container mx-auto p-6 space-y-6">
+  <div class="sidebar-main">
+  <main class="container mx-auto p-6 space-y-6">
 
     <!-- Status Bar -->
     <div class="card bg-base-100 shadow">
@@ -80,21 +66,53 @@
       </div>
     </div>
 
+    <!-- Config Summary — 3 columns: Source | Process | Output -->
+    <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-4">
+        <div class="flex items-center gap-2 mb-3">
+          <h3 class="text-sm font-semibold">Config Summary</h3>
+          <div class="tooltip tooltip-right" data-tip="Key settings from the active worker configuration.">
+            <span class="badge badge-ghost badge-sm cursor-help">?</span>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4" id="configSummaryGrid">
+          <div class="border-source pl-3">
+            <h4 class="text-xs font-bold uppercase mb-2" style="color:var(--color-success)">Source</h4>
+            <table class="table table-sm" id="configTableSource"><tbody>
+              <tr><td colspan="2" class="text-center opacity-50">Loading...</td></tr>
+            </tbody></table>
+          </div>
+          <div class="border-process pl-3">
+            <h4 class="text-xs font-bold uppercase mb-2" style="color:var(--color-info)">Process</h4>
+            <table class="table table-sm" id="configTableProcess"><tbody>
+              <tr><td colspan="2" class="text-center opacity-50">Loading...</td></tr>
+            </tbody></table>
+          </div>
+          <div class="border-output pl-3">
+            <h4 class="text-xs font-bold uppercase mb-2" style="color:var(--color-warning)">Output</h4>
+            <table class="table table-sm" id="configTableOutput"><tbody>
+              <tr><td colspan="2" class="text-center opacity-50">Loading...</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Charts Row (top, right under status bar) -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card bg-base-100 shadow rounded-2xl border-source">
         <div class="card-body p-4">
           <h2 class="text-sm font-semibold opacity-70">Changes Feed</h2>
           <div id="chartFeed" style="width:100%;height:180px"></div>
         </div>
       </div>
-      <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card bg-base-100 shadow rounded-2xl border-process">
         <div class="card-body p-4">
           <h2 class="text-sm font-semibold opacity-70">Processing</h2>
           <div id="chartProcess" style="width:100%;height:180px"></div>
         </div>
       </div>
-      <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card bg-base-100 shadow rounded-2xl border-output">
         <div class="card-body p-4">
           <h2 class="text-sm font-semibold opacity-70">Output</h2>
           <div id="chartOutput" style="width:100%;height:180px"></div>
@@ -104,19 +122,19 @@
 
     <!-- Avg Time Charts Row -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card bg-base-100 shadow rounded-2xl border-source">
         <div class="card-body p-4">
           <h2 class="text-sm font-semibold opacity-70">Avg Poll Time <span class="font-normal opacity-50">(ms)</span></h2>
           <div id="chartFeedAvg" style="width:100%;height:180px"></div>
         </div>
       </div>
-      <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card bg-base-100 shadow rounded-2xl border-process">
         <div class="card-body p-4">
           <h2 class="text-sm font-semibold opacity-70">Avg Processing Time <span class="font-normal opacity-50">(ms/doc)</span></h2>
           <div id="chartProcessAvg" style="width:100%;height:180px"></div>
         </div>
       </div>
-      <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card bg-base-100 shadow rounded-2xl border-output">
         <div class="card-body p-4">
           <h2 class="text-sm font-semibold opacity-70">Avg Output Response <span class="font-normal opacity-50">(ms)</span></h2>
           <div id="chartOutputAvg" style="width:100%;height:180px"></div>
@@ -128,7 +146,7 @@
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
       <!-- LEFT: Changes Feed -->
-      <div class="space-y-4">
+      <div class="space-y-4 border-source pl-3">
 
         <!-- Polling group -->
         <div class="card bg-base-100 shadow rounded-2xl">
@@ -185,7 +203,7 @@
       </div>
 
       <!-- MIDDLE: Processing -->
-      <div class="space-y-4">
+      <div class="space-y-4 border-process pl-3">
 
         <!-- Docs Processed group -->
         <div class="card bg-base-100 shadow rounded-2xl">
@@ -220,25 +238,10 @@
           </div>
         </div>
 
-        <!-- Config Summary group -->
-        <div class="card bg-base-100 shadow rounded-2xl">
-          <div class="card-body p-4">
-            <div class="flex items-center gap-2 mb-2">
-              <h3 class="text-sm font-semibold">Config Summary</h3>
-              <div class="tooltip tooltip-right" data-tip="Key settings from the active worker configuration.">
-                <span class="badge badge-ghost badge-sm cursor-help">?</span>
-              </div>
-            </div>
-            <table class="table table-sm" id="configTable"><tbody>
-              <tr><td colspan="2" class="text-center opacity-50">Loading...</td></tr>
-            </tbody></table>
-          </div>
-        </div>
-
       </div>
 
       <!-- RIGHT: Output -->
-      <div class="space-y-4">
+      <div class="space-y-4 border-output pl-3">
 
         <!-- Request Counts group -->
         <div class="card bg-base-100 shadow rounded-2xl">
@@ -296,7 +299,6 @@
       </div>
 
     </div>
-  </main>
 
   <!-- Status Detail Modal -->
   <dialog id="statusModal" class="modal">
@@ -317,25 +319,10 @@
     <form method="dialog" class="modal-backdrop"><button>close</button></form>
   </dialog>
 
-  <!-- Footer -->
-  <footer class="footer footer-center p-4 bg-base-100 text-base-content">
-    <p>Changes Worker v1.4.0</p>
-  </footer>
-
 <script>
 // ── Debug flag: add ?debug=true to URL to enable console logging ─
 var DEBUG = new URLSearchParams(window.location.search).get('debug') === 'true';
 function dbg() { if (DEBUG) console.log.apply(console, ['[CW]'].concat(Array.prototype.slice.call(arguments))); }
-
-// ── Theme ────────────────────────────────────────────────────
-var themeToggle = document.getElementById('themeToggle');
-themeToggle.checked = (localStorage.getItem('cw_theme') || 'dark') === 'light';
-themeToggle.addEventListener('change', function() {
-  var theme = themeToggle.checked ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', theme);
-  localStorage.setItem('cw_theme', theme);
-  rebuildCharts();
-});
 
 // ── Helpers ──────────────────────────────────────────────────
 function fmt(n) {
@@ -917,23 +904,35 @@ function loadConfig() {
       ? '<span class="text-error">None</span>'
       : '<span class="text-success">' + mapCount + '</span> <span class="opacity-50 text-xs">(' + mapNames.join(', ') + ')</span>';
 
-    var rows = [
-      ['Source', cfg.gateway?.src ?? '--'],
-      ['Database', cfg.gateway?.database ?? '--'],
-      ['Keyspace', (cfg.gateway?.scope || '--') + '.' + (cfg.gateway?.collection || '--')],
-      ['Output', outDetail],
-      ['Format', cfg.output?.output_format ?? 'json'],
-      ['Schema Mappings', mapDisplay],
+    var dbKeyspace = (cfg.gateway?.database || '--') + ' / ' + (cfg.gateway?.scope || '--') + '.' + (cfg.gateway?.collection || '--');
+    var sourceRows = [
+      ['Source', (cfg.gateway?.src ?? '--') + '<br><span class="opacity-50 text-xs">' + (cfg.gateway?.url ?? '') + '</span>'],
+      ['Database / Keyspace', dbKeyspace],
+      ['Feed Type', cfg.changes_feed?.feed_type ?? '--']
+    ];
+    var processRows = [
       ['Sequential', cfg.processing?.sequential ? 'Yes' : 'No'],
+      ['Schema Mappings', mapDisplay]
+    ];
+    var outputRows = [
+      ['Output', outDetail],
+      ['Format', cfg.output?.mode === 'db' ? (cfg.output?.db?.mapping?.mode === 'jsonb' ? 'jsonb' : 'columns') : (cfg.output?.output_format ?? 'json')],
       ['Halt on Fail', cfg.output?.halt_on_failure !== false ? 'Yes' : 'No']
     ];
-    document.querySelector('#configTable tbody').innerHTML = rows
-      .map(function(r) { return '<tr><td class="font-medium">' + r[0] + '</td><td class="text-right">' + r[1] + '</td></tr>'; })
-      .join('');
+    function renderRows(id, rows) {
+      document.querySelector('#' + id + ' tbody').innerHTML = rows
+        .map(function(r) { return '<tr><td class="font-medium">' + r[0] + '</td><td class="text-right">' + r[1] + '</td></tr>'; })
+        .join('');
+    }
+    renderRows('configTableSource', sourceRows);
+    renderRows('configTableProcess', processRows);
+    renderRows('configTableOutput', outputRows);
   }).catch(function(e) {
     dbg('loadConfig: ERROR', e);
-    document.querySelector('#configTable tbody').innerHTML =
-      '<tr><td colspan="2" class="text-center text-error">Failed to load</td></tr>';
+    var errHtml = '<tr><td colspan="2" class="text-center text-error">Failed to load</td></tr>';
+    document.querySelector('#configTableSource tbody').innerHTML = errHtml;
+    document.querySelector('#configTableProcess tbody').innerHTML = errHtml;
+    document.querySelector('#configTableOutput tbody').innerHTML = errHtml;
   });
 }
 
@@ -1058,6 +1057,10 @@ document.addEventListener('DOMContentLoaded', function() {
   setInterval(loadCBLStatus, 30000);
 });
 </script>
+
+  </main>
+  </div><!-- /sidebar-main -->
+  <script src="/static/js/sidebar.js"></script>
 
 </body>
 </html>
