@@ -31,7 +31,6 @@ import psutil
 
 import aiohttp
 import aiohttp.web
-import psutil
 from icecream import ic
 
 from rest import (
