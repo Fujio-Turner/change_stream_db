@@ -10,6 +10,9 @@
   <link href="/static/css/tagify.css" rel="stylesheet" type="text/css" />
   <script src="/static/js/tailwind.js"></script>
   <script src="/static/js/tagify.min.js"></script>
+  <style>
+    .input-needs-update { background-color: rgba(250, 204, 21, 0.15) !important; border-color: rgb(250, 204, 21) !important; }
+  </style>
   <script>
     (function(){
       var t = localStorage.getItem('cw_theme') || 'dark';
@@ -78,14 +81,16 @@
               <option value="couchdb">couchdb</option>
             </select>
           </label>
-          <label class="form-control w-full">
+          <fieldset class="form-control w-full">
             <div class="label"><span class="label-text">URL</span></div>
-            <input type="text" id="gateway_url" class="input input-bordered w-full" placeholder="http://localhost:4984" />
-          </label>
-          <label class="form-control w-full">
+            <input type="url" id="gateway_url" class="input input-bordered w-full validator" required placeholder="http://localhost:4984" pattern="^https?://.+" title="Must be a valid URL starting with http:// or https://" />
+            <p class="validator-hint hidden">Enter a valid URL (e.g. http://localhost:4984)</p>
+          </fieldset>
+          <fieldset class="form-control w-full">
             <div class="label"><span class="label-text">Database</span></div>
-            <input type="text" id="gateway_database" class="input input-bordered w-full" />
-          </label>
+            <input type="text" id="gateway_database" class="input input-bordered w-full validator" required minlength="1" title="Database name is required" />
+            <p class="validator-hint hidden">Database name is required</p>
+          </fieldset>
           <label class="form-control w-full" id="gateway_scope_wrap">
             <div class="label"><span class="label-text">Scope</span></div>
             <input type="text" id="gateway_scope" class="input input-bordered w-full" />
@@ -99,6 +104,10 @@
               <span class="label-text">Accept self-signed certs</span>
               <input type="checkbox" id="gateway_accept_self_signed_certs" class="toggle toggle-success" />
             </label>
+          </div>
+          <div class="flex items-center gap-3 mt-2">
+            <button class="btn btn-primary btn-sm" id="btnTestGateway" onclick="testGatewayConnection()">🔌 Test Connection</button>
+            <span id="gatewayTestStatus" class="text-sm"></span>
           </div>
         </div>
       </div>
@@ -118,26 +127,30 @@
             </select>
           </label>
           <div id="auth_basic_fields">
-            <label class="form-control w-full mb-3">
+            <fieldset class="form-control w-full mb-3">
               <div class="label"><span class="label-text">Username</span></div>
-              <input type="text" id="auth_username" class="input input-bordered w-full" />
-            </label>
-            <label class="form-control w-full">
+              <input type="text" id="auth_username" class="input input-bordered w-full validator" required minlength="1" title="Username is required for basic auth" />
+              <p class="validator-hint hidden">Username is required</p>
+            </fieldset>
+            <fieldset class="form-control w-full">
               <div class="label"><span class="label-text">Password</span></div>
-              <input type="password" id="auth_password" class="input input-bordered w-full" />
-            </label>
+              <input type="password" id="auth_password" class="input input-bordered w-full validator" required minlength="1" title="Password is required for basic auth" />
+              <p class="validator-hint hidden">Password is required</p>
+            </fieldset>
           </div>
           <div id="auth_session_fields" class="hidden">
-            <label class="form-control w-full">
+            <fieldset class="form-control w-full">
               <div class="label"><span class="label-text">Session Cookie</span></div>
-              <input type="text" id="auth_session_cookie" class="input input-bordered w-full" />
-            </label>
+              <input type="text" id="auth_session_cookie" class="input input-bordered w-full validator" required minlength="1" title="Session cookie is required" />
+              <p class="validator-hint hidden">Session cookie is required</p>
+            </fieldset>
           </div>
           <div id="auth_bearer_fields" class="hidden">
-            <label class="form-control w-full">
+            <fieldset class="form-control w-full">
               <div class="label"><span class="label-text">Bearer Token</span></div>
-              <input type="text" id="auth_bearer_token" class="input input-bordered w-full" />
-            </label>
+              <input type="text" id="auth_bearer_token" class="input input-bordered w-full validator" required minlength="1" title="Bearer token is required" />
+              <p class="validator-hint hidden">Bearer token is required</p>
+            </fieldset>
           </div>
         </div>
       </div>
@@ -264,10 +277,15 @@
 
           <!-- HTTP-specific fields -->
           <div id="output_http_fields">
-            <label class="form-control w-full mb-3">
+            <fieldset class="form-control w-full mb-3">
               <div class="label"><span class="label-text">Target URL</span></div>
-              <input type="text" id="output_target_url" class="input input-bordered w-full" placeholder="https://example.com/webhook" />
-            </label>
+              <input type="url" id="output_target_url" class="input input-bordered w-full validator" required placeholder="https://example.com/webhook" pattern="^https?://.+" title="Must be a valid URL starting with http:// or https://" />
+              <p class="validator-hint hidden">Enter a valid target URL</p>
+            </fieldset>
+            <div class="flex items-center gap-3 mb-3">
+              <button class="btn btn-primary btn-sm" id="btnTestHttpOutput" onclick="testHttpOutputConnection()">🔌 Test Connection</button>
+              <span id="httpOutputTestStatus" class="text-sm"></span>
+            </div>
             <label class="form-control w-full mb-3">
               <div class="label">
                 <span class="label-text flex items-center gap-2">
@@ -509,26 +527,35 @@
             <div class="grid grid-cols-2 gap-3 mb-3">
               <label class="form-control w-full">
                 <div class="label"><span class="label-text">Host</span></div>
-                <input type="text" id="output_db_host" class="input input-bordered w-full" placeholder="localhost" />
+                <select id="output_db_host_select" class="select select-bordered w-full" onchange="onDbHostSelectChange()">
+                  <option value="host.docker.internal">host.docker.internal</option>
+                  <option value="localhost">localhost</option>
+                  <option value="__custom__">Custom…</option>
+                </select>
+                <input type="text" id="output_db_host" class="input input-bordered w-full mt-1 hidden" placeholder="e.g. 192.168.1.100 or db.example.com" />
               </label>
-              <label class="form-control w-full">
+              <fieldset class="form-control w-full">
                 <div class="label"><span class="label-text">Port</span></div>
-                <input type="number" id="output_db_port" class="input input-bordered w-full" min="1" max="65535" />
-              </label>
+                <input type="number" id="output_db_port" class="input input-bordered w-full validator" required min="1" max="65535" title="Port must be between 1 and 65535" />
+                <p class="validator-hint hidden">Port must be 1–65535</p>
+              </fieldset>
             </div>
-            <label class="form-control w-full mb-3">
+            <fieldset class="form-control w-full mb-3">
               <div class="label"><span class="label-text">Database</span></div>
-              <input type="text" id="output_db_database" class="input input-bordered w-full" placeholder="mydb" />
-            </label>
+              <input type="text" id="output_db_database" class="input input-bordered w-full validator" required minlength="1" placeholder="mydb" title="Database name is required" />
+              <p class="validator-hint hidden">Database name is required</p>
+            </fieldset>
             <div class="grid grid-cols-2 gap-3 mb-3">
-              <label class="form-control w-full">
+              <fieldset class="form-control w-full">
                 <div class="label"><span class="label-text">Username</span></div>
-                <input type="text" id="output_db_username" class="input input-bordered w-full" />
-              </label>
-              <label class="form-control w-full">
+                <input type="text" id="output_db_username" class="input input-bordered w-full validator" required minlength="1" title="Username is required" />
+                <p class="validator-hint hidden">Username is required</p>
+              </fieldset>
+              <fieldset class="form-control w-full">
                 <div class="label"><span class="label-text">Password</span></div>
-                <input type="password" id="output_db_password" class="input input-bordered w-full" />
-              </label>
+                <input type="password" id="output_db_password" class="input input-bordered w-full validator" required minlength="1" title="Password is required" />
+                <p class="validator-hint hidden">Password is required</p>
+              </fieldset>
             </div>
             <div class="grid grid-cols-2 gap-3 mb-3">
               <label class="form-control w-full">
@@ -555,6 +582,10 @@
                 <span class="label-text">SSL</span>
                 <input type="checkbox" id="output_db_ssl" class="toggle toggle-success" />
               </label>
+            </div>
+            <div class="flex items-center gap-3 mb-3">
+              <button class="btn btn-primary btn-sm" id="btnTestDbOutput" onclick="testDbOutputConnection()">🔌 Test Connection</button>
+              <span id="dbOutputTestStatus" class="text-sm"></span>
             </div>
 
             <!-- Mapping sub-section -->
@@ -769,10 +800,11 @@
             <div class="label"><span class="label-text">Host</span></div>
             <input type="text" id="metrics_host" class="input input-bordered w-full" />
           </label>
-          <label class="form-control w-full">
+          <fieldset class="form-control w-full">
             <div class="label"><span class="label-text">Port</span></div>
-            <input type="number" id="metrics_port" class="input input-bordered w-full" min="1" max="65535" />
-          </label>
+            <input type="number" id="metrics_port" class="input input-bordered w-full validator" required min="1" max="65535" title="Port must be between 1 and 65535" />
+            <p class="validator-hint hidden">Port must be 1–65535</p>
+          </fieldset>
         </div>
       </div>
 
@@ -957,6 +989,19 @@
     document.getElementById('output_auth_bearer_fields').classList.toggle('hidden', method !== 'bearer');
   }
 
+  // DB host dropdown
+  function onDbHostSelectChange() {
+    var sel = document.getElementById('output_db_host_select');
+    var input = document.getElementById('output_db_host');
+    if (sel.value === '__custom__') {
+      input.classList.remove('hidden');
+      input.focus();
+    } else {
+      input.classList.add('hidden');
+      input.value = sel.value;
+    }
+  }
+
   // DB mapping mode field visibility
   function toggleDbMappingFields() {
     var mode = document.getElementById('output_db_mapping_mode').value;
@@ -1055,7 +1100,18 @@
     // DB fields
     var db = cfg.output?.db || {};
     document.getElementById('output_db_engine').value = db.engine || 'postgres';
-    document.getElementById('output_db_host').value = db.host || '';
+    var dbHost = db.host || 'host.docker.internal';
+    var dbHostSel = document.getElementById('output_db_host_select');
+    var dbHostInput = document.getElementById('output_db_host');
+    var presetOption = dbHostSel.querySelector('option[value="' + dbHost + '"]');
+    if (presetOption && dbHost !== '__custom__') {
+      dbHostSel.value = dbHost;
+      dbHostInput.classList.add('hidden');
+    } else {
+      dbHostSel.value = '__custom__';
+      dbHostInput.classList.remove('hidden');
+    }
+    dbHostInput.value = dbHost;
     document.getElementById('output_db_port').value = db.port || '';
     document.getElementById('output_db_database').value = db.database || '';
     document.getElementById('output_db_username').value = db.username || '';
@@ -1294,6 +1350,49 @@
     }
   }
 
+  // Clear all yellow highlights
+  function clearValidationHighlights() {
+    document.querySelectorAll('#viewForm .input-needs-update').forEach(function(el) {
+      el.classList.remove('input-needs-update');
+    });
+  }
+
+  // Validate visible required inputs; returns true if valid
+  function validateForm() {
+    clearValidationHighlights();
+    var invalidFields = [];
+    document.querySelectorAll('#viewForm input.validator, #viewForm select.validator, #viewForm textarea.validator').forEach(function(el) {
+      // Skip inputs inside hidden parent containers
+      if (el.closest('.hidden')) return;
+      if (!el.checkValidity()) {
+        invalidFields.push(el);
+      }
+    });
+    if (invalidFields.length === 0) return true;
+
+    // Highlight all invalid fields in yellow
+    invalidFields.forEach(function(el) { el.classList.add('input-needs-update'); });
+
+    // Open the collapse section of the first invalid field so user can see it
+    var firstField = invalidFields[0];
+    var collapse = firstField.closest('.collapse');
+    if (collapse) {
+      var toggle = collapse.querySelector(':scope > input[type="checkbox"]');
+      if (toggle && !toggle.checked) toggle.checked = true;
+    }
+    firstField.focus();
+
+    showToast('⚠️ Please fix ' + invalidFields.length + ' invalid field' + (invalidFields.length > 1 ? 's' : '') + ' before saving', 'error');
+    return false;
+  }
+
+  // Remove yellow highlight when user fixes the value
+  document.getElementById('viewForm').addEventListener('input', function(e) {
+    if (e.target.classList.contains('input-needs-update') && e.target.checkValidity()) {
+      e.target.classList.remove('input-needs-update');
+    }
+  });
+
   // Save config to server
   async function saveConfig() {
     var cfg;
@@ -1306,6 +1405,7 @@
         return;
       }
     } else {
+      if (!validateForm()) return;
       cfg = collectConfig();
     }
 
@@ -1316,6 +1416,7 @@
         body: JSON.stringify(cfg)
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
+      clearValidationHighlights();
       showToast('Config saved successfully', 'success');
     } catch (err) {
       showToast('Failed to save config: ' + err.message, 'error');
@@ -1356,6 +1457,124 @@
     document.getElementById('active_only_wrap').classList.toggle('hidden', isCouchDB);
     // Hide channels for CouchDB (SG-specific)
     document.getElementById('channels_wrap').classList.toggle('hidden', isCouchDB);
+  }
+
+  // ── Test Connection: Gateway (INPUT) ──────────────────────
+  async function testGatewayConnection() {
+    var btn = document.getElementById('btnTestGateway');
+    var status = document.getElementById('gatewayTestStatus');
+    btn.classList.add('loading');
+    status.textContent = 'Connecting...';
+    status.className = 'text-sm';
+    try {
+      var res = await fetch('/api/wizard/test-source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gateway: {
+            src: document.getElementById('gateway_src').value,
+            url: document.getElementById('gateway_url').value,
+            database: document.getElementById('gateway_database').value,
+            scope: document.getElementById('gateway_scope').value || '_default',
+            collection: document.getElementById('gateway_collection').value || '_default',
+            accept_self_signed_certs: document.getElementById('gateway_accept_self_signed_certs').checked
+          },
+          auth: {
+            method: document.getElementById('auth_method').value,
+            username: document.getElementById('auth_username').value,
+            password: document.getElementById('auth_password').value,
+            bearer_token: document.getElementById('auth_bearer_token').value,
+            session_cookie: document.getElementById('auth_session_cookie').value
+          }
+        })
+      });
+      var data = await res.json();
+      if (data.error) {
+        status.textContent = '❌ ' + (data.detail || data.error);
+        status.className = 'text-sm text-error';
+      } else {
+        status.textContent = '✅ Connected! Got ' + (data.pool_size || 1) + ' docs';
+        status.className = 'text-sm text-success';
+      }
+    } catch (e) {
+      status.textContent = '❌ ' + e.message;
+      status.className = 'text-sm text-error';
+    }
+    btn.classList.remove('loading');
+  }
+
+  // ── Test Connection: HTTP Output ─────────────────────────
+  async function testHttpOutputConnection() {
+    var btn = document.getElementById('btnTestHttpOutput');
+    var status = document.getElementById('httpOutputTestStatus');
+    btn.classList.add('loading');
+    status.textContent = 'Testing...';
+    status.className = 'text-sm';
+    try {
+      var res = await fetch('/api/wizard/test-output', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_url: document.getElementById('output_target_url').value.trim(),
+          accept_self_signed_certs: document.getElementById('output_accept_self_signed_certs').checked,
+          auth: {
+            method: document.getElementById('output_target_auth_method').value,
+            username: document.getElementById('output_target_auth_username').value,
+            password: document.getElementById('output_target_auth_password').value,
+            bearer_token: document.getElementById('output_target_auth_bearer_token').value
+          }
+        })
+      });
+      var data = await res.json();
+      if (data.ok) {
+        status.textContent = '✅ Reachable! HTTP ' + (data.status || '200');
+        status.className = 'text-sm text-success';
+      } else {
+        status.textContent = '❌ ' + (data.error || 'Unreachable');
+        status.className = 'text-sm text-error';
+      }
+    } catch (e) {
+      status.textContent = '❌ ' + e.message;
+      status.className = 'text-sm text-error';
+    }
+    btn.classList.remove('loading');
+  }
+
+  // ── Test Connection: RDBMS Output ────────────────────────
+  async function testDbOutputConnection() {
+    var btn = document.getElementById('btnTestDbOutput');
+    var status = document.getElementById('dbOutputTestStatus');
+    btn.classList.add('loading');
+    status.textContent = 'Connecting...';
+    status.className = 'text-sm';
+    try {
+      var res = await fetch('/api/db/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          db_type: document.getElementById('output_db_engine').value,
+          host: document.getElementById('output_db_host').value || document.getElementById('output_db_host_select').value,
+          port: parseInt(document.getElementById('output_db_port').value) || 5432,
+          database: document.getElementById('output_db_database').value,
+          user: document.getElementById('output_db_username').value,
+          password: document.getElementById('output_db_password').value,
+          schema: document.getElementById('output_db_schema').value || 'public',
+          ssl: document.getElementById('output_db_ssl').checked
+        })
+      });
+      var data = await res.json();
+      if (data.ok) {
+        status.textContent = '✅ Connected to ' + (document.getElementById('output_db_engine').value) + '!';
+        status.className = 'text-sm text-success';
+      } else {
+        status.textContent = '❌ ' + (data.error || 'Connection failed');
+        status.className = 'text-sm text-error';
+      }
+    } catch (e) {
+      status.textContent = '❌ ' + e.message;
+      status.className = 'text-sm text-error';
+    }
+    btn.classList.remove('loading');
   }
 
   // Load on page init

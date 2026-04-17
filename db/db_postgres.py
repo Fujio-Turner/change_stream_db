@@ -119,11 +119,19 @@ class PostgresOutputForwarder:
         Process a single document: map to SQL ops and execute.
         Returns result dict with 'ok' bool.
         """
+        if doc is None:
+            logger.debug("Received None doc – skipping")
+            if self._metrics:
+                self._metrics.inc("output_skipped_total")
+            return {"ok": True, "doc_id": "unknown", "skipped": True}
+
         doc_id = doc.get("_id", doc.get("id", "unknown"))
         is_delete = method == "DELETE"
 
         if not self._mappers:
             logger.warning("No schema mapping loaded – skipping doc %s", doc_id)
+            if self._metrics:
+                self._metrics.inc("output_skipped_total")
             return {"ok": False, "doc_id": doc_id, "error": "no_mapping"}
 
         # Find the first matching mapper
@@ -134,10 +142,27 @@ class PostgresOutputForwarder:
                 break
         if not mapper:
             logger.debug("Doc %s does not match any mapping filter – skipping", doc_id)
+            if self._metrics:
+                self._metrics.inc("output_skipped_total")
+                self._metrics.inc("mapper_skipped_total")
             return {"ok": True, "doc_id": doc_id, "skipped": True}
 
-        ops = mapper.map_document(doc, is_delete=is_delete)
+        try:
+            ops = mapper.map_document(doc, is_delete=is_delete)
+        except Exception as exc:
+            if self._metrics:
+                self._metrics.inc("output_requests_total")
+                self._metrics.inc("output_errors_total")
+                self._metrics.inc("mapper_errors_total")
+            logger.error("Mapping error for doc %s: %s", doc_id, exc)
+            return {"ok": False, "doc_id": doc_id, "error": f"mapping_error: {exc!s}"[:500]}
+
+        if self._metrics:
+            self._metrics.inc("mapper_matched_total")
+
         if not ops:
+            if self._metrics:
+                self._metrics.inc("output_skipped_total")
             return {"ok": True, "doc_id": doc_id, "ops": 0}
 
         if self._dry_run:
@@ -161,6 +186,7 @@ class PostgresOutputForwarder:
             if self._metrics:
                 self._metrics.inc("output_requests_total")
                 self._metrics.inc("output_success_total")
+                self._metrics.inc("mapper_ops_total", len(ops))
                 self._metrics.record_output_response_time(elapsed_ms / 1000)
 
             logger.debug("PostgreSQL: %d ops for %s (%.1fms)", len(ops), doc_id, elapsed_ms)

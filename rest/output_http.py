@@ -246,6 +246,12 @@ class OutputForwarder:
 
     async def send(self, doc: dict, method: str = "PUT") -> dict:
         """Send a single doc. Returns result dict with 'ok' bool. Raises OutputEndpointDown if halt_on_failure."""
+        if doc is None:
+            log_event(logger, "debug", "OUTPUT", "received None doc – skipping")
+            if self._metrics:
+                self._metrics.inc("output_skipped_total")
+            return {"ok": True, "doc_id": "unknown", "method": method, "skipped": True}
+
         if self._mode == "stdout":
             self._send_stdout(doc)
             if self._metrics:
@@ -455,6 +461,8 @@ class OutputForwarder:
         """Single health-check probe."""
         if not self._hc_url or self._http is None:
             return True
+        if self._metrics:
+            self._metrics.inc("health_probes_total")
         try:
             timeout = aiohttp.ClientTimeout(total=self._hc_timeout)
             kwargs: dict = {"auth": self._auth, "headers": self._headers, "timeout": timeout,
@@ -465,11 +473,15 @@ class OutputForwarder:
             resp = await self._http.request(self._hc_method, self._hc_url, **kwargs)
             elapsed_ms = (time.monotonic() - t_start) * 1000
             resp.release()
+            if self._metrics:
+                self._metrics.record_health_probe_time(elapsed_ms / 1000)
             log_event(logger, "debug", "HTTP", "health check",
                       url=self._hc_url, status=resp.status,
                       elapsed_ms=round(elapsed_ms, 1))
             return resp.status < 500
         except Exception as exc:
+            if self._metrics:
+                self._metrics.inc("health_probe_failures_total")
             log_event(logger, "warn", "HTTP", "health check failed: %s" % exc,
                       url=self._hc_url)
             return False

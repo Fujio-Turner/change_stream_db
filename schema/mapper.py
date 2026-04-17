@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -412,6 +413,10 @@ class SchemaMapper:
             value = resolve_column(item, col_def)
             if value is None and item is not parent_doc:
                 value = resolve_column(parent_doc, col_def)
+            # Sanitize float inf/nan – PostgreSQL integer/numeric columns reject them
+            if isinstance(value, float) and (math.isinf(value) or math.isnan(value)):
+                logger.warning("Column %r has non-finite value %r – replacing with None", col_name, value)
+                value = None
             row[col_name] = value
         return row
 

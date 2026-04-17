@@ -243,7 +243,12 @@
               </div>
               <div>
                 <label class="label label-text text-xs font-semibold">Host</label>
-                <input id="outDbHost" type="text" class="input input-bordered input-sm w-full" value="localhost" />
+                <select id="outDbHostSelect" class="select select-bordered select-sm w-full" onchange="onOutDbHostChange()">
+                  <option value="host.docker.internal" selected>host.docker.internal</option>
+                  <option value="localhost">localhost</option>
+                  <option value="__custom__">Custom…</option>
+                </select>
+                <input id="outDbHost" type="text" class="input input-bordered input-sm w-full mt-1 hidden" value="host.docker.internal" placeholder="e.g. 192.168.1.100 or db.example.com" />
               </div>
               <div>
                 <label class="label label-text text-xs font-semibold">Port</label>
@@ -642,10 +647,23 @@ function onOutDbTypeChange() {
   else document.getElementById('outDbSchema').value = '';
 }
 
+function onOutDbHostChange() {
+  var sel = document.getElementById('outDbHostSelect');
+  var input = document.getElementById('outDbHost');
+  if (sel.value === '__custom__') {
+    input.classList.remove('hidden');
+    input.value = '';
+    input.focus();
+  } else {
+    input.classList.add('hidden');
+    input.value = sel.value;
+  }
+}
+
 function getOutDbConfig() {
   return {
     db_type: document.getElementById('outDbType').value,
-    host: document.getElementById('outDbHost').value.trim(),
+    host: document.getElementById('outDbHost').value.trim() || document.getElementById('outDbHostSelect').value,
     port: parseInt(document.getElementById('outDbPort').value) || 5432,
     database: document.getElementById('outDbName').value.trim(),
     user: document.getElementById('outDbUser').value.trim(),
@@ -992,7 +1010,7 @@ function wizSaveCurrentTableEdits() {
     t.foreign_key.column = document.getElementById('wizTblFKCol').value.trim();
     t.foreign_key.references = document.getElementById('wizTblFKRef').value.trim();
     t.source_array = document.getElementById('wizTblSourceArray').value.trim();
-    t.replace_strategy = document.getElementById('wizTblReplaceStrategy').value.trim();
+    t.replace_strategy = document.getElementById('wizTblReplaceStrategy').value;
     t.on_delete = document.getElementById('wizTblOnDelete').value;
     t.columns = {};
     document.querySelectorAll('.wiz-col-row').forEach(function(row) {
@@ -1030,7 +1048,12 @@ function wizRenderTableEditor() {
       '<div><label class="label label-text text-xs">Source Array</label><input id="wizTblSourceArray" type="text" class="input input-bordered input-sm w-full" placeholder="$.items" value="' + esc(t.source_array) + '" oninput="updateConfigPreview()"></div>' +
       '<div><label class="label label-text text-xs">FK Column</label><input id="wizTblFKCol" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.column) + '" oninput="updateConfigPreview()"></div>' +
       '<div><label class="label label-text text-xs">FK References</label><input id="wizTblFKRef" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.references) + '" oninput="updateConfigPreview()"></div>' +
-      '<div><label class="label label-text text-xs">Replace Strategy</label><input id="wizTblReplaceStrategy" type="text" class="input input-bordered input-sm w-full" placeholder="delete_insert" value="' + esc(t.replace_strategy) + '" oninput="updateConfigPreview()"></div>' +
+      '<div><label class="label label-text text-xs">Replace Strategy</label>' +
+        '<select id="wizTblReplaceStrategy" class="select select-bordered select-sm w-full" onchange="updateConfigPreview()">' +
+          '<option value=""' + (!t.replace_strategy ? ' selected' : '') + '>-- none --</option>' +
+          '<option value="delete_insert"' + (t.replace_strategy === 'delete_insert' ? ' selected' : '') + '>delete_insert</option>' +
+          '<option value="merge"' + (t.replace_strategy === 'merge' ? ' selected' : '') + '>merge</option>' +
+        '</select></div>' +
     '</div>' +
     '<div class="divider my-1 text-xs opacity-60">Column Mappings</div>' +
     '<div class="flex gap-1 mb-1">' +
