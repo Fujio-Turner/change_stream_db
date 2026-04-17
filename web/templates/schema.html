@@ -274,6 +274,12 @@ CREATE TABLE order_items (
 
             <!-- JSON Schema panel -->
             <div id="panelSchema" class="flex-1 flex-col hidden">
+              <div id="schemaFlavorPicker" class="hidden mb-2">
+                <label class="label label-text text-xs">Doc Type / Flavor</label>
+                <select id="schemaFlavorSelect" class="select select-bordered select-sm w-full" onchange="onSchemaFlavorSelect()">
+                  <option value="">-- select a doc type --</option>
+                </select>
+              </div>
               <textarea id="schemaEditor" class="textarea textarea-bordered w-full font-mono text-sm flex-1"
                         style="min-height: 200px; resize: vertical;"
                         placeholder='Paste a JSON Schema (json-schema.org format)...'
@@ -973,18 +979,125 @@ function onSourceChange() {
   } catch (e) { renderSourceFields([]); }
 }
 
+var _schemaFlavors = []; // parsed flavor entries from schema array
+
 function onSchemaChange() {
   var text = document.getElementById('schemaEditor').value.trim();
-  if (!text) { renderSourceFields([]); return; }
+  if (!text) { renderSourceFields([]); hideSchemaFlavorPicker(); return; }
   try {
-    var schema = JSON.parse(text);
-    renderSourceFields(extractFromSchema(schema));
-    // Generate sample JSON from schema and populate source editor
-    var sample = generateSampleFromSchema(schema);
+    var parsed = JSON.parse(text);
+    // Detect array-of-flavors format: [[{Flavor:...}, ...]] or [{Flavor:...}, ...]
+    var flavors = extractSchemaFlavors(parsed);
+    if (flavors && flavors.length) {
+      _schemaFlavors = flavors;
+      showSchemaFlavorPicker(flavors);
+      return; // wait for user to pick from dropdown
+    }
+    hideSchemaFlavorPicker();
+    _schemaFlavors = [];
+    // Standard single schema object
+    renderSourceFields(extractFromSchema(parsed));
+    var sample = generateSampleFromSchema(parsed);
     if (sample) {
       document.getElementById('sourceEditor').value = JSON.stringify(sample, null, 2);
     }
-  } catch (e) { renderSourceFields([]); }
+  } catch (e) { renderSourceFields([]); hideSchemaFlavorPicker(); }
+}
+
+function extractSchemaFlavors(parsed) {
+  var arr = null;
+  if (Array.isArray(parsed) && parsed.length && Array.isArray(parsed[0])) {
+    arr = parsed[0]; // [[...]] format
+  } else if (Array.isArray(parsed) && parsed.length && parsed[0] && typeof parsed[0] === 'object' && 'Flavor' in parsed[0]) {
+    arr = parsed; // [...] format
+  }
+  if (!arr) return null;
+  // Filter to entries that have properties (skip binary / non-object types)
+  return arr.filter(function(entry) {
+    return entry && typeof entry === 'object' && entry.type === 'object' && entry.properties;
+  });
+}
+
+function buildFlavorLabel(entry) {
+  var label = '';
+  if (entry.Flavor) {
+    label = entry.Flavor;
+  } else {
+    // Build label from top-level property names
+    var keys = Object.keys(entry.properties || {});
+    label = keys.slice(0, 4).join(', ');
+    if (keys.length > 4) label += ', ...';
+  }
+  var count = entry['#docs'] || 0;
+  return (label || '(no flavor)') + '  (' + count + ' docs)';
+}
+
+function showSchemaFlavorPicker(flavors) {
+  var picker = document.getElementById('schemaFlavorPicker');
+  var sel = document.getElementById('schemaFlavorSelect');
+  sel.innerHTML = '<option value="">-- select a doc type (' + flavors.length + ' found) --</option>';
+  for (var i = 0; i < flavors.length; i++) {
+    var opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = buildFlavorLabel(flavors[i]);
+    sel.appendChild(opt);
+  }
+  picker.classList.remove('hidden');
+}
+
+function hideSchemaFlavorPicker() {
+  document.getElementById('schemaFlavorPicker').classList.add('hidden');
+}
+
+function onSchemaFlavorSelect() {
+  var sel = document.getElementById('schemaFlavorSelect');
+  var idx = sel.value;
+  if (idx === '' || !_schemaFlavors.length) return;
+  var entry = _schemaFlavors[parseInt(idx)];
+  if (!entry) return;
+
+  // Extract source fields from the schema entry
+  renderSourceFields(extractFromSchema(entry));
+
+  // Build a sample document from the first sample or generate from schema
+  var sampleDoc = buildSampleFromFlavor(entry);
+  if (sampleDoc) {
+    var pretty = JSON.stringify(sampleDoc, null, 2);
+    document.getElementById('sourceEditor').value = pretty;
+    onSourceChange();
+  }
+}
+
+function buildSampleFromFlavor(entry) {
+  // Try to use the first sample from the "samples" field
+  if (entry.samples && entry.samples.length) {
+    var s = entry.samples[0];
+    if (s && typeof s === 'object') return s;
+  }
+  // Fallback: build from property samples
+  if (!entry.properties) return null;
+  var obj = {};
+  var keys = Object.keys(entry.properties);
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    var prop = entry.properties[k];
+    if (prop.samples && prop.samples.length) {
+      obj[k] = prop.samples[0];
+    } else if (prop.type === 'object' && prop.properties) {
+      obj[k] = buildSampleFromFlavor(prop) || {};
+    } else if (prop.type === 'string') {
+      obj[k] = '';
+    } else if (prop.type === 'number') {
+      obj[k] = 0;
+    } else if (prop.type === 'boolean') {
+      obj[k] = false;
+    } else if (prop.type === 'array') {
+      obj[k] = [];
+    } else {
+      obj[k] = null;
+    }
+  }
+  return obj;
 }
 
 function generateSampleFromSchema(schema) {

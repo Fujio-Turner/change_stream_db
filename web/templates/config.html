@@ -201,6 +201,19 @@
         <div class="flex-1 border-t border-base-content/10"></div>
       </div>
 
+      <!-- Threads -->
+      <div class="collapse collapse-arrow bg-base-100 mb-2">
+        <input type="checkbox" />
+        <div class="collapse-title font-semibold">Threads</div>
+        <div class="collapse-content flex flex-col gap-3">
+          <label class="form-control w-full">
+            <div class="label"><span class="label-text">Worker Threads</span></div>
+            <input type="number" id="threads" class="input input-bordered w-full" min="1" value="4" />
+            <div class="label"><span class="label-text-alt opacity-50">Number of threads for managing multiple change feeds and outputs (future)</span></div>
+          </label>
+        </div>
+      </div>
+
       <!-- Processing -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
         <input type="checkbox" />
@@ -1014,6 +1027,8 @@
     document.getElementById('changes_feed_throttle_feed').value = cfg.changes_feed?.throttle_feed ?? 0;
     document.getElementById('changes_feed_http_timeout_seconds').value = cfg.changes_feed?.http_timeout_seconds ?? 300;
 
+    document.getElementById('threads').value = cfg.threads ?? 4;
+
     document.getElementById('processing_ignore_delete').checked = cfg.processing?.ignore_delete || false;
     document.getElementById('processing_ignore_remove').checked = cfg.processing?.ignore_remove || false;
     document.getElementById('processing_sequential').checked = cfg.processing?.sequential || false;
@@ -1177,6 +1192,7 @@
         throttle_feed: parseInt(document.getElementById('changes_feed_throttle_feed').value) || 0,
         http_timeout_seconds: parseInt(document.getElementById('changes_feed_http_timeout_seconds').value) || 300
       },
+      threads: parseInt(document.getElementById('threads').value) || 4,
       processing: {
         ignore_delete: document.getElementById('processing_ignore_delete').checked,
         ignore_remove: document.getElementById('processing_ignore_remove').checked,
