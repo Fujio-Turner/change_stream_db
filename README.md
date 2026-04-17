@@ -466,6 +466,36 @@ scrape_configs:
 
 All metrics are labeled with `src` (gateway type) and `database` (keyspace name) for multi-instance dashboards. The endpoint exposes counters, gauges, and a response time summary — everything you need for Grafana dashboards and alerting.
 
+#### System & Runtime Metrics
+
+In addition to pipeline metrics, the `/_metrics` endpoint exposes live system and Python runtime metrics (via [psutil](https://github.com/giampaolo/psutil)):
+
+| Category | Metrics |
+|---|---|
+| **Process CPU** | `process_cpu_percent`, `process_cpu_user_seconds_total`, `process_cpu_system_seconds_total` |
+| **Process Memory** | `process_memory_rss_bytes`, `process_memory_vms_bytes`, `process_memory_percent` |
+| **Threads** | `process_threads` (OS-level), `python_threads_active` (Python `threading` count) |
+| **Python GC** | `python_gc_gen{0,1,2}_count` (pending objects), `python_gc_gen{0,1,2}_collections_total` |
+| **File Descriptors** | `process_open_fds` |
+| **System CPU** | `system_cpu_count`, `system_cpu_percent` |
+| **System Memory** | `system_memory_total/available/used_bytes`, `system_memory_percent`, `system_swap_total/used_bytes` |
+| **Disk** | `system_disk_total/used/free_bytes`, `system_disk_percent` (root partition) |
+| **Network I/O** | `system_network_bytes_sent/recv_total`, `system_network_packets_sent/recv_total`, `system_network_errin/errout_total` |
+| **Storage** | `log_dir_size_bytes` (log directory), `cbl_db_size_bytes` (CBL database directory, when enabled) |
+
+All system metrics use the same `changes_worker_` prefix and are collected on each scrape (no background polling). Example PromQL alerts:
+
+```promql
+# Alert if RSS exceeds 512 MB
+changes_worker_process_memory_rss_bytes > 536870912
+
+# Alert if disk is > 90% full
+changes_worker_system_disk_percent > 90
+
+# Track GC pressure
+rate(changes_worker_python_gc_gen2_collections_total[5m]) > 1
+```
+
 📄 **For a complete metrics reference** with types, descriptions, PromQL examples, and charting suggestions, see [`metrics.html`](metrics.html).
 
 ### Worker Control Endpoints

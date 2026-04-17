@@ -75,16 +75,37 @@
             <li><a onclick="loadTemplate('sensors_json')">Sensors (JSON)</a></li>
           </ul>
         </div>
-        <div class="dropdown">
-          <label tabindex="0" class="btn btn-ghost btn-sm">Saved Files ▾</label>
-          <ul tabindex="0" class="dropdown-content menu p-2 shadow-lg bg-base-200 rounded-box w-64 z-50" id="fileListDropdown">
-            <li><a class="text-base-content/50">Loading...</a></li>
-          </ul>
-        </div>
         <button class="btn btn-info btn-sm" onclick="document.getElementById('dbImportModal').showModal()">🗄️ Import from Database</button>
         <button class="btn btn-warning btn-sm" onclick="document.getElementById('ddlModal').showModal()">📄 Upload DDL</button>
         <button class="btn btn-primary btn-sm" onclick="validateMapping()">🧪 Validate Mapping</button>
         <span id="statusMsg" class="text-sm ml-auto"></span>
+      </div>
+    </div>
+
+    <!-- Saved Mappings Table -->
+    <div class="card bg-base-100 shadow-sm rounded-2xl">
+      <div class="card-body p-4">
+        <div class="flex items-center gap-2 mb-2">
+          <h3 class="font-semibold text-base">Saved Mappings</h3>
+          <span id="mappingCount" class="badge badge-ghost badge-sm">0</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="table table-sm table-zebra w-full">
+            <thead>
+              <tr>
+                <th class="w-8"></th>
+                <th>Name</th>
+                <th>Source Filter</th>
+                <th>Updated</th>
+                <th>Active</th>
+                <th class="w-20">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="mappingsTableBody">
+              <tr><td colspan="6" class="text-center opacity-50">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -1334,25 +1355,71 @@ function downloadMapping() {
 }
 
 async function loadFileList(autoLoadFirst) {
+  var tbody = document.getElementById('mappingsTableBody');
+  var countBadge = document.getElementById('mappingCount');
   try {
     var res = await fetch('/api/mappings');
     var data = await res.json();
     var files = data.files || data || [];
-    var el = document.getElementById('fileListDropdown');
-    if (!files.length) { el.innerHTML = '<li><a class="text-base-content/50">No saved mappings</a></li>'; return; }
-    el.innerHTML = files.map(function(f) {
+    countBadge.textContent = files.length;
+    if (!files.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center opacity-50">No saved mappings. Create one above and click Save.</td></tr>';
+      return;
+    }
+    // Sort: active first, then by updated_at descending
+    files.sort(function(a, b) {
+      var aa = a.active !== false ? 1 : 0;
+      var ba = b.active !== false ? 1 : 0;
+      if (aa !== ba) return ba - aa;
+      return (b.updated_at || '').localeCompare(a.updated_at || '');
+    });
+    tbody.innerHTML = files.map(function(f, idx) {
       var name = typeof f === 'string' ? f : f.name || f.filename;
-      return '<li class="flex"><a class="flex-1" onclick="openFile(\'' + name + '\')">' + name + '</a>' +
-        '<button class="btn btn-ghost btn-xs text-error" onclick="event.stopPropagation(); deleteFile(\'' + name + '\')">×</button></li>';
+      var active = f.active !== false;
+      var updated = f.updated_at || '';
+      // Parse source filter from content
+      var filterText = '—';
+      try {
+        var parsed = typeof f.content === 'object' ? f.content : JSON.parse(f.content || '{}');
+        var match = (parsed.source || {}).match || {};
+        if (match.field) filterText = match.field + ' = ' + (match.value || '*');
+      } catch (e) {}
+      // Format date
+      var dateStr = '';
+      if (updated) {
+        try { var d = new Date(updated); dateStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); } catch(e) { dateStr = updated; }
+      }
+      var isCurrent = currentFile === name;
+      return '<tr class="' + (isCurrent ? 'bg-primary/10' : '') + ' hover">' +
+        '<td>' + (isCurrent ? '<span class="badge badge-primary badge-xs">●</span>' : '') + '</td>' +
+        '<td><a class="link link-hover font-mono text-sm cursor-pointer" onclick="openFile(\'' + esc(name) + '\')">' + esc(name) + '</a></td>' +
+        '<td class="text-sm opacity-70">' + esc(filterText) + '</td>' +
+        '<td class="text-sm opacity-70">' + esc(dateStr) + '</td>' +
+        '<td><input type="checkbox" class="toggle toggle-sm toggle-success" ' + (active ? 'checked' : '') +
+        ' onchange="toggleActive(\'' + esc(name) + '\', this.checked)" /></td>' +
+        '<td><button class="btn btn-ghost btn-xs text-error" onclick="deleteFile(\'' + esc(name) + '\')">🗑</button></td>' +
+        '</tr>';
     }).join('');
-    // Auto-load first file on page load
     if (autoLoadFirst && !currentFile && files.length) {
       var firstName = typeof files[0] === 'string' ? files[0] : files[0].name || files[0].filename;
       openFile(firstName);
     }
   } catch (e) {
-    document.getElementById('fileListDropdown').innerHTML = '<li><a class="text-error">Failed to load</a></li>';
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-error">Failed to load mappings</td></tr>';
   }
+}
+
+async function toggleActive(name, active) {
+  try {
+    var res = await fetch('/api/mappings/' + encodeURIComponent(name) + '/active', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: active })
+    });
+    if (!res.ok) throw new Error(res.statusText);
+    showStatus(name + ' → ' + (active ? 'active' : 'inactive'), 'success');
+    loadFileList();
+  } catch (e) { showStatus('Failed to update: ' + e.message, 'error'); loadFileList(); }
 }
 
 async function openFile(name) {
@@ -1399,6 +1466,7 @@ async function openFile(name) {
     }
     onMappingChange();
     showStatus('Loaded ' + name, 'success');
+    loadFileList();
   } catch (e) { showStatus('Error: ' + e.message, 'error'); }
 }
 

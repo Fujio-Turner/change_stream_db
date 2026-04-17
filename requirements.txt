@@ -8,5 +8,12 @@ icecream>=2.1,<3
 #   pip install pymongo     # for output_format=bson (provides bson module)
 #   pip install pyyaml      # for output_format=yaml
 
+# System metrics
+psutil>=5.9                # CPU, memory, disk, network, threads
+
 # RDBMS output drivers (install the one you need):
 asyncpg                    # for PostgreSQL output
+
+# Development / CI
+flake8                     # linting
+pytest                     # unit tests

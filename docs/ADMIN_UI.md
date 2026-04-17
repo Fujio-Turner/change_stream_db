@@ -68,6 +68,15 @@ Below the charts, stats are organized into rounded cards (`rounded-2xl`) with re
 | **Changes Received** — Received, Last Batch, Bytes, Deletes, Removes | **Filtered** — Total, Deletes, Removes | **Throughput** — Bytes Sent, Dead Letters, Endpoint |
 | **Checkpoint** — Seq, Saves | **Config Summary** — Key settings | **Response Times** — p50, p99 |
 
+A fourth row of cards shows **System & Runtime** metrics (sourced from `psutil`):
+
+| Process | Python Runtime | System | Storage |
+|---|---|---|---|
+| CPU %, User/System CPU seconds | Active Threads | CPU count, CPU % | Log dir size |
+| RSS, VMS, Memory % | GC gen 0/1/2 counts & collections | Total/Available/Used RAM, Swap | CBL db size |
+| Open file descriptors | | Disk total/used/free, Disk % | |
+| | | Network bytes/packets sent/recv, errors | |
+
 All values come from the Prometheus metrics endpoint (`/api/metrics`) and auto-refresh every **5 seconds**. Values are formatted with human-readable suffixes (K, M, G for numbers; KB, MB, GB for bytes).
 
 #### Line Charts

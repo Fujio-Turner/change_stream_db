@@ -14,9 +14,11 @@ __version__ = "1.4.0"
 
 import argparse
 import asyncio
+import gc
 import hashlib
 import json
 import logging
+import os
 import signal
 import ssl
 import sys
@@ -24,6 +26,8 @@ import time
 import threading
 from collections import deque
 from pathlib import Path
+
+import psutil
 
 import aiohttp
 import aiohttp.web
@@ -66,6 +70,9 @@ class MetricsCollector:
         self._lock = threading.Lock()
         self._start_time = time.monotonic()
         self._labels = f'src="{src}",database="{database}"'
+        self._process = psutil.Process()
+        self._log_dir: str = "logs"
+        self._cbl_db_dir: str | None = None
 
         # Counters (monotonically increasing)
         self.poll_cycles_total: int = 0
@@ -238,8 +245,155 @@ class MetricsCollector:
         _counter("changes_worker_retries_total",
                  "Total HTTP retry attempts across all requests.", self.retries_total)
 
+        # ── System metrics (collected live on each render) ────────────
+        self._render_system_metrics(lines, labels, _gauge, _counter)
+
         lines.append("")
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------ #
+    # System / runtime metrics
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _dir_size_bytes(path: str) -> int:
+        """Total size of all files under *path* in bytes."""
+        total = 0
+        if not os.path.isdir(path):
+            return 0
+        for dirpath, _, filenames in os.walk(path):
+            for f in filenames:
+                try:
+                    total += os.path.getsize(os.path.join(dirpath, f))
+                except OSError:
+                    pass
+        return total
+
+    def _render_system_metrics(self, lines: list[str], labels: str,
+                               _gauge, _counter) -> None:
+        proc = self._process
+
+        # -- Python process: CPU --
+        try:
+            cpu_pct = proc.cpu_percent(interval=0)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            cpu_pct = 0.0
+        _gauge("changes_worker_process_cpu_percent",
+               "Process CPU usage percent (0-100 per core).", f"{cpu_pct:.1f}")
+
+        cpu_times = proc.cpu_times()
+        _counter("changes_worker_process_cpu_user_seconds_total",
+                 "Cumulative user CPU seconds.", f"{cpu_times.user:.3f}")
+        _counter("changes_worker_process_cpu_system_seconds_total",
+                 "Cumulative system CPU seconds.", f"{cpu_times.system:.3f}")
+
+        # -- Python process: memory --
+        mem = proc.memory_info()
+        _gauge("changes_worker_process_memory_rss_bytes",
+               "Resident set size in bytes.", mem.rss)
+        _gauge("changes_worker_process_memory_vms_bytes",
+               "Virtual memory size in bytes.", mem.vms)
+
+        try:
+            mem_pct = proc.memory_percent()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            mem_pct = 0.0
+        _gauge("changes_worker_process_memory_percent",
+               "Process memory usage as percent of total system RAM.", f"{mem_pct:.2f}")
+
+        # -- Python threads --
+        _gauge("changes_worker_process_threads",
+               "Number of threads used by the process.", proc.num_threads())
+        _gauge("changes_worker_python_threads_active",
+               "Number of active Python threading.Thread objects.", threading.active_count())
+
+        # -- Python GC --
+        gc_counts = gc.get_count()
+        _gauge("changes_worker_python_gc_gen0_count",
+               "Objects in GC generation 0.", gc_counts[0])
+        _gauge("changes_worker_python_gc_gen1_count",
+               "Objects in GC generation 1.", gc_counts[1])
+        _gauge("changes_worker_python_gc_gen2_count",
+               "Objects in GC generation 2.", gc_counts[2])
+
+        gc_stats = gc.get_stats()
+        for i, stat in enumerate(gc_stats):
+            _counter(f"changes_worker_python_gc_gen{i}_collections_total",
+                     f"Number of GC collections for generation {i}.", stat["collections"])
+
+        # -- Open file descriptors --
+        try:
+            _gauge("changes_worker_process_open_fds",
+                   "Number of open file descriptors.", proc.num_fds())
+        except AttributeError:
+            pass  # num_fds() not available on Windows
+
+        # -- System: CPU --
+        _gauge("changes_worker_system_cpu_count",
+               "Number of logical CPUs on the host.", psutil.cpu_count() or 0)
+        sys_cpu = psutil.cpu_percent(interval=0)
+        _gauge("changes_worker_system_cpu_percent",
+               "System-wide CPU usage percent.", f"{sys_cpu:.1f}")
+
+        # -- System: memory --
+        vm = psutil.virtual_memory()
+        _gauge("changes_worker_system_memory_total_bytes",
+               "Total physical memory in bytes.", vm.total)
+        _gauge("changes_worker_system_memory_available_bytes",
+               "Available physical memory in bytes.", vm.available)
+        _gauge("changes_worker_system_memory_used_bytes",
+               "Used physical memory in bytes.", vm.used)
+        _gauge("changes_worker_system_memory_percent",
+               "System memory usage percent.", f"{vm.percent:.1f}")
+
+        swap = psutil.swap_memory()
+        _gauge("changes_worker_system_swap_total_bytes",
+               "Total swap space in bytes.", swap.total)
+        _gauge("changes_worker_system_swap_used_bytes",
+               "Used swap space in bytes.", swap.used)
+
+        # -- System: disk --
+        try:
+            disk = psutil.disk_usage("/")
+            _gauge("changes_worker_system_disk_total_bytes",
+                   "Total disk space on root partition in bytes.", disk.total)
+            _gauge("changes_worker_system_disk_used_bytes",
+                   "Used disk space on root partition in bytes.", disk.used)
+            _gauge("changes_worker_system_disk_free_bytes",
+                   "Free disk space on root partition in bytes.", disk.free)
+            _gauge("changes_worker_system_disk_percent",
+                   "Disk usage percent on root partition.", f"{disk.percent:.1f}")
+        except OSError:
+            pass
+
+        # -- System: network I/O --
+        try:
+            net = psutil.net_io_counters()
+            _counter("changes_worker_system_network_bytes_sent_total",
+                     "Total bytes sent across all network interfaces.", net.bytes_sent)
+            _counter("changes_worker_system_network_bytes_recv_total",
+                     "Total bytes received across all network interfaces.", net.bytes_recv)
+            _counter("changes_worker_system_network_packets_sent_total",
+                     "Total packets sent across all network interfaces.", net.packets_sent)
+            _counter("changes_worker_system_network_packets_recv_total",
+                     "Total packets received across all network interfaces.", net.packets_recv)
+            _counter("changes_worker_system_network_errin_total",
+                     "Total incoming network errors.", net.errin)
+            _counter("changes_worker_system_network_errout_total",
+                     "Total outgoing network errors.", net.errout)
+        except Exception:
+            pass
+
+        # -- Storage: log directory --
+        log_bytes = self._dir_size_bytes(self._log_dir)
+        _gauge("changes_worker_log_dir_size_bytes",
+               "Total size of the log directory in bytes.", log_bytes)
+
+        # -- Storage: CBL database --
+        if self._cbl_db_dir:
+            cbl_bytes = self._dir_size_bytes(self._cbl_db_dir)
+            _gauge("changes_worker_cbl_db_size_bytes",
+                   "Total size of the Couchbase Lite database directory in bytes.", cbl_bytes)
 
 
 async def _metrics_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
@@ -2080,6 +2234,12 @@ def main() -> None:
     if metrics_cfg.get("enabled", False):
         database = cfg.get("gateway", {}).get("database", "")
         metrics = MetricsCollector(src, database)
+        log_cfg = cfg.get("logging", {}).get("file", {})
+        if log_cfg.get("path"):
+            metrics._log_dir = str(Path(log_cfg["path"]).parent)
+        cbl_cfg = cfg.get("couchbase_lite", {})
+        if cbl_cfg.get("db_dir"):
+            metrics._cbl_db_dir = cbl_cfg["db_dir"]
 
     loop = asyncio.new_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

@@ -449,6 +449,39 @@ The `dead_letter_total` Prometheus metric tracks how many docs have been written
 rate(changes_worker_dead_letter_total[5m]) > 0
 ```
 
+### System & Runtime Metrics
+
+Beyond pipeline counters, the `/_metrics` endpoint exposes live system metrics collected on each scrape via [psutil](https://github.com/giampaolo/psutil). These are useful for capacity planning, leak detection, and container right-sizing.
+
+| Group | Metrics (all prefixed `changes_worker_`) | Why it matters |
+|---|---|---|
+| **Process CPU** | `process_cpu_percent`, `process_cpu_user_seconds_total`, `process_cpu_system_seconds_total` | Spot CPU-bound bottlenecks; user vs system split shows if time is in Python code vs kernel (I/O). |
+| **Process Memory** | `process_memory_rss_bytes`, `process_memory_vms_bytes`, `process_memory_percent` | RSS is the real footprint. A rising RSS over hours indicates a leak. VMS tracks the virtual address space. |
+| **Threads** | `process_threads`, `python_threads_active` | OS thread count includes aiohttp workers; Python count tracks `threading.Thread` objects (CBL maintenance scheduler, etc.). |
+| **Python GC** | `python_gc_gen{0,1,2}_count`, `python_gc_gen{0,1,2}_collections_total` | Gen-2 collection spikes correlate with latency pauses. High gen-0 counts may indicate excessive short-lived object allocation. |
+| **File Descriptors** | `process_open_fds` | Tracks open files and sockets. A steady climb suggests descriptor leaks (unclosed connections). |
+| **System CPU** | `system_cpu_count`, `system_cpu_percent` | Host-level CPU — useful to detect noisy neighbors in shared environments. |
+| **System Memory** | `system_memory_total/available/used_bytes`, `system_memory_percent`, `system_swap_total/used_bytes` | Low available memory or swap usage suggests the container needs more RAM. |
+| **Disk** | `system_disk_total/used/free_bytes`, `system_disk_percent` | Root partition usage. Important for log rotation and CBL database growth. |
+| **Network I/O** | `system_network_bytes_sent/recv_total`, `system_network_packets_sent/recv_total`, `system_network_errin/errout_total` | Total bytes/packets across all interfaces. Error counters flag network-layer problems. |
+| **Storage** | `log_dir_size_bytes`, `cbl_db_size_bytes` | Tracks the log directory and CBL database directory sizes. Helps alert before disk fills up. |
+
+**Example Grafana alerts:**
+
+```promql
+# Process RSS exceeding container memory limit
+changes_worker_process_memory_rss_bytes > 512 * 1024 * 1024
+
+# Disk filling up
+changes_worker_system_disk_percent > 85
+
+# File descriptor leak (steadily climbing)
+delta(changes_worker_process_open_fds[1h]) > 50
+
+# Log directory growing beyond 1 GB
+changes_worker_log_dir_size_bytes > 1073741824
+```
+
 ---
 
 ## Putting It All Together – Recommended Configurations

@@ -15,7 +15,10 @@
         "rev": "$._rev",
         "status": "$.status",
         "customer_id": "$.customer_id",
-        "order_date": {"path": "$.order_date", "transform": "to_date($.order_date)"},
+        "order_date": {
+          "path": "$.order_date",
+          "transform": "to_date($.order_date)"
+        },
         "total": "$.total"
       },
       "on_delete": "delete"
@@ -25,9 +28,15 @@
       "primary_key": "",
       "columns": {
         "order_doc_id": "$._id",
-        "product_id": {"path": "$.product_id", "transform": "uppercase($.product_id)"},
+        "product_id": {
+          "path": "$.product_id",
+          "transform": "lowercase($.product_id)"
+        },
         "qty": "$.qty",
-        "price": "$.price"
+        "price": {
+          "path": "$.price",
+          "transform": "round($.price)"
+        }
       },
       "on_delete": "delete",
       "parent": "orders",
@@ -38,5 +47,9 @@
       "source_array": "$.items",
       "replace_strategy": "delete_insert"
     }
-  ]
+  ],
+  "_meta": {
+    "updated_at": "2026-04-17T05:30:48.341201+00:00",
+    "active": true
+  }
 }

@@ -1,5 +1,6 @@
 # cbl_store.py — Couchbase Lite CE storage layer
 
+import datetime
 import json
 import os
 import time
@@ -308,6 +309,8 @@ class CBLStore:
                 result.append({
                     "name": props.get("name", ""),
                     "content": props.get("content", ""),
+                    "active": props.get("active", True),
+                    "updated_at": props.get("updated_at", ""),
                 })
         log_event(logger, "debug", "CBL", "listed mappings",
                   operation="SELECT", doc_type="mapping",
@@ -335,6 +338,9 @@ class CBLStore:
         doc["type"] = "mapping"
         doc["name"] = name
         doc["content"] = content
+        doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if is_new:
+            doc["active"] = True
         _coll_save_doc(self.db, COLL_MAPPINGS, doc)
         elapsed = (time.monotonic() - t0) * 1000
 
@@ -348,6 +354,19 @@ class CBLStore:
                   operation="INSERT" if is_new else "UPDATE",
                   doc_id=doc_id, doc_type="mapping",
                   duration_ms=round(elapsed, 1))
+
+    def set_mapping_active(self, name: str, active: bool) -> bool:
+        """Set the active status of a mapping. Returns True if found."""
+        doc_id = f"mapping:{name}"
+        doc = _coll_get_mutable_doc(self.db, COLL_MAPPINGS, doc_id)
+        if not doc:
+            return False
+        doc["active"] = active
+        doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        _coll_save_doc(self.db, COLL_MAPPINGS, doc)
+        log_event(logger, "info", "CBL", "mapping active status changed",
+                  operation="UPDATE", doc_id=doc_id, doc_type="mapping")
+        return True
 
     def delete_mapping(self, name: str) -> None:
         doc_id = f"mapping:{name}"

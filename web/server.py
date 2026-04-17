@@ -20,7 +20,7 @@ MAPPINGS_DIR = ROOT / "mappings"
 def cors_headers():
     return {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, PUT, PATCH, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
     }
 
@@ -131,7 +131,23 @@ async def list_mappings(request):
         p for p in MAPPINGS_DIR.iterdir()
         if p.is_file() and p.suffix in (".yaml", ".yml", ".json")
     )
-    result = [{"name": p.name, "content": p.read_text()} for p in files]
+    import os as _os
+    result = []
+    for p in files:
+        content = p.read_text()
+        meta = {"active": True, "updated_at": ""}
+        try:
+            parsed = json.loads(content)
+            m = parsed.get("_meta", {})
+            meta["active"] = m.get("active", True)
+            meta["updated_at"] = m.get("updated_at", "")
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        if not meta["updated_at"]:
+            meta["updated_at"] = datetime.datetime.fromtimestamp(
+                _os.path.getmtime(p), tz=datetime.timezone.utc
+            ).isoformat()
+        result.append({"name": p.name, "content": content, **meta})
     return json_response(result)
 
 
@@ -157,10 +173,53 @@ async def put_mapping(request):
     content = await request.text()
     if USE_CBL:
         CBLStore().save_mapping(name, content)
+    # Inject _meta into JSON content before writing to filesystem
+    try:
+        parsed = json.loads(content)
+        meta = parsed.get("_meta", {})
+        meta["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if "active" not in meta:
+            meta["active"] = True
+        parsed["_meta"] = meta
+        content = json.dumps(parsed, indent=2)
+    except (json.JSONDecodeError, ValueError):
+        pass  # not valid JSON, save as-is
     # Always write to filesystem so changes-worker can pick it up
     MAPPINGS_DIR.mkdir(exist_ok=True)
     (MAPPINGS_DIR / name).write_text(content)
     return json_response({"ok": True})
+
+
+async def patch_mapping_active(request):
+    name = request.match_info["name"]
+    if not _valid_mapping_name(name):
+        return error_response("Invalid filename")
+    try:
+        body = await request.json()
+    except Exception:
+        return error_response("Invalid JSON body")
+    active = body.get("active")
+    if active is None or not isinstance(active, bool):
+        return error_response("'active' must be a boolean")
+
+    if USE_CBL:
+        if not CBLStore().set_mapping_active(name, active):
+            return error_response("Not found", 404)
+
+    # Also update on filesystem
+    path = MAPPINGS_DIR / name
+    if path.is_file():
+        try:
+            parsed = json.loads(path.read_text())
+            meta = parsed.get("_meta", {})
+            meta["active"] = active
+            meta["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            parsed["_meta"] = meta
+            path.write_text(json.dumps(parsed, indent=2))
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    return json_response({"ok": True, "active": active})
 
 
 async def delete_mapping(request):
@@ -747,6 +806,7 @@ def create_app():
     app.router.add_get("/api/mappings", list_mappings)
     app.router.add_get("/api/mappings/{name}", get_mapping)
     app.router.add_put("/api/mappings/{name}", put_mapping)
+    app.router.add_patch("/api/mappings/{name}/active", patch_mapping_active)
     app.router.add_delete("/api/mappings/{name}", delete_mapping)
     app.router.add_post("/api/mappings/validate", validate_mapping)
 
