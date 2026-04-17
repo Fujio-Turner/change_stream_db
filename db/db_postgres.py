@@ -19,6 +19,61 @@ try:
 except ImportError:
     asyncpg = None
 
+# -- asyncpg error classification ------------------------------------------------
+# Transient errors are worth retrying (connection hiccups, deadlocks, serialization).
+# Permanent errors should go straight to the DLQ (constraint violations, bad types).
+_TRANSIENT_SQLSTATES = frozenset({
+    "40001",  # serialization_failure
+    "40P01",  # deadlock_detected
+    "08000",  # connection_exception
+    "08003",  # connection_does_not_exist
+    "08006",  # connection_failure
+    "57P01",  # admin_shutdown
+    "57P02",  # crash_shutdown
+    "57P03",  # cannot_connect_now
+})
+
+
+def _is_transient(exc: Exception) -> bool:
+    """Return True if the asyncpg exception is transient and worth retrying."""
+    if asyncpg is None:
+        return False
+    if isinstance(exc, (asyncpg.InterfaceError,
+                        asyncpg.ConnectionDoesNotExistError,
+                        ConnectionError,
+                        OSError,
+                        TimeoutError)):
+        return True
+    if isinstance(exc, asyncpg.PostgresError):
+        return getattr(exc, "sqlstate", None) in _TRANSIENT_SQLSTATES
+    return False
+
+
+def _error_class(exc: Exception) -> str:
+    """Return a short classification string for the error."""
+    if asyncpg is None:
+        return "unknown"
+    if isinstance(exc, (asyncpg.InterfaceError,
+                        asyncpg.ConnectionDoesNotExistError,
+                        ConnectionError, OSError)):
+        return "connection"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, asyncpg.PostgresError):
+        state = getattr(exc, "sqlstate", "") or ""
+        if state.startswith("23"):
+            return "constraint_violation"
+        if state in ("40001", "40P01"):
+            return "deadlock"
+        if state.startswith("08") or state.startswith("57"):
+            return "connection"
+        if state.startswith("42"):
+            return "syntax_or_schema"
+        if state.startswith("22"):
+            return "data_type"
+        return f"pg_{state}" if state else "unknown_pg"
+    return "unknown"
+
 
 class PostgresOutputForwarder:
     """
@@ -47,6 +102,9 @@ class PostgresOutputForwarder:
 
         self._dry_run = dry_run
         self._halt_on_failure = out_cfg.get("halt_on_failure", True)
+        self._max_retries = pg_cfg.get("max_retries", 3)
+        self._backoff_base = pg_cfg.get("backoff_base_seconds", 0.5)
+        self._backoff_max = pg_cfg.get("backoff_max_seconds", 10)
         self._metrics = metrics
 
         self._pool: asyncpg.Pool | None = None
@@ -154,7 +212,14 @@ class PostgresOutputForwarder:
     async def send(self, doc: dict, method: str = "PUT") -> dict:
         """
         Process a single document: map to SQL ops and execute.
-        Returns result dict with 'ok' bool.
+
+        Transient errors (connection loss, deadlocks) are retried with
+        exponential backoff.  Permanent errors (constraint violations,
+        type mismatches) are returned immediately so the caller can
+        route them to the dead-letter queue.
+
+        Returns result dict with 'ok' bool plus 'retryable' and
+        'error_class' on failure.
         """
         if doc is None:
             logger.debug("Received None doc – skipping")
@@ -169,7 +234,8 @@ class PostgresOutputForwarder:
             logger.warning("No schema mapping loaded – skipping doc %s", doc_id)
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
-            return {"ok": False, "doc_id": doc_id, "error": "no_mapping"}
+            return {"ok": False, "doc_id": doc_id, "error": "no_mapping",
+                    "retryable": False, "error_class": "config"}
 
         # Find the first matching mapper
         mapper = None
@@ -191,8 +257,11 @@ class PostgresOutputForwarder:
                 self._metrics.inc("output_requests_total")
                 self._metrics.inc("output_errors_total")
                 self._metrics.inc("mapper_errors_total")
+                self._metrics.inc("db_permanent_errors_total")
             logger.error("Mapping error for doc %s: %s", doc_id, exc)
-            return {"ok": False, "doc_id": doc_id, "error": f"mapping_error: {exc!s}"[:500]}
+            return {"ok": False, "doc_id": doc_id,
+                    "error": f"mapping_error: {exc!s}"[:500],
+                    "retryable": False, "error_class": "mapping"}
 
         if self._metrics:
             self._metrics.inc("mapper_matched_total")
@@ -208,40 +277,100 @@ class PostgresOutputForwarder:
                 logger.info("[DRY RUN] %s | params=%s", sql, params)
             return {"ok": True, "doc_id": doc_id, "ops": len(ops), "dry_run": True}
 
+        # -- Execute with retry for transient errors --
         t_start = time.monotonic()
-        try:
-            async with self._pool.acquire() as conn:
-                async with conn.transaction():
-                    for op in ops:
-                        sql, params = op.to_sql()
-                        logger.debug("SQL: %s | params=%s", sql, params)
-                        await conn.execute(sql, *params)
+        last_exc: Exception | None = None
 
-            elapsed_ms = (time.monotonic() - t_start) * 1000
-            async with self._lock:
-                self._resp_times.append(elapsed_ms)
-            if self._metrics:
-                self._metrics.inc("output_requests_total")
-                self._metrics.inc("output_success_total")
-                self._metrics.inc("mapper_ops_total", len(ops))
-                self._metrics.record_output_response_time(elapsed_ms / 1000)
+        for attempt in range(1, self._max_retries + 1):
+            try:
+                async with self._pool.acquire() as conn:
+                    async with conn.transaction():
+                        for op in ops:
+                            sql, params = op.to_sql()
+                            logger.debug("SQL: %s | params=%s", sql, params)
+                            await conn.execute(sql, *params)
 
-            logger.debug("PostgreSQL: %d ops for %s (%.1fms)", len(ops), doc_id, elapsed_ms)
-            return {"ok": True, "doc_id": doc_id, "ops": len(ops), "elapsed_ms": round(elapsed_ms, 1)}
+                # Success
+                elapsed_ms = (time.monotonic() - t_start) * 1000
+                async with self._lock:
+                    self._resp_times.append(elapsed_ms)
+                if self._metrics:
+                    self._metrics.inc("output_requests_total")
+                    self._metrics.inc("output_success_total")
+                    self._metrics.inc("mapper_ops_total", len(ops))
+                    self._metrics.record_output_response_time(elapsed_ms / 1000)
 
-        except Exception as exc:
-            elapsed_ms = (time.monotonic() - t_start) * 1000
-            if self._metrics:
-                self._metrics.inc("output_requests_total")
-                self._metrics.inc("output_errors_total")
-            logger.error("PostgreSQL error for doc %s: %s", doc_id, exc)
+                logger.debug("PostgreSQL: %d ops for %s (%.1fms)", len(ops), doc_id, elapsed_ms)
+                return {"ok": True, "doc_id": doc_id, "ops": len(ops),
+                        "elapsed_ms": round(elapsed_ms, 1)}
 
-            if self._halt_on_failure:
-                from rest import OutputEndpointDown
-                raise OutputEndpointDown(
-                    f"PostgreSQL error for {doc_id}: {exc}"
-                ) from exc
-            return {"ok": False, "doc_id": doc_id, "error": str(exc)[:500]}
+            except Exception as exc:
+                last_exc = exc
+                eclass = _error_class(exc)
+
+                if not _is_transient(exc):
+                    # Permanent error — no retry, return immediately
+                    elapsed_ms = (time.monotonic() - t_start) * 1000
+                    if self._metrics:
+                        self._metrics.inc("output_requests_total")
+                        self._metrics.inc("output_errors_total")
+                        self._metrics.inc("db_permanent_errors_total")
+                    logger.error("PostgreSQL permanent error for doc %s [%s]: %s",
+                                 doc_id, eclass, exc)
+
+                    if self._halt_on_failure:
+                        from rest import OutputEndpointDown
+                        raise OutputEndpointDown(
+                            f"PostgreSQL error for {doc_id} [{eclass}]: {exc}"
+                        ) from exc
+                    return {"ok": False, "doc_id": doc_id,
+                            "error": str(exc)[:500],
+                            "retryable": False, "error_class": eclass}
+
+                # Transient error — retry
+                if self._metrics:
+                    self._metrics.inc("db_transient_errors_total")
+                    self._metrics.inc("db_retries_total")
+
+                # Attempt pool reconnect on connection-level errors
+                if eclass == "connection":
+                    try:
+                        logger.warning("PostgreSQL connection error – reconnecting pool "
+                                       "(attempt %d/%d): %s", attempt, self._max_retries, exc)
+                        await self._pool.close()
+                        await self.connect()
+                        if self._metrics:
+                            self._metrics.inc("db_pool_reconnects_total")
+                    except Exception as reconn_exc:
+                        logger.error("Pool reconnect failed: %s", reconn_exc)
+                else:
+                    logger.warning("PostgreSQL transient error for doc %s [%s] "
+                                   "(attempt %d/%d): %s",
+                                   doc_id, eclass, attempt, self._max_retries, exc)
+
+                if attempt < self._max_retries:
+                    delay = min(self._backoff_base * (2 ** (attempt - 1)),
+                                self._backoff_max)
+                    await asyncio.sleep(delay)
+
+        # All retries exhausted
+        elapsed_ms = (time.monotonic() - t_start) * 1000
+        eclass = _error_class(last_exc) if last_exc else "unknown"
+        if self._metrics:
+            self._metrics.inc("output_requests_total")
+            self._metrics.inc("output_errors_total")
+            self._metrics.inc("db_retry_exhausted_total")
+        logger.error("PostgreSQL retries exhausted for doc %s [%s] after %d attempts: %s",
+                     doc_id, eclass, self._max_retries, last_exc)
+
+        if self._halt_on_failure:
+            from rest import OutputEndpointDown
+            raise OutputEndpointDown(
+                f"PostgreSQL retries exhausted for {doc_id} [{eclass}]: {last_exc}"
+            ) from last_exc
+        return {"ok": False, "doc_id": doc_id,
+                "error": str(last_exc)[:500],
+                "retryable": False, "error_class": eclass}
 
     async def test_reachable(self) -> bool:
         """Test that the PostgreSQL server is reachable."""

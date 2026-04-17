@@ -1734,19 +1734,20 @@ function renderTreeDiagram() {
     var tblColor = allMapped ? '#22c55e' : noneMapped ? '#ef4444' : '#eab308';
     var tblBorder = allMapped ? '#16a34a' : noneMapped ? '#dc2626' : '#ca8a04';
 
-    var tblLabel = t.name + '  (' + colKeys.length + ' cols)';
+    var tblLines = [t.name + '  (' + colKeys.length + ' cols)'];
     if (t.parent && t.foreign_key && t.foreign_key.column) {
-      tblLabel += '  [FK: ' + t.foreign_key.column + ' → ' + (t.foreign_key.references || 'pk') + ']';
+      tblLines.push('FK: ' + t.foreign_key.column + ' → ' + (t.foreign_key.references || 'pk'));
     }
     if (t.source_array) {
-      tblLabel += '  [array: ' + t.source_array + ']';
+      tblLines.push('array: ' + t.source_array);
     }
 
     var tableNode = {
-      name: tblLabel,
+      name: tblLines.join('\n'),
       symbolSize: 16,
       itemStyle: { color: tblColor, borderColor: tblBorder },
       label: { fontWeight: 'bold', color: tblColor, fontSize: 15,
+        position: 'left', align: 'right',
         backgroundColor: labelBg, borderRadius: 6, padding: [5, 10] },
       children: colChildren
     };
@@ -1761,7 +1762,7 @@ function renderTreeDiagram() {
 
   // Attach children to parents
   for (var pi = 0; pi < parentNodes.length; pi++) {
-    var pName = parentNodes[pi].name.replace(/\s+\(\d+ cols\)$/, '');
+    var pName = parentNodes[pi].name.split('\n')[0].replace(/\s+\(\d+ cols\)$/, '');
     if (childMap[pName]) {
       parentNodes[pi].children = (childMap[pName] || []).concat(parentNodes[pi].children || []);
     }
@@ -1779,6 +1780,7 @@ function renderTreeDiagram() {
     symbolSize: 20,
     itemStyle: { color: '#3b82f6', borderColor: '#2563eb' },
     label: { fontWeight: 'bold', color: '#3b82f6', fontSize: 17,
+      position: 'left', align: 'right',
       backgroundColor: labelBg, borderRadius: 6, padding: [5, 12] },
     children: parentNodes
   };
