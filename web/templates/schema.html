@@ -905,7 +905,7 @@ function saveCurrentTableEdits() {
     t.foreign_key.column = document.getElementById('tblFKCol').value.trim();
     t.foreign_key.references = document.getElementById('tblFKRef').value.trim();
     t.source_array = document.getElementById('tblSourceArray').value.trim();
-    t.replace_strategy = document.getElementById('tblReplaceStrategy').value.trim();
+    t.replace_strategy = document.getElementById('tblReplaceStrategy').value;
     t.on_delete = document.getElementById('tblOnDelete').value;
     // Read columns from rows (with optional transform)
     t.columns = {};
@@ -960,7 +960,14 @@ function renderTableEditor() {
         '<div><label class="label label-text text-xs">FK Column</label><input id="tblFKCol" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.column) + '" oninput="onMappingChange()"></div>' +
         '<div><label class="label label-text text-xs">FK References</label><input id="tblFKRef" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.references) + '" oninput="onMappingChange()"></div>' +
       '</div>' +
-      '<div class="mt-2"><label class="label label-text text-xs">Replace Strategy</label><input id="tblReplaceStrategy" type="text" class="input input-bordered input-sm w-48" placeholder="delete_insert" value="' + esc(t.replace_strategy) + '" oninput="onMappingChange()"></div>' +
+      '<div class="mt-2"><label class="label label-text text-xs">Replace Strategy</label>' +
+        '<div class="flex items-center gap-2"><select id="tblReplaceStrategy" class="select select-bordered select-sm w-48" onchange="onMappingChange()">' +
+          '<option value=""' + (!t.replace_strategy ? ' selected' : '') + '>-- none --</option>' +
+          '<option value="delete_insert"' + (t.replace_strategy === 'delete_insert' ? ' selected' : '') + '>delete_insert</option>' +
+          '<option value="merge"' + (t.replace_strategy === 'merge' ? ' selected' : '') + '>merge</option>' +
+        '</select>' +
+        '<div class="tooltip tooltip-right" data-tip="delete_insert: Delete all child rows then re-insert current array items. Handles removals automatically. merge: Upsert individual rows by key, removed items are NOT deleted.">' +
+          '<span class="badge badge-ghost badge-sm cursor-help">?</span></div></div></div>' +
     '</div></div>' +
     // Columns
     '<div class="card bg-base-200 rounded-xl"><div class="card-body p-3">' +

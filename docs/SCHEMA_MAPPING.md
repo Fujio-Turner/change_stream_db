@@ -284,6 +284,99 @@ DELETE FROM orders      WHERE doc_id = :doc_id;
 | `delete_insert` | Delete all child rows for this `doc_id`, then insert the current set. | Default. Simplest. Works for any array. Guarantees the child table mirrors the document exactly. |
 | `merge` | Upsert individual child rows by a composite key (e.g., `order_doc_id` + `product_id`). Rows not in the current document are **not** deleted. | When child rows have their own identity and you don't want to lose rows that were removed from the array. Requires a unique key on the child table. |
 
+### Array Handling & the Removal Problem
+
+When a JSON document contains arrays (e.g., `items`, `payments`, `tags`), a fundamental challenge arises: **JSON is stateless — it doesn't carry metadata about what was removed.** You only see the current state of the array, not a diff.
+
+Consider this scenario:
+
+1. **Version 1** of the document has 3 items: `[A, B, C]`
+2. A user removes item B, so **Version 2** has: `[A, C]`
+3. The `_changes` feed delivers Version 2 — just `[A, C]`. There's no indication that B existed before.
+
+#### How `delete_insert` Solves This
+
+The `delete_insert` replace strategy handles this automatically:
+
+```
+Version 1 arrives:                    Version 2 arrives (B removed):
+┌──────────────────────┐              ┌──────────────────────┐
+│ UPSERT orders        │              │ UPSERT orders        │
+│ DELETE order_items    │ ← wipe all  │ DELETE order_items    │ ← wipe all
+│   WHERE order_id = ? │              │   WHERE order_id = ? │
+│ INSERT item A        │              │ INSERT item A        │
+│ INSERT item B        │              │ INSERT item C        │ ← B is gone
+│ INSERT item C        │              └──────────────────────┘
+└──────────────────────┘
+```
+
+Because all child rows are deleted before re-inserting, removed items simply disappear — no special handling needed. The relational table always exactly mirrors the current JSON array.
+
+#### Multiple Arrays in One Document
+
+When a document contains multiple arrays (e.g., `items[]`, `payments[]`, `shipments[]`), each array maps to its own child table. The same delete+re-insert pattern applies to each one, all within a single transaction:
+
+```sql
+BEGIN;
+
+-- 1. UPSERT parent
+INSERT INTO orders (...) VALUES (...) ON CONFLICT (doc_id) DO UPDATE SET ...;
+
+-- 2. Replace items
+DELETE FROM order_items WHERE order_doc_id = $1;
+INSERT INTO order_items (...) VALUES (...);  -- per item
+
+-- 3. Replace payments
+DELETE FROM order_payments WHERE order_doc_id = $1;
+INSERT INTO order_payments (...) VALUES (...);  -- per payment
+
+-- 4. Replace shipments
+DELETE FROM order_shipments WHERE order_doc_id = $1;
+INSERT INTO order_shipments (...) VALUES (...);  -- per shipment
+
+COMMIT;
+```
+
+To add a new child table for another array, add another entry to the `tables` array in your mapping file, following the same pattern:
+
+```json
+{
+  "name": "order_payments",
+  "parent": "orders",
+  "foreign_key": { "column": "order_doc_id", "references": "doc_id" },
+  "source_array": "$.payments",
+  "replace_strategy": "delete_insert",
+  "columns": {
+    "order_doc_id": "$._id",
+    "payment_id": "$.payment_id",
+    "amount": { "path": "$.amount", "transform": "to_decimal(,2)" },
+    "method": "$.method"
+  }
+}
+```
+
+#### Foreign Key Requirement
+
+Each child table **must** have a foreign key column (e.g., `order_doc_id`) linking back to the parent table's primary key. This is what scopes the `DELETE` to only the child rows belonging to the current document:
+
+```sql
+DELETE FROM order_items WHERE order_doc_id = $1;  -- only deletes THIS order's items
+```
+
+You don't strictly need a formal `FOREIGN KEY` constraint in the database (the column just needs to exist), but adding one is strongly recommended:
+- It enforces referential integrity (prevents orphaned child rows).
+- With `ON DELETE CASCADE`, deleting the parent row automatically deletes all child rows.
+- It documents the relationship for anyone reading the schema.
+
+#### Empty Arrays
+
+If the source array is empty (`[]`) or missing from the document:
+
+- **`delete_insert`** → Deletes all existing child rows (correct — the array is now empty).
+- **`merge`** → No-op (existing rows remain — which may or may not be desired).
+
+This is another reason `delete_insert` is the safer default: an empty array correctly results in zero child rows.
+
 ---
 
 ## Transaction Handling

@@ -231,6 +231,35 @@ COMMIT;
 
 4. **Child tables benefit most.** For arrays (order items, tags), the delete-then-reinsert strategy is simpler and safer than trying to diff individual array elements.
 
+5. **Removals are handled automatically.** When an item is removed from a JSON array, the `_changes` feed delivers the document without that item — but with no explicit "this was deleted" signal. The delete+re-insert strategy solves this: all existing child rows are wiped, then only the items currently in the array are re-inserted. Removed items simply aren't re-inserted.
+
+### Handling Multiple Arrays
+
+When a single document contains multiple arrays (e.g., `items[]`, `payments[]`, `shipments[]`), each array maps to its own child table with a foreign key back to the parent. The same delete+re-insert pattern applies to each array, all within a single transaction:
+
+```sql
+BEGIN;
+
+-- Parent: UPSERT
+INSERT INTO orders (...) VALUES (...) ON CONFLICT (doc_id) DO UPDATE SET ...;
+
+-- Array 1: items
+DELETE FROM order_items WHERE order_doc_id = $1;
+INSERT INTO order_items (...) VALUES (...);  -- per item
+
+-- Array 2: payments
+DELETE FROM order_payments WHERE order_doc_id = $1;
+INSERT INTO order_payments (...) VALUES (...);  -- per payment
+
+-- Array 3: shipments  
+DELETE FROM order_shipments WHERE order_doc_id = $1;
+INSERT INTO order_shipments (...) VALUES (...);  -- per shipment
+
+COMMIT;
+```
+
+Adding a new array is just another child table entry in the mapping JSON — no code changes needed. The mapper generates the DELETE + INSERT operations for each child table that has `replace_strategy: "delete_insert"` and a `source_array` path.
+
 ### Trade-offs
 
 | Aspect | Full replace | Partial update (future) |
