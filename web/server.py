@@ -2,8 +2,10 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
 
+import aiohttp as _aiohttp
 from aiohttp import web
 
 import datetime
@@ -339,8 +341,6 @@ async def post_restart(request):
 
 async def post_shutdown(request):
     """Proxy POST to the worker's /_shutdown endpoint."""
-    import os
-    import aiohttp as _aiohttp
     worker_host = os.environ.get("METRICS_HOST")
     if not worker_host:
         return json_response({"ok": False, "error": "skipped"}, status=400)
@@ -362,8 +362,6 @@ async def post_shutdown(request):
 
 async def _worker_control(endpoint: str, method: str = "POST"):
     """Generic helper to proxy a request to the worker's metrics server."""
-    import os
-    import aiohttp as _aiohttp
     worker_host = os.environ.get("METRICS_HOST")
     if not worker_host:
         return {"ok": False, "error": "skipped"}

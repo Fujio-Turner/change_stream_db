@@ -154,8 +154,6 @@ def apply_transform(value: Any, transform: str) -> Any:
             return None
         old = args[0] if len(args) > 0 else ""
         new = args[1] if len(args) > 1 else ""
-        for a in (old, new):
-            pass  # just referencing
         # Strip quotes
         if len(old) >= 2 and old[0] in ('"', "'") and old[-1] == old[0]:
             old = old[1:-1]

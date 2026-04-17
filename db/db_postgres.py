@@ -343,6 +343,8 @@ class PostgresOutputForwarder:
                             self._metrics.inc("db_pool_reconnects_total")
                     except Exception as reconn_exc:
                         logger.error("Pool reconnect failed: %s", reconn_exc)
+                        if attempt == self._max_retries:
+                            break
                 else:
                     logger.warning("PostgreSQL transient error for doc %s [%s] "
                                    "(attempt %d/%d): %s",

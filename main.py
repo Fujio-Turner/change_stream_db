@@ -2535,8 +2535,7 @@ def main() -> None:
             if offline_event.is_set():
                 log_event(logger, "info", "CONTROL", "worker is offline – waiting for /_online signal")
                 while offline_event.is_set() and not shutdown_event.is_set():
-                    import time
-                    time.sleep(0.5)
+                    loop.run_until_complete(asyncio.sleep(0.5))
                 if shutdown_event.is_set():
                     break
                 restart_event.clear()

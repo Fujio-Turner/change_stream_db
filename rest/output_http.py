@@ -247,7 +247,7 @@ class OutputForwarder:
     async def send(self, doc: dict, method: str = "PUT") -> dict:
         """Send a single doc. Returns result dict with 'ok' bool. Raises OutputEndpointDown if halt_on_failure."""
         if doc is None:
-            log_event(logger, "debug", "OUTPUT", "received None doc – skipping")
+            log_event(logger, "warn", "OUTPUT", "received None doc – skipping")
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {"ok": True, "doc_id": "unknown", "method": method, "skipped": True}
