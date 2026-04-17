@@ -14,6 +14,7 @@ try:
     from CouchbaseLite.Document import MutableDocument
     from CouchbaseLite._PyCBL import ffi, lib
     from CouchbaseLite.common import stringParam, gError as _cbl_gError
+
     USE_CBL = True
 except ImportError:
     USE_CBL = False
@@ -74,10 +75,17 @@ def get_db():
         t0 = time.monotonic()
         _db = Database(CBL_DB_NAME, config)
         elapsed = (time.monotonic() - t0) * 1000
-        log_event(logger, "info", "CBL", "database opened",
-                  operation="OPEN", db_name=CBL_DB_NAME,
-                  db_path=CBL_DB_DIR, db_size_mb=_db_size_mb(),
-                  duration_ms=round(elapsed, 1))
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "database opened",
+            operation="OPEN",
+            db_name=CBL_DB_NAME,
+            db_path=CBL_DB_DIR,
+            db_size_mb=_db_size_mb(),
+            duration_ms=round(elapsed, 1),
+        )
     return _db
 
 
@@ -88,9 +96,15 @@ def close_db():
         t0 = time.monotonic()
         _db.close()
         elapsed = (time.monotonic() - t0) * 1000
-        log_event(logger, "info", "CBL", "database closed",
-                  operation="CLOSE", db_name=CBL_DB_NAME,
-                  duration_ms=round(elapsed, 1))
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "database closed",
+            operation="CLOSE",
+            db_name=CBL_DB_NAME,
+            duration_ms=round(elapsed, 1),
+        )
         _collections.clear()
         _db = None
 
@@ -115,8 +129,14 @@ def _get_collection(db, scope_name: str, collection_name: str):
             f"Failed to create collection {scope_name}.{collection_name}"
         )
     _collections[key] = coll
-    log_event(logger, "debug", "CBL", "collection ready",
-              scope=scope_name, collection=collection_name)
+    log_event(
+        logger,
+        "debug",
+        "CBL",
+        "collection ready",
+        scope=scope_name,
+        collection=collection_name,
+    )
     return coll
 
 
@@ -127,6 +147,7 @@ def _coll_get_doc(db, collection_name: str, doc_id: str):
     if doc_ref == ffi.NULL:
         return None
     from CouchbaseLite.Document import Document
+
     doc = Document.__new__(Document)
     doc._ref = doc_ref
     return doc
@@ -135,7 +156,9 @@ def _coll_get_doc(db, collection_name: str, doc_id: str):
 def _coll_get_mutable_doc(db, collection_name: str, doc_id: str):
     """Get a mutable document from a specific collection. Returns MutableDocument or None."""
     coll = _get_collection(db, CBL_SCOPE, collection_name)
-    doc_ref = lib.CBLCollection_GetMutableDocument(coll, stringParam(doc_id), _cbl_gError)
+    doc_ref = lib.CBLCollection_GetMutableDocument(
+        coll, stringParam(doc_id), _cbl_gError
+    )
     if doc_ref == ffi.NULL:
         return None
     doc = MutableDocument.__new__(MutableDocument)
@@ -148,7 +171,10 @@ def _coll_save_doc(db, collection_name: str, doc) -> None:
     coll = _get_collection(db, CBL_SCOPE, collection_name)
     doc._prepareToSave()
     ok = lib.CBLCollection_SaveDocumentWithConcurrencyControl(
-        coll, doc._ref, 0, _cbl_gError  # 0 = kCBLConcurrencyControlLastWriteWins
+        coll,
+        doc._ref,
+        0,
+        _cbl_gError,  # 0 = kCBLConcurrencyControlLastWriteWins
     )
     if not ok:
         raise RuntimeError(f"Failed to save document to {collection_name}")
@@ -177,13 +203,23 @@ class CBLStore:
             "scope": CBL_SCOPE,
             "collections": [COLL_CONFIG, COLL_CHECKPOINTS, COLL_MAPPINGS, COLL_DLQ],
             "config_exists": _coll_get_doc(self.db, COLL_CONFIG, "config") is not None,
-            "mappings_count": len(self._get_manifest(COLL_MAPPINGS, "manifest:mappings")),
+            "mappings_count": len(
+                self._get_manifest(COLL_MAPPINGS, "manifest:mappings")
+            ),
             "dlq_count": len(self._get_manifest(COLL_DLQ, "manifest:dlq")),
-            "checkpoint_manifest": len(self._get_manifest(COLL_CHECKPOINTS, "manifest:checkpoints")),
+            "checkpoint_manifest": len(
+                self._get_manifest(COLL_CHECKPOINTS, "manifest:checkpoints")
+            ),
         }
-        log_event(logger, "debug", "CBL", "database info retrieved",
-                  operation="SELECT", db_name=CBL_DB_NAME,
-                  db_size_mb=info["db_size_mb"])
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "database info retrieved",
+            operation="SELECT",
+            db_name=CBL_DB_NAME,
+            db_size_mb=info["db_size_mb"],
+        )
         return info
 
     # ── Config ────────────────────────────────────────────────
@@ -193,20 +229,41 @@ class CBLStore:
         doc = _coll_get_doc(self.db, COLL_CONFIG, "config")
         elapsed = (time.monotonic() - t0) * 1000
         if not doc:
-            log_event(logger, "warn", "CBL", "config document not found",
-                      operation="SELECT", doc_id="config", doc_type="config",
-                      duration_ms=round(elapsed, 1))
+            log_event(
+                logger,
+                "warn",
+                "CBL",
+                "config document not found",
+                operation="SELECT",
+                doc_id="config",
+                doc_type="config",
+                duration_ms=round(elapsed, 1),
+            )
             return None
         raw = doc.properties.get("data")
         if raw:
             cfg = json.loads(raw)
-            log_event(logger, "debug", "CBL", "config loaded",
-                      operation="SELECT", doc_id="config", doc_type="config",
-                      duration_ms=round(elapsed, 1))
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "config loaded",
+                operation="SELECT",
+                doc_id="config",
+                doc_type="config",
+                duration_ms=round(elapsed, 1),
+            )
             return cfg
-        log_event(logger, "warn", "CBL", "config document has no data field",
-                  operation="SELECT", doc_id="config", doc_type="config",
-                  error_detail="missing 'data' property")
+        log_event(
+            logger,
+            "warn",
+            "CBL",
+            "config document has no data field",
+            operation="SELECT",
+            doc_id="config",
+            doc_type="config",
+            error_detail="missing 'data' property",
+        )
         return None
 
     def save_config(self, cfg: dict) -> None:
@@ -219,18 +276,31 @@ class CBLStore:
         doc["updated_at"] = int(time.time())
         _coll_save_doc(self.db, COLL_CONFIG, doc)
         elapsed = (time.monotonic() - t0) * 1000
-        log_event(logger, "info", "CBL", "config saved",
-                  operation="INSERT" if elapsed else "UPDATE",
-                  doc_id="config", doc_type="config",
-                  duration_ms=round(elapsed, 1))
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "config saved",
+            operation="INSERT" if elapsed else "UPDATE",
+            doc_id="config",
+            doc_type="config",
+            duration_ms=round(elapsed, 1),
+        )
 
     def import_config_file(self, path: str) -> dict:
         with open(path) as f:
             cfg = json.load(f)
         self.save_config(cfg)
-        log_event(logger, "info", "CBL", "config imported from file",
-                  operation="INSERT", doc_id="config", doc_type="config",
-                  db_path=path)
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "config imported from file",
+            operation="INSERT",
+            doc_id="config",
+            doc_type="config",
+            db_path=path,
+        )
         return cfg
 
     # ── Checkpoints ───────────────────────────────────────────
@@ -241,9 +311,16 @@ class CBLStore:
         doc = _coll_get_doc(self.db, COLL_CHECKPOINTS, doc_id)
         elapsed = (time.monotonic() - t0) * 1000
         if not doc:
-            log_event(logger, "debug", "CBL", "checkpoint not found",
-                      operation="SELECT", doc_id=doc_id, doc_type="checkpoint",
-                      duration_ms=round(elapsed, 1))
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "checkpoint not found",
+                operation="SELECT",
+                doc_id=doc_id,
+                doc_type="checkpoint",
+                duration_ms=round(elapsed, 1),
+            )
             return None
         props = doc.properties
         result = {
@@ -252,13 +329,20 @@ class CBLStore:
             "time": props.get("time", 0),
             "remote": props.get("remote", 0),
         }
-        log_event(logger, "debug", "CBL", "checkpoint loaded",
-                  operation="SELECT", doc_id=doc_id, doc_type="checkpoint",
-                  seq=result["SGs_Seq"], duration_ms=round(elapsed, 1))
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "checkpoint loaded",
+            operation="SELECT",
+            doc_id=doc_id,
+            doc_type="checkpoint",
+            seq=result["SGs_Seq"],
+            duration_ms=round(elapsed, 1),
+        )
         return result
 
-    def save_checkpoint(self, uuid: str, seq: str, client_id: str,
-                        remote: int) -> None:
+    def save_checkpoint(self, uuid: str, seq: str, client_id: str, remote: int) -> None:
         doc_id = f"checkpoint:{uuid}"
         t0 = time.monotonic()
         doc = _coll_get_mutable_doc(self.db, COLL_CHECKPOINTS, doc_id)
@@ -272,10 +356,17 @@ class CBLStore:
         doc["remote"] = remote
         _coll_save_doc(self.db, COLL_CHECKPOINTS, doc)
         elapsed = (time.monotonic() - t0) * 1000
-        log_event(logger, "info", "CBL", "checkpoint saved",
-                  operation="INSERT" if is_new else "UPDATE",
-                  doc_id=doc_id, doc_type="checkpoint",
-                  seq=seq, duration_ms=round(elapsed, 1))
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "checkpoint saved",
+            operation="INSERT" if is_new else "UPDATE",
+            doc_id=doc_id,
+            doc_type="checkpoint",
+            seq=seq,
+            duration_ms=round(elapsed, 1),
+        )
 
     # ── Schema Mappings ───────────────────────────────────────
 
@@ -288,16 +379,25 @@ class CBLStore:
             return json.loads(raw)
         return []
 
-    def _save_manifest(self, collection_name: str, manifest_id: str, ids: list[str]) -> None:
+    def _save_manifest(
+        self, collection_name: str, manifest_id: str, ids: list[str]
+    ) -> None:
         doc = _coll_get_mutable_doc(self.db, collection_name, manifest_id)
         if not doc:
             doc = MutableDocument(manifest_id)
         doc["type"] = "manifest"
         doc["ids"] = json.dumps(ids)
         _coll_save_doc(self.db, collection_name, doc)
-        log_event(logger, "trace", "CBL", "manifest updated",
-                  operation="UPDATE", doc_id=manifest_id,
-                  doc_type="manifest", doc_count=len(ids))
+        log_event(
+            logger,
+            "trace",
+            "CBL",
+            "manifest updated",
+            operation="UPDATE",
+            doc_id=manifest_id,
+            doc_type="manifest",
+            doc_count=len(ids),
+        )
 
     def list_mappings(self) -> list[dict]:
         ids = self._get_manifest(COLL_MAPPINGS, "manifest:mappings")
@@ -306,26 +406,48 @@ class CBLStore:
             doc = _coll_get_doc(self.db, COLL_MAPPINGS, mid)
             if doc:
                 props = doc.properties
-                result.append({
-                    "name": props.get("name", ""),
-                    "content": props.get("content", ""),
-                    "active": props.get("active", True),
-                    "updated_at": props.get("updated_at", ""),
-                })
-        log_event(logger, "debug", "CBL", "listed mappings",
-                  operation="SELECT", doc_type="mapping",
-                  doc_count=len(result))
+                result.append(
+                    {
+                        "name": props.get("name", ""),
+                        "content": props.get("content", ""),
+                        "active": props.get("active", True),
+                        "updated_at": props.get("updated_at", ""),
+                    }
+                )
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "listed mappings",
+            operation="SELECT",
+            doc_type="mapping",
+            doc_count=len(result),
+        )
         return result
 
     def get_mapping(self, name: str) -> str | None:
         doc_id = f"mapping:{name}"
         doc = _coll_get_doc(self.db, COLL_MAPPINGS, doc_id)
         if not doc:
-            log_event(logger, "debug", "CBL", "mapping not found",
-                      operation="SELECT", doc_id=doc_id, doc_type="mapping")
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "mapping not found",
+                operation="SELECT",
+                doc_id=doc_id,
+                doc_type="mapping",
+            )
             return None
-        log_event(logger, "debug", "CBL", "mapping loaded",
-                  operation="SELECT", doc_id=doc_id, doc_type="mapping")
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "mapping loaded",
+            operation="SELECT",
+            doc_id=doc_id,
+            doc_type="mapping",
+        )
         return doc.properties.get("content")
 
     def save_mapping(self, name: str, content: str) -> None:
@@ -350,10 +472,16 @@ class CBLStore:
             ids.append(doc_id)
             self._save_manifest(COLL_MAPPINGS, "manifest:mappings", ids)
 
-        log_event(logger, "info", "CBL", "mapping saved",
-                  operation="INSERT" if is_new else "UPDATE",
-                  doc_id=doc_id, doc_type="mapping",
-                  duration_ms=round(elapsed, 1))
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "mapping saved",
+            operation="INSERT" if is_new else "UPDATE",
+            doc_id=doc_id,
+            doc_type="mapping",
+            duration_ms=round(elapsed, 1),
+        )
 
     def set_mapping_active(self, name: str, active: bool) -> bool:
         """Set the active status of a mapping. Returns True if found."""
@@ -364,16 +492,30 @@ class CBLStore:
         doc["active"] = active
         doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         _coll_save_doc(self.db, COLL_MAPPINGS, doc)
-        log_event(logger, "info", "CBL", "mapping active status changed",
-                  operation="UPDATE", doc_id=doc_id, doc_type="mapping")
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "mapping active status changed",
+            operation="UPDATE",
+            doc_id=doc_id,
+            doc_type="mapping",
+        )
         return True
 
     def delete_mapping(self, name: str) -> None:
         doc_id = f"mapping:{name}"
         doc = _coll_get_doc(self.db, COLL_MAPPINGS, doc_id)
         if not doc:
-            log_event(logger, "debug", "CBL", "mapping not found for delete",
-                      operation="DELETE", doc_id=doc_id, doc_type="mapping")
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "mapping not found for delete",
+                operation="DELETE",
+                doc_id=doc_id,
+                doc_type="mapping",
+            )
             return
         _coll_purge_doc(self.db, COLL_MAPPINGS, doc_id)
 
@@ -382,13 +524,21 @@ class CBLStore:
         ids = [i for i in ids if i != doc_id]
         self._save_manifest(COLL_MAPPINGS, "manifest:mappings", ids)
 
-        log_event(logger, "info", "CBL", "mapping deleted",
-                  operation="DELETE", doc_id=doc_id, doc_type="mapping")
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "mapping deleted",
+            operation="DELETE",
+            doc_id=doc_id,
+            doc_type="mapping",
+        )
 
     # ── Dead Letter Queue ─────────────────────────────────────
 
-    def add_dlq_entry(self, doc_id: str, seq: str, method: str,
-                      status: int, error: str, doc: dict) -> None:
+    def add_dlq_entry(
+        self, doc_id: str, seq: str, method: str, status: int, error: str, doc: dict
+    ) -> None:
         ts = int(time.time())
         dlq_id = f"dlq:{doc_id}:{ts}"
         t0 = time.monotonic()
@@ -410,9 +560,18 @@ class CBLStore:
         ids.append(dlq_id)
         self._save_manifest(COLL_DLQ, "manifest:dlq", ids)
 
-        log_event(logger, "warn", "DLQ", "entry added",
-                  operation="INSERT", doc_id=dlq_id, doc_type="dlq",
-                  seq=seq, status=status, duration_ms=round(elapsed, 1))
+        log_event(
+            logger,
+            "warn",
+            "DLQ",
+            "entry added",
+            operation="INSERT",
+            doc_id=dlq_id,
+            doc_type="dlq",
+            seq=seq,
+            status=status,
+            duration_ms=round(elapsed, 1),
+        )
 
     def list_dlq(self) -> list[dict]:
         ids = self._get_manifest(COLL_DLQ, "manifest:dlq")
@@ -421,30 +580,53 @@ class CBLStore:
             doc = _coll_get_doc(self.db, COLL_DLQ, dlq_id)
             if doc:
                 props = doc.properties
-                result.append({
-                    "id": dlq_id,
-                    "doc_id_original": props.get("doc_id_original", ""),
-                    "seq": props.get("seq", ""),
-                    "method": props.get("method", ""),
-                    "status": props.get("status", 0),
-                    "error": props.get("error", ""),
-                    "time": props.get("time", 0),
-                    "retried": props.get("retried", False),
-                })
-        log_event(logger, "debug", "DLQ", "listed entries",
-                  operation="SELECT", doc_type="dlq", doc_count=len(result))
+                result.append(
+                    {
+                        "id": dlq_id,
+                        "doc_id_original": props.get("doc_id_original", ""),
+                        "seq": props.get("seq", ""),
+                        "method": props.get("method", ""),
+                        "status": props.get("status", 0),
+                        "error": props.get("error", ""),
+                        "time": props.get("time", 0),
+                        "retried": props.get("retried", False),
+                    }
+                )
+        log_event(
+            logger,
+            "debug",
+            "DLQ",
+            "listed entries",
+            operation="SELECT",
+            doc_type="dlq",
+            doc_count=len(result),
+        )
         return result
 
     def get_dlq_entry(self, dlq_id: str) -> dict | None:
         doc = _coll_get_doc(self.db, COLL_DLQ, dlq_id)
         if not doc:
-            log_event(logger, "debug", "DLQ", "entry not found",
-                      operation="SELECT", doc_id=dlq_id, doc_type="dlq")
+            log_event(
+                logger,
+                "debug",
+                "DLQ",
+                "entry not found",
+                operation="SELECT",
+                doc_id=dlq_id,
+                doc_type="dlq",
+            )
             return None
         props = doc.properties
         doc_data = props.get("doc_data", "{}")
-        log_event(logger, "debug", "DLQ", "entry loaded",
-                  operation="SELECT", doc_id=dlq_id, doc_type="dlq")
+        log_event(
+            logger,
+            "debug",
+            "DLQ",
+            "entry loaded",
+            operation="SELECT",
+            doc_id=dlq_id,
+            doc_type="dlq",
+        )
         return {
             "id": dlq_id,
             "doc_id_original": props.get("doc_id_original", ""),
@@ -463,8 +645,15 @@ class CBLStore:
             return
         doc["retried"] = True
         _coll_save_doc(self.db, COLL_DLQ, doc)
-        log_event(logger, "info", "DLQ", "entry marked retried",
-                  operation="UPDATE", doc_id=dlq_id, doc_type="dlq")
+        log_event(
+            logger,
+            "info",
+            "DLQ",
+            "entry marked retried",
+            operation="UPDATE",
+            doc_id=dlq_id,
+            doc_type="dlq",
+        )
 
     def delete_dlq_entry(self, dlq_id: str) -> None:
         doc = _coll_get_doc(self.db, COLL_DLQ, dlq_id)
@@ -477,8 +666,15 @@ class CBLStore:
         ids = [i for i in ids if i != dlq_id]
         self._save_manifest(COLL_DLQ, "manifest:dlq", ids)
 
-        log_event(logger, "info", "DLQ", "entry purged",
-                  operation="DELETE", doc_id=dlq_id, doc_type="dlq")
+        log_event(
+            logger,
+            "info",
+            "DLQ",
+            "entry purged",
+            operation="DELETE",
+            doc_id=dlq_id,
+            doc_type="dlq",
+        )
 
     def clear_dlq(self) -> None:
         ids = self._get_manifest(COLL_DLQ, "manifest:dlq")
@@ -489,8 +685,15 @@ class CBLStore:
                 _coll_purge_doc(self.db, COLL_DLQ, dlq_id)
                 count += 1
         self._save_manifest(COLL_DLQ, "manifest:dlq", [])
-        log_event(logger, "info", "DLQ", "queue cleared",
-                  operation="DELETE", doc_type="dlq", doc_count=count)
+        log_event(
+            logger,
+            "info",
+            "DLQ",
+            "queue cleared",
+            operation="DELETE",
+            doc_type="dlq",
+            doc_count=count,
+        )
 
     def dlq_count(self) -> int:
         return len(self._get_manifest(COLL_DLQ, "manifest:dlq"))
@@ -540,36 +743,56 @@ class CBLStore:
             elif hasattr(self.db, "compact") and maint_type == "compact":
                 self.db.compact()
             else:
-                log_event(logger, "warn", "CBL",
-                          "maintenance operation not available in this CBL SDK version",
-                          maintenance_type=maint_type,
-                          error_detail="no performMaintenance or compact method")
+                log_event(
+                    logger,
+                    "warn",
+                    "CBL",
+                    "maintenance operation not available in this CBL SDK version",
+                    maintenance_type=maint_type,
+                    error_detail="no performMaintenance or compact method",
+                )
                 return False
 
             elapsed = (time.monotonic() - t0) * 1000
             size_after = _db_size_mb()
-            log_event(logger, "info", "CBL",
-                      "maintenance completed: %s" % maint_type,
-                      operation="MAINTENANCE", maintenance_type=maint_type,
-                      db_name=CBL_DB_NAME, db_size_mb=size_after,
-                      duration_ms=round(elapsed, 1))
+            log_event(
+                logger,
+                "info",
+                "CBL",
+                "maintenance completed: %s" % maint_type,
+                operation="MAINTENANCE",
+                maintenance_type=maint_type,
+                db_name=CBL_DB_NAME,
+                db_size_mb=size_after,
+                duration_ms=round(elapsed, 1),
+            )
             if maint_type == "compact" and size_before > 0:
                 saved = size_before - size_after
                 if saved > 0.01:
-                    log_event(logger, "info", "CBL",
-                              "compact freed %.2f MB (%.1f%% reduction)" % (
-                                  saved, (saved / size_before) * 100),
-                              maintenance_type="compact",
-                              db_size_mb=size_after)
+                    log_event(
+                        logger,
+                        "info",
+                        "CBL",
+                        "compact freed %.2f MB (%.1f%% reduction)"
+                        % (saved, (saved / size_before) * 100),
+                        maintenance_type="compact",
+                        db_size_mb=size_after,
+                    )
             return True
 
         except Exception as exc:
             elapsed = (time.monotonic() - t0) * 1000
-            log_event(logger, "error", "CBL",
-                      "maintenance failed: %s – %s" % (maint_type, exc),
-                      operation="MAINTENANCE", maintenance_type=maint_type,
-                      db_name=CBL_DB_NAME, duration_ms=round(elapsed, 1),
-                      error_detail=str(exc)[:200])
+            log_event(
+                logger,
+                "error",
+                "CBL",
+                "maintenance failed: %s – %s" % (maint_type, exc),
+                operation="MAINTENANCE",
+                maintenance_type=maint_type,
+                db_name=CBL_DB_NAME,
+                duration_ms=round(elapsed, 1),
+                error_detail=str(exc)[:200],
+            )
             return False
 
     def run_all_maintenance(self) -> dict[str, bool]:
@@ -607,39 +830,58 @@ class CBLMaintenanceScheduler:
             target=self._run_loop, daemon=True, name="cbl-maintenance"
         )
         self._thread.start()
-        log_event(logger, "info", "CBL",
-                  "maintenance scheduler started (every %.1f hours)" % (
-                      self.interval_seconds / 3600),
-                  operation="OPEN")
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "maintenance scheduler started (every %.1f hours)"
+            % (self.interval_seconds / 3600),
+            operation="OPEN",
+        )
 
     def stop(self) -> None:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
-        log_event(logger, "info", "CBL", "maintenance scheduler stopped",
-                  operation="CLOSE")
+        log_event(
+            logger, "info", "CBL", "maintenance scheduler stopped", operation="CLOSE"
+        )
 
     def _run_loop(self) -> None:
         while not self._stop_event.wait(timeout=self.interval_seconds):
             try:
                 store = CBLStore()
                 info = store.db_info()
-                log_event(logger, "info", "CBL",
-                          "scheduled maintenance starting",
-                          operation="MAINTENANCE",
-                          db_size_mb=info["db_size_mb"])
+                log_event(
+                    logger,
+                    "info",
+                    "CBL",
+                    "scheduled maintenance starting",
+                    operation="MAINTENANCE",
+                    db_size_mb=info["db_size_mb"],
+                )
                 results = store.run_all_maintenance()
-                log_event(logger, "info", "CBL",
-                          "scheduled maintenance complete: %s" % results,
-                          operation="MAINTENANCE")
+                log_event(
+                    logger,
+                    "info",
+                    "CBL",
+                    "scheduled maintenance complete: %s" % results,
+                    operation="MAINTENANCE",
+                )
             except Exception as exc:
-                log_event(logger, "error", "CBL",
-                          "scheduled maintenance error: %s" % exc,
-                          operation="MAINTENANCE", error_detail=str(exc)[:200])
+                log_event(
+                    logger,
+                    "error",
+                    "CBL",
+                    "scheduled maintenance error: %s" % exc,
+                    operation="MAINTENANCE",
+                    error_detail=str(exc)[:200],
+                )
 
 
 # ── Migration helpers ────────────────────────────────────────
+
 
 def migrate_default_to_collections() -> None:
     """One-time migration: move docs from _default._default to scoped collections."""
@@ -652,7 +894,9 @@ def migrate_default_to_collections() -> None:
         log_event(logger, "debug", "CBL", "collection migration: already done")
         return
 
-    log_event(logger, "info", "CBL", "migrating documents from _default to scoped collections")
+    log_event(
+        logger, "info", "CBL", "migrating documents from _default to scoped collections"
+    )
     migrated = 0
 
     # Config
@@ -666,9 +910,11 @@ def migrate_default_to_collections() -> None:
         migrated += 1
 
     # Manifests + their referenced docs
-    for manifest_id, coll_name in [("manifest:mappings", COLL_MAPPINGS),
-                                    ("manifest:dlq", COLL_DLQ),
-                                    ("manifest:checkpoints", COLL_CHECKPOINTS)]:
+    for manifest_id, coll_name in [
+        ("manifest:mappings", COLL_MAPPINGS),
+        ("manifest:dlq", COLL_DLQ),
+        ("manifest:checkpoints", COLL_CHECKPOINTS),
+    ]:
         old_manifest = db.getDocument(manifest_id)
         if old_manifest:
             raw_ids = old_manifest.properties.get("ids")
@@ -689,8 +935,14 @@ def migrate_default_to_collections() -> None:
             _coll_save_doc(db, coll_name, new_manifest)
             migrated += 1
 
-    log_event(logger, "info", "CBL", "migration complete",
-              operation="MIGRATE", docs_migrated=migrated)
+    log_event(
+        logger,
+        "info",
+        "CBL",
+        "migration complete",
+        operation="MIGRATE",
+        docs_migrated=migrated,
+    )
 
 
 def migrate_files_to_cbl(config_path: str = "config.json") -> None:
@@ -715,13 +967,24 @@ def migrate_files_to_cbl(config_path: str = "config.json") -> None:
         if p.exists():
             cfg = json.loads(p.read_text())
             store.save_config(cfg)
-            log_event(logger, "info", "CBL",
-                      "seeded config into CBL from %s (first start)" % config_path,
-                      operation="INSERT", doc_type="config", db_path=config_path)
+            log_event(
+                logger,
+                "info",
+                "CBL",
+                "seeded config into CBL from %s (first start)" % config_path,
+                operation="INSERT",
+                doc_type="config",
+                db_path=config_path,
+            )
     else:
-        log_event(logger, "debug", "CBL",
-                  "config already in CBL — ignoring %s" % config_path,
-                  operation="SELECT", doc_type="config")
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "config already in CBL — ignoring %s" % config_path,
+            operation="SELECT",
+            doc_type="config",
+        )
 
     # ── Mappings: disk is edit surface, CBL is runtime store ────────
     # On every startup, sync mappings/ → CBL (disk always wins).
@@ -740,17 +1003,27 @@ def migrate_files_to_cbl(config_path: str = "config.json") -> None:
                 if cbl_content is None:
                     store.save_mapping(f.name, disk_content)
                     added += 1
-                    log_event(logger, "info", "CBL",
-                              "imported mapping to CBL: %s" % f.name,
-                              operation="INSERT", doc_type="mapping",
-                              doc_id=f"mapping:{f.name}")
+                    log_event(
+                        logger,
+                        "info",
+                        "CBL",
+                        "imported mapping to CBL: %s" % f.name,
+                        operation="INSERT",
+                        doc_type="mapping",
+                        doc_id=f"mapping:{f.name}",
+                    )
                 elif disk_content.strip() != cbl_content.strip():
                     store.save_mapping(f.name, disk_content)
                     updated += 1
-                    log_event(logger, "info", "CBL",
-                              "updated mapping in CBL from disk: %s" % f.name,
-                              operation="UPDATE", doc_type="mapping",
-                              doc_id=f"mapping:{f.name}")
+                    log_event(
+                        logger,
+                        "info",
+                        "CBL",
+                        "updated mapping in CBL from disk: %s" % f.name,
+                        operation="UPDATE",
+                        doc_type="mapping",
+                        doc_id=f"mapping:{f.name}",
+                    )
 
     # Remove CBL mappings that no longer exist on disk
     cbl_entries = store.list_mappings()
@@ -759,21 +1032,36 @@ def migrate_files_to_cbl(config_path: str = "config.json") -> None:
         if name and name not in disk_names:
             store.delete_mapping(name)
             removed += 1
-            log_event(logger, "info", "CBL",
-                      "removed mapping from CBL (not on disk): %s" % name,
-                      operation="DELETE", doc_type="mapping",
-                      doc_id=f"mapping:{name}")
+            log_event(
+                logger,
+                "info",
+                "CBL",
+                "removed mapping from CBL (not on disk): %s" % name,
+                operation="DELETE",
+                doc_type="mapping",
+                doc_id=f"mapping:{name}",
+            )
 
-    log_event(logger, "info", "CBL",
-              "mappings sync complete: %d on disk, %d added, %d updated, %d removed"
-              % (len(disk_names), added, updated, removed),
-              operation="SYNC", doc_type="mapping")
+    log_event(
+        logger,
+        "info",
+        "CBL",
+        "mappings sync complete: %d on disk, %d added, %d updated, %d removed"
+        % (len(disk_names), added, updated, removed),
+        operation="SYNC",
+        doc_type="mapping",
+    )
 
     # Checkpoint
     cp_path = Path("checkpoint.json")
     if cp_path.exists():
         data = json.loads(cp_path.read_text())
-        log_event(logger, "info", "CBL",
-                  "checkpoint.json available for migration",
-                  operation="SELECT", doc_type="checkpoint",
-                  seq=data.get("SGs_Seq", "0"))
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "checkpoint.json available for migration",
+            operation="SELECT",
+            doc_type="checkpoint",
+            seq=data.get("SGs_Seq", "0"),
+        )

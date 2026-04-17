@@ -35,18 +35,20 @@ logging.Logger.trace = _trace  # type: ignore[attr-defined]
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-LOG_KEYS = frozenset({
-    "CHANGES",      # _changes feed input
-    "PROCESSING",   # filtering, routing
-    "MAPPING",      # schema mapping
-    "OUTPUT",       # stdout / HTTP / DB output
-    "HTTP",         # HTTP requests / responses
-    "CHECKPOINT",   # checkpoint load / save
-    "RETRY",        # retry / backoff decisions
-    "METRICS",      # metrics server
-    "CBL",          # Couchbase Lite operations (read/write/open/close/maintenance)
-    "DLQ",          # dead letter queue operations (add/retry/purge/list)
-})
+LOG_KEYS = frozenset(
+    {
+        "CHANGES",  # _changes feed input
+        "PROCESSING",  # filtering, routing
+        "MAPPING",  # schema mapping
+        "OUTPUT",  # stdout / HTTP / DB output
+        "HTTP",  # HTTP requests / responses
+        "CHECKPOINT",  # checkpoint load / save
+        "RETRY",  # retry / backoff decisions
+        "METRICS",  # metrics server
+        "CBL",  # Couchbase Lite operations (read/write/open/close/maintenance)
+        "DLQ",  # dead letter queue operations (add/retry/purge/list)
+    }
+)
 
 LEVELS = {
     "trace": TRACE,
@@ -88,7 +90,10 @@ class Redactor:
         # Redact Bearer tokens in strings
         if self.level == "partial":
             value = _HEADER_BEARER_RE.sub(
-                lambda m: m.group(1) + m.group(0)[-4:].rjust(len(m.group(0)) - len(m.group(1)), "*"),
+                lambda m: (
+                    m.group(1)
+                    + m.group(0)[-4:].rjust(len(m.group(0)) - len(m.group(1)), "*")
+                ),
                 value,
             )
         elif self.level == "full":
@@ -140,8 +145,9 @@ class LogKeyLevelFilter(logging.Filter):
       2. Does record.levelno meet the threshold (base or per-key override)?
     """
 
-    def __init__(self, log_keys: list[str], base_level: int,
-                 key_levels: dict[str, int]):
+    def __init__(
+        self, log_keys: list[str], base_level: int, key_levels: dict[str, int]
+    ):
         super().__init__()
         self.allow_all = "*" in log_keys
         self.log_keys = set(k.upper() for k in log_keys)
@@ -166,13 +172,35 @@ class LogKeyLevelFilter(logging.Filter):
 # Redacting formatter
 # ---------------------------------------------------------------------------
 _EXTRA_FIELDS = (
-    "log_key", "operation", "doc_id", "seq", "status", "url",
-    "attempt", "elapsed_ms", "mode", "http_method", "bytes",
-    "storage", "batch_size", "input_count", "filtered_count",
-    "host", "port", "delay_seconds", "field_count",
+    "log_key",
+    "operation",
+    "doc_id",
+    "seq",
+    "status",
+    "url",
+    "attempt",
+    "elapsed_ms",
+    "mode",
+    "http_method",
+    "bytes",
+    "storage",
+    "batch_size",
+    "input_count",
+    "filtered_count",
+    "host",
+    "port",
+    "delay_seconds",
+    "field_count",
     # CBL-specific fields
-    "db_name", "db_path", "db_size_mb", "doc_count", "doc_type",
-    "manifest_id", "maintenance_type", "duration_ms", "error_detail",
+    "db_name",
+    "db_path",
+    "db_size_mb",
+    "doc_count",
+    "doc_type",
+    "manifest_id",
+    "maintenance_type",
+    "duration_ms",
+    "error_detail",
 )
 
 
@@ -183,8 +211,9 @@ class RedactingFormatter(logging.Formatter):
       - Redacts sensitive data in messages
     """
 
-    def __init__(self, redactor: Redactor, fmt: str | None = None,
-                 datefmt: str | None = None):
+    def __init__(
+        self, redactor: Redactor, fmt: str | None = None, datefmt: str | None = None
+    ):
         super().__init__(fmt=fmt, datefmt=datefmt)
         self.redactor = redactor
 
@@ -225,9 +254,14 @@ class ManagedRotatingFileHandler(RotatingFileHandler):
       - rotated_logs_size_limit: total MB cap for rotated files
     """
 
-    def __init__(self, filename: str, max_size_mb: int = 100,
-                 max_age_days: int = 7, rotated_logs_size_limit_mb: int = 1024,
-                 **kwargs):
+    def __init__(
+        self,
+        filename: str,
+        max_size_mb: int = 100,
+        max_age_days: int = 7,
+        rotated_logs_size_limit_mb: int = 1024,
+        **kwargs,
+    ):
         self.max_age_days = max_age_days
         self.rotated_logs_size_limit = rotated_logs_size_limit_mb * 1024 * 1024
         os.makedirs(os.path.dirname(filename) or ".", exist_ok=True)
@@ -276,9 +310,9 @@ class ManagedRotatingFileHandler(RotatingFileHandler):
 # ---------------------------------------------------------------------------
 # Operation inference
 # ---------------------------------------------------------------------------
-def infer_operation(change: dict | None = None,
-                    doc: dict | None = None,
-                    method: str | None = None) -> str:
+def infer_operation(
+    change: dict | None = None, doc: dict | None = None, method: str | None = None
+) -> str:
     """
     Infer the logical DB operation from a change/doc/method.
 
@@ -308,8 +342,9 @@ def infer_operation(change: dict | None = None,
 # ---------------------------------------------------------------------------
 # Thin helpers for structured logging
 # ---------------------------------------------------------------------------
-def log_event(logger: logging.Logger, level: str, log_key: str,
-              message: str, **fields) -> None:
+def log_event(
+    logger: logging.Logger, level: str, log_key: str, message: str, **fields
+) -> None:
     """Log a structured event with a log_key and extra fields."""
     lvl = LEVELS.get(level, logging.INFO)
     if not logger.isEnabledFor(lvl):
@@ -352,9 +387,12 @@ def configure_logging(cfg: dict) -> None:
         # Route icecream to TRACE
         try:
             from icecream import ic
+
             ic.configureOutput(
                 prefix="ic| ",
-                outputFunction=lambda s: logging.getLogger("changes_worker").log(TRACE, s),
+                outputFunction=lambda s: logging.getLogger("changes_worker").log(
+                    TRACE, s
+                ),
             )
         except ImportError:
             pass
@@ -367,7 +405,9 @@ def configure_logging(cfg: dict) -> None:
     # Console handler
     console_cfg = cfg.get("console", {})
     if console_cfg.get("enabled", True):
-        base_level = LEVELS.get(console_cfg.get("log_level", "info").lower(), logging.INFO)
+        base_level = LEVELS.get(
+            console_cfg.get("log_level", "info").lower(), logging.INFO
+        )
         log_keys = console_cfg.get("log_keys", ["*"])
         key_levels = {
             k: LEVELS.get(v.lower(), logging.INFO)
@@ -388,7 +428,9 @@ def configure_logging(cfg: dict) -> None:
     file_cfg = cfg.get("file", {})
     if file_cfg.get("enabled", False):
         file_path = file_cfg.get("path", "logs/changes_worker.log")
-        base_level = LEVELS.get(file_cfg.get("log_level", "debug").lower(), logging.DEBUG)
+        base_level = LEVELS.get(
+            file_cfg.get("log_level", "debug").lower(), logging.DEBUG
+        )
         log_keys = file_cfg.get("log_keys", ["*"])
         key_levels = {
             k: LEVELS.get(v.lower(), logging.DEBUG)
@@ -418,6 +460,7 @@ def configure_logging(cfg: dict) -> None:
     # Route icecream to TRACE
     try:
         from icecream import ic
+
         ic.configureOutput(
             prefix="ic| ",
             outputFunction=lambda s: logging.getLogger("changes_worker").log(TRACE, s),

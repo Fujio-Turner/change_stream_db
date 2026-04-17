@@ -39,6 +39,7 @@ ORDERS_MAPPING_PATH = os.path.join(
 # resolve_path
 # ===================================================================
 
+
 class TestResolvePath(unittest.TestCase):
     """Tests for resolve_path()."""
 
@@ -72,6 +73,7 @@ class TestResolvePath(unittest.TestCase):
 # ===================================================================
 # apply_transform
 # ===================================================================
+
 
 class TestApplyTransform(unittest.TestCase):
     """Tests for apply_transform()."""
@@ -185,6 +187,7 @@ class TestApplyTransform(unittest.TestCase):
 # resolve_column
 # ===================================================================
 
+
 class TestResolveColumn(unittest.TestCase):
     """Tests for resolve_column()."""
 
@@ -212,6 +215,7 @@ class TestResolveColumn(unittest.TestCase):
 # SqlOperation
 # ===================================================================
 
+
 class TestSqlOperation(unittest.TestCase):
     """Tests for SqlOperation."""
 
@@ -224,7 +228,9 @@ class TestSqlOperation(unittest.TestCase):
         self.assertEqual(params, ["order1"])
 
     def test_insert_generates_correct_sql(self):
-        op = SqlOperation("INSERT", "order_items", data={"order_doc_id": "o1", "qty": 5})
+        op = SqlOperation(
+            "INSERT", "order_items", data={"order_doc_id": "o1", "qty": 5}
+        )
         sql, params = op.to_sql()
         self.assertIn("INSERT INTO", sql)
         self.assertIn('"order_items"', sql)
@@ -234,7 +240,8 @@ class TestSqlOperation(unittest.TestCase):
 
     def test_upsert_generates_on_conflict_sql(self):
         op = SqlOperation(
-            "UPSERT", "orders",
+            "UPSERT",
+            "orders",
             data={"doc_id": "o1", "status": "shipped"},
             conflict_column="doc_id",
         )
@@ -252,7 +259,8 @@ class TestSqlOperation(unittest.TestCase):
 
     def test_repr_includes_all_fields(self):
         op = SqlOperation(
-            "UPSERT", "orders",
+            "UPSERT",
+            "orders",
             data={"doc_id": "o1"},
             where={"doc_id": "o1"},
             conflict_column="doc_id",
@@ -268,6 +276,7 @@ class TestSqlOperation(unittest.TestCase):
 # ===================================================================
 # SchemaMapper
 # ===================================================================
+
 
 def _load_orders_mapping() -> dict:
     with open(ORDERS_MAPPING_PATH, "r", encoding="utf-8") as f:
@@ -312,40 +321,52 @@ class TestSchemaMapperMatches(unittest.TestCase):
 
     def test_matches_expression_split_index(self):
         """split($._id,"::")[0] extracts the prefix from the doc key."""
-        m = SchemaMapper({
-            "source": {"match": {"expression": 'split($._id,"::")[0]', "value": "invoice"}}
-        })
+        m = SchemaMapper(
+            {
+                "source": {
+                    "match": {"expression": 'split($._id,"::")[0]', "value": "invoice"}
+                }
+            }
+        )
         self.assertTrue(m.matches({"_id": "invoice::12345"}))
         self.assertFalse(m.matches({"_id": "order::12345"}))
         self.assertFalse(m.matches({"_id": "invoice_no_separator"}))
 
     def test_matches_expression_split_second_part(self):
         """split($._id,"::")[1] extracts the second segment."""
-        m = SchemaMapper({
-            "source": {"match": {"expression": 'split($._id,"::")[1]', "value": "99"}}
-        })
+        m = SchemaMapper(
+            {"source": {"match": {"expression": 'split($._id,"::")[1]', "value": "99"}}}
+        )
         self.assertTrue(m.matches({"_id": "type::99"}))
         self.assertFalse(m.matches({"_id": "type::100"}))
 
     def test_matches_expression_lowercase(self):
-        m = SchemaMapper({
-            "source": {"match": {"expression": "lowercase($._id)", "value": "invoice::abc"}}
-        })
+        m = SchemaMapper(
+            {
+                "source": {
+                    "match": {"expression": "lowercase($._id)", "value": "invoice::abc"}
+                }
+            }
+        )
         self.assertTrue(m.matches({"_id": "INVOICE::ABC"}))
         self.assertFalse(m.matches({"_id": "ORDER::ABC"}))
 
     def test_matches_expression_plain_path(self):
         """Expression can also be a plain JSON path."""
-        m = SchemaMapper({
-            "source": {"match": {"expression": "$._id", "value": "invoice::1"}}
-        })
+        m = SchemaMapper(
+            {"source": {"match": {"expression": "$._id", "value": "invoice::1"}}}
+        )
         self.assertTrue(m.matches({"_id": "invoice::1"}))
         self.assertFalse(m.matches({"_id": "invoice::2"}))
 
     def test_matches_expression_missing_field(self):
-        m = SchemaMapper({
-            "source": {"match": {"expression": 'split($._id,"::")[0]', "value": "invoice"}}
-        })
+        m = SchemaMapper(
+            {
+                "source": {
+                    "match": {"expression": 'split($._id,"::")[0]', "value": "invoice"}
+                }
+            }
+        )
         self.assertFalse(m.matches({"no_id": "x"}))
 
 
@@ -505,9 +526,7 @@ class TestSchemaMapperFromFile(unittest.TestCase):
                 }
             ],
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(mapping, f)
             f.flush()
             tmp_path = f.name

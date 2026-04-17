@@ -28,6 +28,7 @@ _to_sql = MSSQLOutputForwarder._op_to_mssql_sql
 # SQL Generation
 # ===================================================================
 
+
 class TestMSSQLDelete(unittest.TestCase):
     """DELETE → DELETE FROM [table] WHERE [col] = ?"""
 
@@ -38,8 +39,9 @@ class TestMSSQLDelete(unittest.TestCase):
         self.assertEqual(params, ["order::1"])
 
     def test_multiple_where_clauses(self):
-        op = SqlOperation("DELETE", "order_items",
-                          where={"order_doc_id": "order::1", "item_id": 42})
+        op = SqlOperation(
+            "DELETE", "order_items", where={"order_doc_id": "order::1", "item_id": 42}
+        )
         sql, params = _to_sql(op)
         self.assertIn("[order_doc_id] = ?", sql)
         self.assertIn("[item_id] = ?", sql)
@@ -50,15 +52,16 @@ class TestMSSQLInsert(unittest.TestCase):
     """INSERT → INSERT INTO [table] (...) VALUES (?,?,...)"""
 
     def test_basic_insert(self):
-        op = SqlOperation("INSERT", "order_items",
-                          data={"order_doc_id": "order::1",
-                                "product_id": "p:100",
-                                "qty": 2})
+        op = SqlOperation(
+            "INSERT",
+            "order_items",
+            data={"order_doc_id": "order::1", "product_id": "p:100", "qty": 2},
+        )
         sql, params = _to_sql(op)
         self.assertEqual(
             sql,
             "INSERT INTO [order_items] ([order_doc_id], [product_id], [qty]) "
-            "VALUES (?, ?, ?)"
+            "VALUES (?, ?, ?)",
         )
         self.assertEqual(params, ["order::1", "p:100", 2])
 
@@ -81,9 +84,12 @@ class TestMSSQLUpsert(unittest.TestCase):
     """UPSERT → MERGE [table] AS t USING (VALUES ...) AS s(...) ON ... ;"""
 
     def test_merge_structure(self):
-        op = SqlOperation("UPSERT", "products",
-                          data={"doc_id": "p::1", "name": "Widget", "price": 19.99},
-                          conflict_column="doc_id")
+        op = SqlOperation(
+            "UPSERT",
+            "products",
+            data={"doc_id": "p::1", "name": "Widget", "price": 19.99},
+            conflict_column="doc_id",
+        )
         sql, params = _to_sql(op)
 
         self.assertIn("MERGE [products] AS t", sql)
@@ -106,27 +112,24 @@ class TestMSSQLUpsert(unittest.TestCase):
         self.assertEqual(params, ["p::1", "Widget", 19.99])
 
     def test_uses_bracket_quoting(self):
-        op = SqlOperation("UPSERT", "t",
-                          data={"id": 1, "val": "x"},
-                          conflict_column="id")
+        op = SqlOperation(
+            "UPSERT", "t", data={"id": 1, "val": "x"}, conflict_column="id"
+        )
         sql, _ = _to_sql(op)
         self.assertIn("[id]", sql)
         self.assertIn("[val]", sql)
         # No double-quotes (postgres) or back-ticks (mysql)
         self.assertNotIn('"', sql)
-        self.assertNotIn('`', sql)
+        self.assertNotIn("`", sql)
 
     def test_defaults_pk_to_first_column(self):
-        op = SqlOperation("UPSERT", "t",
-                          data={"my_pk": "abc", "col2": 10})
+        op = SqlOperation("UPSERT", "t", data={"my_pk": "abc", "col2": 10})
         sql, _ = _to_sql(op)
         self.assertIn("t.[my_pk] = s.[my_pk]", sql)  # ON clause
 
     def test_single_column_skips_update(self):
         """If only the PK column, WHEN MATCHED should be omitted."""
-        op = SqlOperation("UPSERT", "t",
-                          data={"id": 1},
-                          conflict_column="id")
+        op = SqlOperation("UPSERT", "t", data={"id": 1}, conflict_column="id")
         sql, params = _to_sql(op)
         self.assertNotIn("WHEN MATCHED", sql)
         self.assertIn("WHEN NOT MATCHED THEN INSERT", sql)
@@ -134,8 +137,7 @@ class TestMSSQLUpsert(unittest.TestCase):
 
     def test_many_columns(self):
         data = {f"col{i}": i for i in range(10)}
-        op = SqlOperation("UPSERT", "wide_table",
-                          data=data, conflict_column="col0")
+        op = SqlOperation("UPSERT", "wide_table", data=data, conflict_column="col0")
         sql, params = _to_sql(op)
         self.assertEqual(len(params), 10)
         self.assertEqual(sql.count("?"), 10)
@@ -152,8 +154,8 @@ class TestMSSQLUnknownOp(unittest.TestCase):
 # DSN Construction
 # ===================================================================
 
-class TestDsnConstruction(unittest.TestCase):
 
+class TestDsnConstruction(unittest.TestCase):
     @patch("db.db_mssql.aioodbc", new_callable=MagicMock)
     def test_dsn_components(self, mock_aioodbc):
         fwd = MSSQLOutputForwarder.__new__(MSSQLOutputForwarder)
@@ -189,8 +191,8 @@ class TestDsnConstruction(unittest.TestCase):
 # Error Code Extraction
 # ===================================================================
 
-class TestMssqlErrorCode(unittest.TestCase):
 
+class TestMssqlErrorCode(unittest.TestCase):
     def test_extracts_code_from_string(self):
         exc = Exception("('HY000', '[HY000] Something failed (1205)')")
         self.assertEqual(_mssql_error_code(exc), 1205)
@@ -208,8 +210,8 @@ class TestMssqlErrorCode(unittest.TestCase):
 # Error Classification
 # ===================================================================
 
-class TestMSSQLErrorClassification(unittest.TestCase):
 
+class TestMSSQLErrorClassification(unittest.TestCase):
     def setUp(self):
         self.mock_aioodbc = MagicMock()
         patcher = patch("db.db_mssql.aioodbc", self.mock_aioodbc)

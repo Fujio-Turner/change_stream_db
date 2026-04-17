@@ -20,16 +20,18 @@ except ImportError:
 # -- asyncpg error classification ------------------------------------------------
 # Transient errors are worth retrying (connection hiccups, deadlocks, serialization).
 # Permanent errors should go straight to the DLQ (constraint violations, bad types).
-_TRANSIENT_SQLSTATES = frozenset({
-    "40001",  # serialization_failure
-    "40P01",  # deadlock_detected
-    "08000",  # connection_exception
-    "08003",  # connection_does_not_exist
-    "08006",  # connection_failure
-    "57P01",  # admin_shutdown
-    "57P02",  # crash_shutdown
-    "57P03",  # cannot_connect_now
-})
+_TRANSIENT_SQLSTATES = frozenset(
+    {
+        "40001",  # serialization_failure
+        "40P01",  # deadlock_detected
+        "08000",  # connection_exception
+        "08003",  # connection_does_not_exist
+        "08006",  # connection_failure
+        "57P01",  # admin_shutdown
+        "57P02",  # crash_shutdown
+        "57P03",  # cannot_connect_now
+    }
+)
 
 
 class PostgresOutputForwarder(BaseOutputForwarder):
@@ -74,6 +76,7 @@ class PostgresOutputForwarder(BaseOutputForwarder):
         ssl_ctx = self._ssl
         if isinstance(self._ssl, bool) and self._ssl:
             import ssl as _ssl
+
             ssl_ctx = _ssl.create_default_context()
             ssl_ctx.check_hostname = False
             ssl_ctx.verify_mode = _ssl.CERT_NONE
@@ -88,9 +91,14 @@ class PostgresOutputForwarder(BaseOutputForwarder):
             max_size=self._pool_max,
             ssl=ssl_ctx if self._ssl else None,
         )
-        logger.info("PostgreSQL pool created: %s:%d/%s (pool %d–%d)",
-                     self._host, self._port, self._database,
-                     self._pool_min, self._pool_max)
+        logger.info(
+            "PostgreSQL pool created: %s:%d/%s (pool %d–%d)",
+            self._host,
+            self._port,
+            self._database,
+            self._pool_min,
+            self._pool_max,
+        )
 
     async def _close_pool(self) -> None:
         if self._pool:
@@ -117,11 +125,16 @@ class PostgresOutputForwarder(BaseOutputForwarder):
     def _is_transient(self, exc: Exception) -> bool:
         if asyncpg is None:
             return False
-        if isinstance(exc, (asyncpg.InterfaceError,
-                            asyncpg.ConnectionDoesNotExistError,
-                            ConnectionError,
-                            OSError,
-                            TimeoutError)):
+        if isinstance(
+            exc,
+            (
+                asyncpg.InterfaceError,
+                asyncpg.ConnectionDoesNotExistError,
+                ConnectionError,
+                OSError,
+                TimeoutError,
+            ),
+        ):
             return True
         if isinstance(exc, asyncpg.PostgresError):
             return getattr(exc, "sqlstate", None) in _TRANSIENT_SQLSTATES
@@ -130,9 +143,15 @@ class PostgresOutputForwarder(BaseOutputForwarder):
     def _error_class(self, exc: Exception) -> str:
         if asyncpg is None:
             return "unknown"
-        if isinstance(exc, (asyncpg.InterfaceError,
-                            asyncpg.ConnectionDoesNotExistError,
-                            ConnectionError, OSError)):
+        if isinstance(
+            exc,
+            (
+                asyncpg.InterfaceError,
+                asyncpg.ConnectionDoesNotExistError,
+                ConnectionError,
+                OSError,
+            ),
+        ):
             return "connection"
         if isinstance(exc, TimeoutError):
             return "timeout"
@@ -156,11 +175,13 @@ class PostgresOutputForwarder(BaseOutputForwarder):
     async def _test_connection(self) -> None:
         async with self._pool.acquire() as conn:
             await conn.fetchval("SELECT 1")
-        logger.info("PostgreSQL reachable: %s:%d/%s",
-                     self._host, self._port, self._database)
+        logger.info(
+            "PostgreSQL reachable: %s:%d/%s", self._host, self._port, self._database
+        )
 
 
 # ── Introspection (standalone functions, not part of the forwarder) ──────
+
 
 async def introspect_tables(pg_cfg: dict) -> list[dict]:
     """
@@ -189,6 +210,7 @@ async def introspect_tables(pg_cfg: dict) -> list[dict]:
     ssl_ctx = None
     if pg_cfg.get("ssl"):
         import ssl as _ssl
+
         ssl_ctx = _ssl.create_default_context()
         ssl_ctx.check_hostname = False
         ssl_ctx.verify_mode = _ssl.CERT_NONE
@@ -206,26 +228,33 @@ async def introspect_tables(pg_cfg: dict) -> list[dict]:
         schema = pg_cfg.get("schema", "public")
 
         # Get all tables
-        tables_rows = await conn.fetch("""
+        tables_rows = await conn.fetch(
+            """
             SELECT table_name
             FROM information_schema.tables
             WHERE table_schema = $1 AND table_type = 'BASE TABLE'
             ORDER BY table_name
-        """, schema)
+        """,
+            schema,
+        )
 
         result = []
         for trow in tables_rows:
             table_name = trow["table_name"]
 
             # Get columns
-            col_rows = await conn.fetch("""
+            col_rows = await conn.fetch(
+                """
                 SELECT column_name, data_type, udt_name, is_nullable,
                        column_default, character_maximum_length,
                        numeric_precision, numeric_scale
                 FROM information_schema.columns
                 WHERE table_schema = $1 AND table_name = $2
                 ORDER BY ordinal_position
-            """, schema, table_name)
+            """,
+                schema,
+                table_name,
+            )
 
             columns = []
             for c in col_rows:
@@ -236,18 +265,23 @@ async def introspect_tables(pg_cfg: dict) -> list[dict]:
                 if c["character_maximum_length"]:
                     display_type += f"({c['character_maximum_length']})"
                 elif c["numeric_precision"] and col_type in ("numeric", "decimal"):
-                    display_type += f"({c['numeric_precision']},{c['numeric_scale'] or 0})"
+                    display_type += (
+                        f"({c['numeric_precision']},{c['numeric_scale'] or 0})"
+                    )
 
-                columns.append({
-                    "name": c["column_name"],
-                    "type": col_type,
-                    "display_type": display_type,
-                    "nullable": c["is_nullable"] == "YES",
-                    "default": c["column_default"],
-                })
+                columns.append(
+                    {
+                        "name": c["column_name"],
+                        "type": col_type,
+                        "display_type": display_type,
+                        "nullable": c["is_nullable"] == "YES",
+                        "default": c["column_default"],
+                    }
+                )
 
             # Get primary key columns
-            pk_rows = await conn.fetch("""
+            pk_rows = await conn.fetch(
+                """
                 SELECT kcu.column_name
                 FROM information_schema.table_constraints tc
                 JOIN information_schema.key_column_usage kcu
@@ -256,11 +290,15 @@ async def introspect_tables(pg_cfg: dict) -> list[dict]:
                 WHERE tc.table_schema = $1 AND tc.table_name = $2
                     AND tc.constraint_type = 'PRIMARY KEY'
                 ORDER BY kcu.ordinal_position
-            """, schema, table_name)
+            """,
+                schema,
+                table_name,
+            )
             pk_cols = [r["column_name"] for r in pk_rows]
 
             # Get foreign keys
-            fk_rows = await conn.fetch("""
+            fk_rows = await conn.fetch(
+                """
                 SELECT kcu.column_name,
                        ccu.table_name AS references_table,
                        ccu.column_name AS references_column
@@ -273,21 +311,28 @@ async def introspect_tables(pg_cfg: dict) -> list[dict]:
                     AND tc.table_schema = ccu.table_schema
                 WHERE tc.table_schema = $1 AND tc.table_name = $2
                     AND tc.constraint_type = 'FOREIGN KEY'
-            """, schema, table_name)
+            """,
+                schema,
+                table_name,
+            )
             fks = [
-                {"column": r["column_name"],
-                 "references_table": r["references_table"],
-                 "references_column": r["references_column"]}
+                {
+                    "column": r["column_name"],
+                    "references_table": r["references_table"],
+                    "references_column": r["references_column"],
+                }
                 for r in fk_rows
             ]
 
-            result.append({
-                "table_name": table_name,
-                "schema": schema,
-                "columns": columns,
-                "primary_key": pk_cols,
-                "foreign_keys": fks,
-            })
+            result.append(
+                {
+                    "table_name": table_name,
+                    "schema": schema,
+                    "columns": columns,
+                    "primary_key": pk_cols,
+                    "foreign_keys": fks,
+                }
+            )
 
         return result
     finally:

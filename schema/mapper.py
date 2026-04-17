@@ -24,6 +24,7 @@ logger = logging.getLogger("changes_worker")
 # Path resolution
 # ---------------------------------------------------------------------------
 
+
 def resolve_path(doc: Any, path: str) -> Any:
     """Resolve a JSON path like ``$.address.city`` against a dict.
 
@@ -118,6 +119,7 @@ def apply_transform(value: Any, transform: str) -> Any:
             return None
         try:
             from datetime import date
+
             return date.fromisoformat(str(value))
         except (TypeError, ValueError):
             return None
@@ -129,7 +131,11 @@ def apply_transform(value: Any, transform: str) -> Any:
             return None
         delimiter = args[0] if args else ","
         # Strip surrounding quotes from the delimiter if present
-        if len(delimiter) >= 2 and delimiter[0] in ('"', "'") and delimiter[-1] == delimiter[0]:
+        if (
+            len(delimiter) >= 2
+            and delimiter[0] in ('"', "'")
+            and delimiter[-1] == delimiter[0]
+        ):
             delimiter = delimiter[1:-1]
         return str(value).split(delimiter)
     if func == "left":
@@ -148,7 +154,7 @@ def apply_transform(value: Any, transform: str) -> Any:
         s = str(value)
         start = int(args[0]) if len(args) > 0 else 0
         length = int(args[1]) if len(args) > 1 else len(s) - start
-        return s[start:start + length]
+        return s[start : start + length]
     if func == "replace":
         if value is None:
             return None
@@ -199,12 +205,8 @@ def apply_transform(value: Any, transform: str) -> Any:
 # ---------------------------------------------------------------------------
 
 # Matches expressions like:  split($._id,"::")[0]  or  lowercase($._id)
-_EXPR_INDEX_RE = re.compile(
-    r"^(\w+)\(([^)]*)\)\[(\d+)\]$"
-)
-_EXPR_PLAIN_RE = re.compile(
-    r"^(\w+)\(([^)]*)\)$"
-)
+_EXPR_INDEX_RE = re.compile(r"^(\w+)\(([^)]*)\)\[(\d+)\]$")
+_EXPR_PLAIN_RE = re.compile(r"^(\w+)\(([^)]*)\)$")
 
 
 def evaluate_expression(doc: dict, expression: str) -> Any:
@@ -265,6 +267,7 @@ def evaluate_expression(doc: dict, expression: str) -> Any:
 # Column resolution
 # ---------------------------------------------------------------------------
 
+
 def resolve_column(doc: Any, col_def: str | dict) -> Any:
     """Resolve a column definition against *doc*.
 
@@ -285,6 +288,7 @@ def resolve_column(doc: Any, col_def: str | dict) -> Any:
 # ---------------------------------------------------------------------------
 # SqlOperation
 # ---------------------------------------------------------------------------
+
 
 class SqlOperation:
     """Represents a single SQL statement (INSERT / UPSERT / DELETE)."""
@@ -327,9 +331,7 @@ class SqlOperation:
         where = self.where or {}
         cols = list(where.keys())
         vals = [where[c] for c in cols]
-        clauses = " AND ".join(
-            f'"{c}" = ${i}' for i, c in enumerate(cols, 1)
-        )
+        clauses = " AND ".join(f'"{c}" = ${i}' for i, c in enumerate(cols, 1))
         sql = f'DELETE FROM "{self.table}" WHERE {clauses}'
         return sql, vals
 
@@ -350,9 +352,7 @@ class SqlOperation:
 
         col_list = ", ".join(f'"{c}"' for c in cols)
         val_list = ", ".join(f"${i}" for i in range(1, len(cols) + 1))
-        update_set = ", ".join(
-            f'"{c}" = EXCLUDED."{c}"' for c in cols if c != pk
-        )
+        update_set = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in cols if c != pk)
         sql = (
             f'INSERT INTO "{self.table}" ({col_list}) VALUES ({val_list}) '
             f'ON CONFLICT ("{pk}") DO UPDATE SET {update_set}'
@@ -376,6 +376,7 @@ class SqlOperation:
 # ---------------------------------------------------------------------------
 # SchemaMapper
 # ---------------------------------------------------------------------------
+
 
 class SchemaMapper:
     """Maps a Couchbase document to a sequence of :class:`SqlOperation` objects
@@ -489,12 +490,18 @@ class SchemaMapper:
                     fk_ref = fk_def["references"]
                     # Resolve the FK value from the parent doc
                     parent_pk_path = self._find_parent_pk_path(tbl, doc)
-                    fk_value = resolve_path(doc, parent_pk_path) if parent_pk_path else doc.get(fk_ref)
-                    ops.append(SqlOperation(
-                        "DELETE",
-                        tbl["name"],
-                        where={fk_col: fk_value},
-                    ))
+                    fk_value = (
+                        resolve_path(doc, parent_pk_path)
+                        if parent_pk_path
+                        else doc.get(fk_ref)
+                    )
+                    ops.append(
+                        SqlOperation(
+                            "DELETE",
+                            tbl["name"],
+                            where={fk_col: fk_value},
+                        )
+                    )
 
                 for item in items:
                     row = self._resolve_row(tbl, item, doc)
@@ -523,12 +530,18 @@ class SchemaMapper:
                 fk_col = fk_def["column"]
                 fk_ref = fk_def["references"]
                 parent_pk_path = self._find_parent_pk_path(tbl, doc)
-                fk_value = resolve_path(doc, parent_pk_path) if parent_pk_path else doc.get(fk_ref)
-                ops.append(SqlOperation(
-                    "DELETE",
-                    tbl["name"],
-                    where={fk_col: fk_value},
-                ))
+                fk_value = (
+                    resolve_path(doc, parent_pk_path)
+                    if parent_pk_path
+                    else doc.get(fk_ref)
+                )
+                ops.append(
+                    SqlOperation(
+                        "DELETE",
+                        tbl["name"],
+                        where={fk_col: fk_value},
+                    )
+                )
             else:
                 pk = tbl.get("primary_key", "id")
                 pk_path = self._pk_path(tbl)
@@ -568,7 +581,11 @@ class SchemaMapper:
                 value = resolve_column(parent_doc, col_def)
             # Sanitize float inf/nan – PostgreSQL integer/numeric columns reject them
             if isinstance(value, float) and (math.isinf(value) or math.isnan(value)):
-                logger.warning("Column %r has non-finite value %r – replacing with None", col_name, value)
+                logger.warning(
+                    "Column %r has non-finite value %r – replacing with None",
+                    col_name,
+                    value,
+                )
                 value = None
             row[col_name] = value
         return row

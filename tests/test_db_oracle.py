@@ -41,8 +41,9 @@ class TestOracleDelete(unittest.TestCase):
         self.assertEqual(params, ["order::1"])
 
     def test_multiple_where_clauses(self):
-        op = SqlOperation("DELETE", "order_items",
-                          where={"order_doc_id": "order::1", "item_id": 42})
+        op = SqlOperation(
+            "DELETE", "order_items", where={"order_doc_id": "order::1", "item_id": 42}
+        )
         sql, params = _to_sql(op)
         self.assertIn('"order_doc_id" = :1', sql)
         self.assertIn('"item_id" = :2', sql)
@@ -53,15 +54,16 @@ class TestOracleInsert(unittest.TestCase):
     """INSERT → INSERT INTO "table" (...) VALUES (:1,:2,...)"""
 
     def test_basic_insert(self):
-        op = SqlOperation("INSERT", "order_items",
-                          data={"order_doc_id": "order::1",
-                                "product_id": "p:100",
-                                "qty": 2})
+        op = SqlOperation(
+            "INSERT",
+            "order_items",
+            data={"order_doc_id": "order::1", "product_id": "p:100", "qty": 2},
+        )
         sql, params = _to_sql(op)
         self.assertEqual(
             sql,
             'INSERT INTO "order_items" ("order_doc_id", "product_id", "qty") '
-            'VALUES (:1, :2, :3)'
+            "VALUES (:1, :2, :3)",
         )
         self.assertEqual(params, ["order::1", "p:100", 2])
 
@@ -84,9 +86,12 @@ class TestOracleUpsert(unittest.TestCase):
     """UPSERT → MERGE INTO ... USING (SELECT ... FROM DUAL) ..."""
 
     def test_merge_structure(self):
-        op = SqlOperation("UPSERT", "products",
-                          data={"doc_id": "p::1", "name": "Widget", "price": 19.99},
-                          conflict_column="doc_id")
+        op = SqlOperation(
+            "UPSERT",
+            "products",
+            data={"doc_id": "p::1", "name": "Widget", "price": 19.99},
+            conflict_column="doc_id",
+        )
         sql, params = _to_sql(op)
 
         # Key Oracle MERGE clauses
@@ -98,7 +103,9 @@ class TestOracleUpsert(unittest.TestCase):
         self.assertIn("WHEN NOT MATCHED THEN INSERT", sql)
 
         # PK column should NOT appear in UPDATE SET
-        self.assertNotIn('t."doc_id" = s."doc_id"', sql.split("UPDATE SET")[1].split("WHEN NOT")[0])
+        self.assertNotIn(
+            't."doc_id" = s."doc_id"', sql.split("UPDATE SET")[1].split("WHEN NOT")[0]
+        )
 
         # Non-PK columns in UPDATE SET
         self.assertIn('t."name" = s."name"', sql)
@@ -108,9 +115,9 @@ class TestOracleUpsert(unittest.TestCase):
         self.assertEqual(params, ["p::1", "Widget", 19.99])
 
     def test_merge_uses_oracle_bind_placeholders(self):
-        op = SqlOperation("UPSERT", "t",
-                          data={"id": 1, "val": "x"},
-                          conflict_column="id")
+        op = SqlOperation(
+            "UPSERT", "t", data={"id": 1, "val": "x"}, conflict_column="id"
+        )
         sql, _ = _to_sql(op)
         self.assertNotIn("$", sql)
         self.assertIn(":1", sql)
@@ -118,16 +125,13 @@ class TestOracleUpsert(unittest.TestCase):
 
     def test_merge_defaults_pk_to_first_column(self):
         """When conflict_column is None, first column is used as PK."""
-        op = SqlOperation("UPSERT", "t",
-                          data={"my_pk": "abc", "col2": 10})
+        op = SqlOperation("UPSERT", "t", data={"my_pk": "abc", "col2": 10})
         sql, _ = _to_sql(op)
         self.assertIn('t."my_pk" = s."my_pk"', sql)  # ON clause uses first col
 
     def test_merge_single_column_skips_update(self):
         """If only the PK column exists, WHEN MATCHED should be omitted."""
-        op = SqlOperation("UPSERT", "t",
-                          data={"id": 1},
-                          conflict_column="id")
+        op = SqlOperation("UPSERT", "t", data={"id": 1}, conflict_column="id")
         sql, params = _to_sql(op)
         self.assertNotIn("WHEN MATCHED", sql)
         self.assertIn("WHEN NOT MATCHED THEN INSERT", sql)
@@ -135,8 +139,7 @@ class TestOracleUpsert(unittest.TestCase):
 
     def test_merge_many_columns(self):
         data = {f"col{i}": i for i in range(10)}
-        op = SqlOperation("UPSERT", "wide_table",
-                          data=data, conflict_column="col0")
+        op = SqlOperation("UPSERT", "wide_table", data=data, conflict_column="col0")
         sql, params = _to_sql(op)
         self.assertEqual(len(params), 10)
         # Should have :1 through :10
@@ -154,6 +157,7 @@ class TestOracleUnknownOp(unittest.TestCase):
 # ===================================================================
 # DSN Construction
 # ===================================================================
+
 
 class TestDsnConstruction(unittest.TestCase):
     """Verify DSN is built from host/port/database when not provided."""
@@ -193,8 +197,10 @@ class TestDsnConstruction(unittest.TestCase):
 # Error Classification
 # ===================================================================
 
+
 class _FakeOraError(Exception):
     """Simulate an oracledb.Error with a .code attribute on args[0]."""
+
     def __init__(self, code):
         self.args = (SimpleNamespace(code=code),)
 
@@ -241,6 +247,7 @@ class TestOraErrorCode(unittest.TestCase):
 
     def test_extracts_code(self):
         from db.db_oracle import _ora_error_code
+
         # Simulate oracledb.Error with code attribute
         mock_oracledb = MagicMock()
         err_class = type("Error", (Exception,), {})
@@ -254,6 +261,7 @@ class TestOraErrorCode(unittest.TestCase):
 
     def test_returns_none_for_non_oracle_error(self):
         from db.db_oracle import _ora_error_code
+
         mock_oracledb = MagicMock()
         mock_oracledb.Error = type("Error", (Exception,), {})
         with patch("db.db_oracle.oracledb", mock_oracledb):

@@ -25,16 +25,18 @@ except ImportError:
 
 # -- Oracle error classification ------------------------------------------------
 # ORA error codes that are transient (worth retrying).
-_TRANSIENT_ORA_CODES = frozenset({
-    3113,   # end-of-file on communication channel
-    3114,   # not connected to ORACLE
-    3135,   # connection lost contact
-    12170,  # TNS:Connect timeout occurred
-    12541,  # TNS:no listener
-    12543,  # TNS:destination host unreachable
-    25408,  # can not safely replay call
-    60,     # deadlock detected while waiting for resource
-})
+_TRANSIENT_ORA_CODES = frozenset(
+    {
+        3113,  # end-of-file on communication channel
+        3114,  # not connected to ORACLE
+        3135,  # connection lost contact
+        12170,  # TNS:Connect timeout occurred
+        12541,  # TNS:no listener
+        12543,  # TNS:destination host unreachable
+        25408,  # can not safely replay call
+        60,  # deadlock detected while waiting for resource
+    }
+)
 
 
 def _ora_error_code(exc: Exception) -> int | None:
@@ -65,16 +67,14 @@ class OracleOutputForwarder(BaseOutputForwarder):
 
     def __init__(self, out_cfg: dict, dry_run: bool = False, metrics=None):
         if oracledb is None:
-            raise RuntimeError(
-                "oracledb library not installed – pip install oracledb"
-            )
+            raise RuntimeError("oracledb library not installed – pip install oracledb")
 
         super().__init__(out_cfg, dry_run, metrics=metrics)
 
         ora_cfg = self._get_engine_cfg(out_cfg)
         self._host = ora_cfg.get("host", "localhost")
         self._port = ora_cfg.get("port", 1521)
-        self._database = ora_cfg.get("database", "")   # service name
+        self._database = ora_cfg.get("database", "")  # service name
         self._user = ora_cfg.get("username", ora_cfg.get("user", ""))
         self._password = ora_cfg.get("password", "")
         self._schema = ora_cfg.get("schema", "")
@@ -102,7 +102,9 @@ class OracleOutputForwarder(BaseOutputForwarder):
         )
         logger.info(
             "Oracle pool created: %s (pool %d–%d)",
-            self._dsn, self._pool_min, self._pool_max,
+            self._dsn,
+            self._pool_min,
+            self._pool_max,
         )
 
     async def _close_pool(self) -> None:
@@ -130,9 +132,7 @@ class OracleOutputForwarder(BaseOutputForwarder):
             where = op.where or {}
             cols = list(where.keys())
             vals = [where[c] for c in cols]
-            clauses = " AND ".join(
-                f'"{c}" = :{i}' for i, c in enumerate(cols, 1)
-            )
+            clauses = " AND ".join(f'"{c}" = :{i}' for i, c in enumerate(cols, 1))
             sql = f'DELETE FROM "{op.table}" WHERE {clauses}'
             return sql, vals
 
@@ -156,13 +156,9 @@ class OracleOutputForwarder(BaseOutputForwarder):
             # ON (t."pk" = s."pk")
             # WHEN MATCHED THEN UPDATE SET t."c2" = s."c2", ...
             # WHEN NOT MATCHED THEN INSERT ("pk","c2",...) VALUES (s."pk",s."c2",...)
-            select_cols = ", ".join(
-                f':{i} AS "{c}"' for i, c in enumerate(cols, 1)
-            )
+            select_cols = ", ".join(f':{i} AS "{c}"' for i, c in enumerate(cols, 1))
             on_clause = f't."{pk}" = s."{pk}"'
-            update_set = ", ".join(
-                f't."{c}" = s."{c}"' for c in cols if c != pk
-            )
+            update_set = ", ".join(f't."{c}" = s."{c}"' for c in cols if c != pk)
             insert_cols = ", ".join(f'"{c}"' for c in cols)
             insert_vals = ", ".join(f's."{c}"' for c in cols)
 
@@ -174,8 +170,7 @@ class OracleOutputForwarder(BaseOutputForwarder):
             if update_set:
                 sql += f"WHEN MATCHED THEN UPDATE SET {update_set} "
             sql += (
-                f"WHEN NOT MATCHED THEN INSERT ({insert_cols}) "
-                f"VALUES ({insert_vals})"
+                f"WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})"
             )
             return sql, vals
 
@@ -239,6 +234,7 @@ class OracleOutputForwarder(BaseOutputForwarder):
 
 # ── Introspection (standalone functions, not part of the forwarder) ──────
 
+
 async def introspect_tables(ora_cfg: dict) -> list[dict]:
     """
     Connect to Oracle and return all tables with their columns.
@@ -285,8 +281,7 @@ async def introspect_tables(ora_cfg: dict) -> list[dict]:
 
         # Get all tables
         await cur.execute(
-            "SELECT table_name FROM all_tables "
-            "WHERE owner = :1 ORDER BY table_name",
+            "SELECT table_name FROM all_tables WHERE owner = :1 ORDER BY table_name",
             [schema],
         )
         table_rows = await cur.fetchall()
@@ -305,20 +300,30 @@ async def introspect_tables(ora_cfg: dict) -> list[dict]:
             col_rows = await cur.fetchall()
 
             columns = []
-            for col_name, data_type, data_length, data_precision, data_scale, nullable, default_val in col_rows:
+            for (
+                col_name,
+                data_type,
+                data_length,
+                data_precision,
+                data_scale,
+                nullable,
+                default_val,
+            ) in col_rows:
                 display_type = data_type
                 if data_type in ("NUMBER",) and data_precision is not None:
                     display_type = f"{data_type}({data_precision},{data_scale or 0})"
                 elif data_type in ("VARCHAR2", "CHAR", "NVARCHAR2", "NCHAR", "RAW"):
                     display_type = f"{data_type}({data_length})"
 
-                columns.append({
-                    "name": col_name,
-                    "type": data_type,
-                    "display_type": display_type,
-                    "nullable": nullable == "Y",
-                    "default": default_val.strip() if default_val else None,
-                })
+                columns.append(
+                    {
+                        "name": col_name,
+                        "type": data_type,
+                        "display_type": display_type,
+                        "nullable": nullable == "Y",
+                        "default": default_val.strip() if default_val else None,
+                    }
+                )
 
             # Get primary key columns
             await cur.execute(
@@ -365,13 +370,15 @@ async def introspect_tables(ora_cfg: dict) -> list[dict]:
                 for r in fk_rows
             ]
 
-            result.append({
-                "table_name": table_name,
-                "schema": schema,
-                "columns": columns,
-                "primary_key": pk_cols,
-                "foreign_keys": fks,
-            })
+            result.append(
+                {
+                    "table_name": table_name,
+                    "schema": schema,
+                    "columns": columns,
+                    "primary_key": pk_cols,
+                    "foreign_keys": fks,
+                }
+            )
 
         await cur.close()
         return result
