@@ -106,12 +106,16 @@
   var mobileBtn = document.getElementById('sidebarMobileToggle');
   var overlay   = document.getElementById('sidebarOverlay');
 
+  var sidebarMain = document.querySelector('.sidebar-main');
+
   if (localStorage.getItem('cw_sidebar_collapsed') === 'true') {
     sidebar.classList.add('collapsed');
+    if (sidebarMain) sidebarMain.classList.add('collapsed');
   }
 
   function toggleSidebar() {
     sidebar.classList.toggle('collapsed');
+    if (sidebarMain) sidebarMain.classList.toggle('collapsed');
     localStorage.setItem('cw_sidebar_collapsed', sidebar.classList.contains('collapsed'));
   }
 

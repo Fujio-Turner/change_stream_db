@@ -5,6 +5,7 @@ This document describes the internal architecture of the changes_worker, how dat
 **Related docs:**
 - [`ADMIN_UI.md`](ADMIN_UI.md) -- Dashboard, config editor, and schema mapping UI
 - [`CBL_DATABASE.md`](CBL_DATABASE.md) -- Embedded Couchbase Lite storage schema
+- [`JOBS.md`](JOBS.md) -- Job ID concept, per-engine/per-job OUTPUT metrics
 - [`SCHEMA_MAPPING.md`](SCHEMA_MAPPING.md) -- JSON-to-relational mapping definitions
 - [`RDBMS_PLAN.md`](RDBMS_PLAN.md) -- RDBMS output architecture and config
 - [`RDBMS_IMPLEMENTATION.md`](RDBMS_IMPLEMENTATION.md) -- RDBMS implementation guide (single-table, multi-table, transactions)

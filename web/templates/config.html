@@ -13,6 +13,7 @@
   <script src="/static/js/tagify.min.js"></script>
   <style>
     .input-needs-update { background-color: rgba(250, 204, 21, 0.15) !important; border-color: rgb(250, 204, 21) !important; }
+    .tooltip-wide::before { max-width: 32rem !important; white-space: pre-line !important; text-align: left !important; }
   </style>
   <script>
     (function(){
@@ -26,7 +27,7 @@
 
   <div class="sidebar-main">
   <!-- Main content -->
-  <main class="container mx-auto p-6 max-w-4xl">
+  <main class="w-full mx-auto p-6 max-w-4xl">
     <h1 class="text-2xl font-bold mb-4">Settings: Configuration Editor</h1>
 
     <!-- Tabs: Form / Raw JSON -->
@@ -88,7 +89,7 @@
             </label>
           </div>
           <div class="flex items-center gap-3 mt-2">
-            <button class="btn btn-primary btn-sm" id="btnTestGateway" onclick="testGatewayConnection()">🔌 Test Connection</button>
+            <button class="btn btn-primary btn-sm" id="btnTestGateway" onclick="testGatewayConnection()">Test Connection</button>
             <span id="gatewayTestStatus" class="text-sm"></span>
           </div>
         </div>
@@ -278,7 +279,7 @@
               <p class="validator-hint hidden">Enter a valid target URL</p>
             </fieldset>
             <div class="flex items-center gap-3 mb-3">
-              <button class="btn btn-primary btn-sm" id="btnTestHttpOutput" onclick="testHttpOutputConnection()">🔌 Test Connection</button>
+              <button class="btn btn-primary btn-sm" id="btnTestHttpOutput" onclick="testHttpOutputConnection()">Test Connection</button>
               <span id="httpOutputTestStatus" class="text-sm"></span>
             </div>
             <label class="form-control w-full mb-3">
@@ -579,7 +580,7 @@
               </label>
             </div>
             <div class="flex items-center gap-3 mb-3">
-              <button class="btn btn-primary btn-sm" id="btnTestDbOutput" onclick="testDbOutputConnection()">🔌 Test Connection</button>
+              <button class="btn btn-primary btn-sm" id="btnTestDbOutput" onclick="testDbOutputConnection()">Test Connection</button>
               <span id="dbOutputTestStatus" class="text-sm"></span>
             </div>
 
@@ -749,6 +750,22 @@
             </div>
             <input type="text" id="output_dead_letter_path" class="input input-bordered w-full" placeholder="failed_docs.jsonl" />
           </label>
+          <div class="divider text-xs opacity-60">Shutdown Behaviour</div>
+          <div class="form-control">
+            <label class="label cursor-pointer justify-start gap-4">
+              <span class="label-text flex items-center gap-2">
+                DLQ In-Flight on Shutdown
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="When enabled, documents that were being processed but couldn't complete output delivery during shutdown are written to the Dead Letter Queue — even if the checkpoint has NOT moved forward. &#10;&#10;Why? The _changes feed may later deliver a newer revision of the same document, but you still need to process this specific version (e.g. for auditing, analytics, or order-of-operations requirements). &#10;&#10;⚠️ Warning: This may cause duplicates. When the service restarts, the checkpoint will re-fetch these same documents from the _changes feed (since it wasn't advanced). If the document hasn't changed, it will be processed again AND the DLQ copy will also be replayed. If your output is idempotent (e.g. upsert by doc ID) this is safe.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+              <input type="checkbox" id="shutdown_dlq_inflight_on_shutdown" class="toggle toggle-warning" onchange="toggleShutdownDlqWarning()" />
+            </label>
+          </div>
+          <div class="alert alert-warning text-sm" id="shutdown_dlq_warning" style="display:none;">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            <span>Documents may be processed twice: once from the DLQ replay and once from the _changes feed (since the checkpoint was not advanced). Ensure your output is idempotent (e.g. upsert by document ID) to avoid side effects from duplicates.</span>
+          </div>
         </div>
       </div>
 
@@ -770,6 +787,25 @@
           <label class="form-control w-full">
             <div class="label"><span class="label-text">Every N Docs</span></div>
             <input type="number" id="checkpoint_every_n_docs" class="input input-bordered w-full" min="0" />
+          </label>
+        </div>
+      </div>
+
+      <!-- Shutdown -->
+      <div class="collapse collapse-arrow bg-base-100 mb-2">
+        <input type="checkbox" />
+        <div class="collapse-title font-semibold">Shutdown</div>
+        <div class="collapse-content flex flex-col gap-3">
+          <label class="form-control w-full">
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Drain Timeout (seconds)
+                <div class="tooltip tooltip-right" data-tip="How long /_shutdown waits for in-flight output tasks to finish before giving up. If tasks don't drain in time, the response will indicate how many were still active.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
+            <input type="number" id="shutdown_drain_timeout_seconds" class="input input-bordered w-full" min="1" value="60" />
           </label>
         </div>
       </div>
@@ -983,6 +1019,12 @@
     }
   }
 
+  // Shutdown DLQ warning visibility
+  function toggleShutdownDlqWarning() {
+    var on = document.getElementById('shutdown_dlq_inflight_on_shutdown').checked;
+    document.getElementById('shutdown_dlq_warning').style.display = on ? '' : 'none';
+  }
+
   // DB mapping mode field visibility
   function toggleDbMappingFields() {
     var mode = document.getElementById('output_db_mapping_mode').value;
@@ -1132,6 +1174,12 @@
     document.getElementById('checkpoint_enabled').checked = cfg.checkpoint?.enabled ?? true;
     document.getElementById('checkpoint_client_id').value = cfg.checkpoint?.client_id || '';
     document.getElementById('checkpoint_every_n_docs').value = cfg.checkpoint?.every_n_docs ?? 0;
+
+    // Shutdown
+    var shut = cfg.shutdown || {};
+    document.getElementById('shutdown_drain_timeout_seconds').value = shut.drain_timeout_seconds ?? 60;
+    document.getElementById('shutdown_dlq_inflight_on_shutdown').checked = shut.dlq_inflight_on_shutdown || false;
+    toggleShutdownDlqWarning();
 
     document.getElementById('metrics_enabled').checked = cfg.metrics?.enabled ?? true;
     document.getElementById('metrics_host').value = cfg.metrics?.host || '0.0.0.0';
@@ -1290,6 +1338,10 @@
         client_id: document.getElementById('checkpoint_client_id').value,
         every_n_docs: parseInt(document.getElementById('checkpoint_every_n_docs').value) || 0
       },
+      shutdown: {
+        drain_timeout_seconds: parseInt(document.getElementById('shutdown_drain_timeout_seconds').value) || 60,
+        dlq_inflight_on_shutdown: document.getElementById('shutdown_dlq_inflight_on_shutdown').checked
+      },
       metrics: {
         enabled: document.getElementById('metrics_enabled').checked,
         host: document.getElementById('metrics_host').value,
@@ -1366,7 +1418,7 @@
     }
     firstField.focus();
 
-    showToast('⚠️ Please fix ' + invalidFields.length + ' invalid field' + (invalidFields.length > 1 ? 's' : '') + ' before saving', 'error');
+    showToast('Please fix ' + invalidFields.length + ' invalid field' + (invalidFields.length > 1 ? 's' : '') + ' before saving', 'error');
     return false;
   }
 
@@ -1416,8 +1468,8 @@
     el.id = id;
     el.className = 'alert alert-warning shadow-lg';
     el.style.cssText = 'border-left:4px solid #f59e0b;cursor:pointer';
-    el.innerHTML = '<span>⚠️ Changes saved but won\'t take effect until you <b>Restart</b> the worker.</span>' +
-      '<button class="btn btn-xs btn-ghost" onclick="this.parentElement.remove()">✕</button>';
+    el.innerHTML = '<span>Changes saved but won\'t take effect until you <b>Restart</b> the worker.</span>' +
+      '<button class="btn btn-xs btn-ghost" onclick="this.parentElement.remove()">×</button>';
     el.querySelector('span').addEventListener('click', function () {
       var btn = document.getElementById('restartBtn');
       if (btn) btn.click();
@@ -1493,14 +1545,14 @@
       });
       var data = await res.json();
       if (data.error) {
-        status.textContent = '❌ ' + (data.detail || data.error);
+        status.textContent = (data.detail || data.error);
         status.className = 'text-sm text-error';
       } else {
-        status.textContent = '✅ Connected! Got ' + (data.pool_size || 1) + ' docs';
+        status.textContent = 'Connected! Got ' + (data.pool_size || 1) + ' docs';
         status.className = 'text-sm text-success';
       }
     } catch (e) {
-      status.textContent = '❌ ' + e.message;
+      status.textContent = e.message;
       status.className = 'text-sm text-error';
     }
     btn.classList.remove('loading');
@@ -1530,14 +1582,14 @@
       });
       var data = await res.json();
       if (data.ok) {
-        status.textContent = '✅ Reachable! HTTP ' + (data.status || '200');
+        status.textContent = 'Reachable! HTTP ' + (data.status || '200');
         status.className = 'text-sm text-success';
       } else {
-        status.textContent = '❌ ' + (data.error || 'Unreachable');
+        status.textContent = (data.error || 'Unreachable');
         status.className = 'text-sm text-error';
       }
     } catch (e) {
-      status.textContent = '❌ ' + e.message;
+      status.textContent = e.message;
       status.className = 'text-sm text-error';
     }
     btn.classList.remove('loading');
@@ -1567,14 +1619,14 @@
       });
       var data = await res.json();
       if (data.ok) {
-        status.textContent = '✅ Connected to ' + (document.getElementById('output_db_engine').value) + '!';
+        status.textContent = 'Connected to ' + (document.getElementById('output_db_engine').value) + '!';
         status.className = 'text-sm text-success';
       } else {
-        status.textContent = '❌ ' + (data.error || 'Connection failed');
+        status.textContent = (data.error || 'Connection failed');
         status.className = 'text-sm text-error';
       }
     } catch (e) {
-      status.textContent = '❌ ' + e.message;
+      status.textContent = e.message;
       status.className = 'text-sm text-error';
     }
     btn.classList.remove('loading');

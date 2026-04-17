@@ -14,6 +14,9 @@ psutil>=5.9                # CPU, memory, disk, network, threads
 
 # RDBMS output drivers (install the one you need):
 asyncpg                    # for PostgreSQL output
+# aiomysql                 # for MySQL output (pip install aiomysql)
+# aioodbc                  # for MS SQL Server output (pip install aioodbc)
+# oracledb                 # for Oracle output (pip install oracledb)
 
 # Development / CI
 flake8                     # linting
