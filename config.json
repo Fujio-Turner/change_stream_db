@@ -28,6 +28,7 @@
     "throttle_feed": 0,
     "continuous_catchup_limit": 10000
   },
+  "threads": 4,
   "processing": {
     "ignore_delete": false,
     "ignore_remove": false,

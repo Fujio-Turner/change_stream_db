@@ -7,6 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
   <script src="/static/js/tailwind.js"></script>
   <script src="/static/js/echarts.min.js"></script>
   <script>
@@ -20,50 +21,43 @@
     .dot-green  { background: #36d399; box-shadow: 0 0 6px #36d399; }
     .dot-yellow { background: #fbbd23; box-shadow: 0 0 6px #fbbd23; }
     .dot-red    { background: #f87272; box-shadow: 0 0 6px #f87272; }
+    .status-clickable { cursor: pointer; transition: opacity 0.15s; }
+    .status-clickable:hover { opacity: 0.8; }
+    .diag-item { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.4rem 0; }
+    .diag-icon { flex-shrink: 0; font-size: 1.1rem; line-height: 1.4; }
+    .diag-text { font-size: 0.875rem; line-height: 1.4; }
+    .stat-tip { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .stat-tip .tip-q { font-size: 0.6rem; opacity: 0.4; cursor: help; border: 1px solid currentColor; border-radius: 50%; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .stat-tip .tip-q:hover { opacity: 0.8; }
+    /* Pipeline stage border accents */
+    .border-source  { border-left: 3px solid var(--color-success); }
+    .border-process { border-left: 3px solid var(--color-info); }
+    .border-output  { border-left: 3px solid var(--color-warning); }
   </style>
 </head>
-<body class="min-h-screen flex flex-col bg-base-200">
+<body class="min-h-screen bg-base-200">
+  <div id="sidebar-root"></div>
 
-  <!-- Navbar -->
-  <nav class="navbar bg-base-100 shadow-sm px-4">
-    <div class="flex-1">
-      <a href="/" class="text-xl font-bold">Changes Worker Admin</a>
-    </div>
-    <div class="flex-none">
-      <ul class="menu menu-horizontal px-1 gap-1">
-        <li><a href="/" class="active">Dashboard</a></li>
-        <li><a href="/config">Config</a></li>
-        <li><a href="/schema">Schema Mappings</a></li>
-        <li><a href="/transforms">Transforms</a></li>
-        <li><a href="/wizard">Wizard</a></li>
-        </ul>
-      <label class="label cursor-pointer gap-2 ml-4">
-        <span class="label-text text-sm">Dark</span>
-        <input type="checkbox" id="themeToggle" class="toggle toggle-sm" />
-        <span class="label-text text-sm">Light</span>
-      </label>
-    </div>
-  </nav>
-
-  <main class="flex-1 container mx-auto p-6 space-y-6">
+  <div class="sidebar-main">
+  <main class="container mx-auto p-6 space-y-6">
 
     <!-- Status Bar -->
     <div class="card bg-base-100 shadow">
       <div class="card-body py-3 px-6">
         <div class="flex flex-wrap items-center gap-6">
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 status-clickable" onclick="showStatusDetail('feed')">
             <span id="dotFeed" class="dot dot-yellow"></span>
             <span class="text-sm font-medium">Changes Feed</span>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 status-clickable" onclick="showStatusDetail('process')">
             <span id="dotProcess" class="dot dot-yellow"></span>
             <span class="text-sm font-medium">Processing</span>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 status-clickable" onclick="showStatusDetail('cbl')">
             <span id="dotCBL" class="dot dot-yellow"></span>
             <span class="text-sm font-medium">Couchbase Lite</span>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 status-clickable" onclick="showStatusDetail('output')">
             <span id="dotOutput" class="dot dot-yellow"></span>
             <span class="text-sm font-medium">Output</span>
           </div>
@@ -72,24 +66,78 @@
       </div>
     </div>
 
+    <!-- Config Summary — 3 columns: Source | Process | Output -->
+    <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-4">
+        <div class="flex items-center gap-2 mb-3">
+          <h3 class="text-sm font-semibold">Config Summary</h3>
+          <div class="tooltip tooltip-right" data-tip="Key settings from the active worker configuration.">
+            <span class="badge badge-ghost badge-sm cursor-help">?</span>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4" id="configSummaryGrid">
+          <div class="border-source pl-3">
+            <h4 class="text-xs font-bold uppercase mb-2" style="color:var(--color-success)">Source</h4>
+            <table class="table table-sm" id="configTableSource"><tbody>
+              <tr><td colspan="2" class="text-center opacity-50">Loading...</td></tr>
+            </tbody></table>
+          </div>
+          <div class="border-process pl-3">
+            <h4 class="text-xs font-bold uppercase mb-2" style="color:var(--color-info)">Process</h4>
+            <table class="table table-sm" id="configTableProcess"><tbody>
+              <tr><td colspan="2" class="text-center opacity-50">Loading...</td></tr>
+            </tbody></table>
+          </div>
+          <div class="border-output pl-3">
+            <h4 class="text-xs font-bold uppercase mb-2" style="color:var(--color-warning)">Output</h4>
+            <table class="table table-sm" id="configTableOutput"><tbody>
+              <tr><td colspan="2" class="text-center opacity-50">Loading...</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Charts Row (top, right under status bar) -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card bg-base-100 shadow rounded-2xl border-source">
         <div class="card-body p-4">
           <h2 class="text-sm font-semibold opacity-70">Changes Feed</h2>
           <div id="chartFeed" style="width:100%;height:180px"></div>
         </div>
       </div>
-      <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card bg-base-100 shadow rounded-2xl border-process">
         <div class="card-body p-4">
           <h2 class="text-sm font-semibold opacity-70">Processing</h2>
           <div id="chartProcess" style="width:100%;height:180px"></div>
         </div>
       </div>
-      <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card bg-base-100 shadow rounded-2xl border-output">
         <div class="card-body p-4">
           <h2 class="text-sm font-semibold opacity-70">Output</h2>
           <div id="chartOutput" style="width:100%;height:180px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Avg Time Charts Row -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="card bg-base-100 shadow rounded-2xl border-source">
+        <div class="card-body p-4">
+          <h2 class="text-sm font-semibold opacity-70">Avg Poll Time <span class="font-normal opacity-50">(ms)</span></h2>
+          <div id="chartFeedAvg" style="width:100%;height:180px"></div>
+        </div>
+      </div>
+      <div class="card bg-base-100 shadow rounded-2xl border-process">
+        <div class="card-body p-4">
+          <h2 class="text-sm font-semibold opacity-70">Avg Processing Time <span class="font-normal opacity-50">(ms/doc)</span></h2>
+          <div id="chartProcessAvg" style="width:100%;height:180px"></div>
+        </div>
+      </div>
+      <div class="card bg-base-100 shadow rounded-2xl border-output">
+        <div class="card-body p-4">
+          <h2 class="text-sm font-semibold opacity-70">Avg Output Response <span class="font-normal opacity-50">(ms)</span></h2>
+          <div id="chartOutputAvg" style="width:100%;height:180px"></div>
         </div>
       </div>
     </div>
@@ -98,7 +146,7 @@
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
       <!-- LEFT: Changes Feed -->
-      <div class="space-y-4">
+      <div class="space-y-4 border-source pl-3">
 
         <!-- Polling group -->
         <div class="card bg-base-100 shadow rounded-2xl">
@@ -110,9 +158,9 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Poll Cycles</td><td class="text-right" id="mPollCycles">--</td></tr>
-              <tr><td class="font-medium">Poll Errors</td><td class="text-right" id="mPollErrors">--</td></tr>
-              <tr><td class="font-medium">Retries</td><td class="text-right" id="mRetries">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Poll Cycles <span class="tooltip tooltip-right tip-q" data-tip="Number of completed _changes feed requests. Each cycle fetches a batch of changes from Sync Gateway. Low count + high uptime may indicate long-poll or streaming mode.">?</span></span></td><td class="text-right" id="mPollCycles">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Poll Errors <span class="tooltip tooltip-right tip-q" data-tip="Failed _changes requests. A rising count means the gateway is unreachable, returning errors, or auth has expired. Compare with Poll Cycles to get the error ratio.">?</span></span></td><td class="text-right" id="mPollErrors">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Retries <span class="tooltip tooltip-right tip-q" data-tip="Total HTTP retry attempts across all requests. Retries happen automatically on transient failures. If this rises but Retry Exhausted stays 0, the system is self-healing.">?</span></span></td><td class="text-right" id="mRetries">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -127,11 +175,11 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Changes Received</td><td class="text-right" id="mChangesReceived">--</td></tr>
-              <tr><td class="font-medium">Last Batch Size</td><td class="text-right" id="mLastBatch">--</td></tr>
-              <tr><td class="font-medium">Bytes Received</td><td class="text-right" id="mBytesIn">--</td></tr>
-              <tr><td class="font-medium">Deletes Seen</td><td class="text-right" id="mFeedDeletes">--</td></tr>
-              <tr><td class="font-medium">Removes Seen</td><td class="text-right" id="mFeedRemoves">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Changes Received <span class="tooltip tooltip-right tip-q" data-tip="Total number of change notifications received from the _changes feed since startup. This is the raw inbound count before any filtering.">?</span></span></td><td class="text-right" id="mChangesReceived">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Last Batch Size <span class="tooltip tooltip-right tip-q" data-tip="Number of changes in the most recent batch. A consistently low number may mean few changes are happening; a number at the batch limit means the feed is busy.">?</span></span></td><td class="text-right" id="mLastBatch">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Bytes Received <span class="tooltip tooltip-right tip-q" data-tip="Total bytes downloaded from the _changes feed, bulk_get, and individual doc GETs. Useful for estimating network bandwidth usage.">?</span></span></td><td class="text-right" id="mBytesIn">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Deletes Seen <span class="tooltip tooltip-right tip-q" data-tip="Changes with deleted=true in the feed. These are document deletions from Couchbase. If filter_deletes is on, these are filtered out before processing.">?</span></span></td><td class="text-right" id="mFeedDeletes">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Removes Seen <span class="tooltip tooltip-right tip-q" data-tip="Changes with removed=true in the feed. These are access-removal notifications (the user lost access to the document). If filter_removes is on, these are filtered out.">?</span></span></td><td class="text-right" id="mFeedRemoves">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -146,8 +194,8 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Checkpoint Seq</td><td class="text-right font-mono" id="mCheckpointSeq">--</td></tr>
-              <tr><td class="font-medium">Checkpoint Saves</td><td class="text-right" id="mCheckpointSaves">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Checkpoint Seq <span class="tooltip tooltip-right tip-q" data-tip="The last sequence number saved. On restart the worker resumes from this point, so no changes are reprocessed. If this stops advancing, the worker may be stuck.">?</span></span></td><td class="text-right font-mono" id="mCheckpointSeq">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Checkpoint Saves <span class="tooltip tooltip-right tip-q" data-tip="How many times the checkpoint has been persisted (to Sync Gateway or local fallback). Should increase steadily as batches complete.">?</span></span></td><td class="text-right" id="mCheckpointSaves">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -155,7 +203,7 @@
       </div>
 
       <!-- MIDDLE: Processing -->
-      <div class="space-y-4">
+      <div class="space-y-4 border-process pl-3">
 
         <!-- Docs Processed group -->
         <div class="card bg-base-100 shadow rounded-2xl">
@@ -167,8 +215,8 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Docs Processed</td><td class="text-right" id="mProcessed">--</td></tr>
-              <tr><td class="font-medium">Docs Fetched</td><td class="text-right" id="mDocsFetched">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Docs Processed <span class="tooltip tooltip-right tip-q" data-tip="Total changes that made it through filtering and were forwarded to the output stage. Compare with Changes Received to see how many were filtered out.">?</span></span></td><td class="text-right" id="mProcessed">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Docs Fetched <span class="tooltip tooltip-right tip-q" data-tip="Documents retrieved via bulk_get or individual GET from Sync Gateway. If include_docs is off, changes are fetched separately; this tracks those fetches.">?</span></span></td><td class="text-right" id="mDocsFetched">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -183,24 +231,9 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Filtered (total)</td><td class="text-right" id="mFiltered">--</td></tr>
-              <tr><td class="font-medium">Filtered (deletes)</td><td class="text-right" id="mFilteredDeletes">--</td></tr>
-              <tr><td class="font-medium">Filtered (removes)</td><td class="text-right" id="mFilteredRemoves">--</td></tr>
-            </tbody></table>
-          </div>
-        </div>
-
-        <!-- Config Summary group -->
-        <div class="card bg-base-100 shadow rounded-2xl">
-          <div class="card-body p-4">
-            <div class="flex items-center gap-2 mb-2">
-              <h3 class="text-sm font-semibold">Config Summary</h3>
-              <div class="tooltip tooltip-right" data-tip="Key settings from the active worker configuration.">
-                <span class="badge badge-ghost badge-sm cursor-help">?</span>
-              </div>
-            </div>
-            <table class="table table-sm" id="configTable"><tbody>
-              <tr><td colspan="2" class="text-center opacity-50">Loading...</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Filtered (total) <span class="tooltip tooltip-right tip-q" data-tip="Total changes dropped before output. Sum of filtered deletes + filtered removes. A high ratio vs. Changes Received means most feed activity is deletions or access revocations.">?</span></span></td><td class="text-right" id="mFiltered">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Filtered (deletes) <span class="tooltip tooltip-right tip-q" data-tip="Changes skipped because the document was deleted and filter_deletes is enabled in config.">?</span></span></td><td class="text-right" id="mFilteredDeletes">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Filtered (removes) <span class="tooltip tooltip-right tip-q" data-tip="Changes skipped because the user lost channel access (removed=true) and filter_removes is enabled in config.">?</span></span></td><td class="text-right" id="mFilteredRemoves">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -208,7 +241,7 @@
       </div>
 
       <!-- RIGHT: Output -->
-      <div class="space-y-4">
+      <div class="space-y-4 border-output pl-3">
 
         <!-- Request Counts group -->
         <div class="card bg-base-100 shadow rounded-2xl">
@@ -220,11 +253,12 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Requests Total</td><td class="text-right" id="mOutRequests">--</td></tr>
-              <tr><td class="font-medium">Success</td><td class="text-right text-success" id="mOutSuccess">--</td></tr>
-              <tr><td class="font-medium">Errors</td><td class="text-right text-error" id="mOutErrors">--</td></tr>
-              <tr><td class="font-medium">PUT Requests</td><td class="text-right" id="mOutPut">--</td></tr>
-              <tr><td class="font-medium">DELETE Requests</td><td class="text-right" id="mOutDelete">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Requests Total <span class="tooltip tooltip-right tip-q" data-tip="Total HTTP requests sent to the output target (database or HTTP endpoint). This is Success + Errors + Skipped.">?</span></span></td><td class="text-right" id="mOutRequests">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Success <span class="tooltip tooltip-right tip-q" data-tip="Requests that returned a 2xx response. Each success means the document was accepted by the downstream target.">?</span></span></td><td class="text-right text-success" id="mOutSuccess">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Errors <span class="tooltip tooltip-right tip-q" data-tip="Requests that failed (non-2xx response or network error). Documents that error may be retried or sent to the dead letter queue depending on config.">?</span></span></td><td class="text-right text-error" id="mOutErrors">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Skipped <span class="tooltip tooltip-right tip-q" data-tip="Documents that reached the output stage but were not sent — usually because no schema mapper matched or the mapper produced no operations.">?</span></span></td><td class="text-right text-warning" id="mOutSkipped">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">PUT Requests <span class="tooltip tooltip-right tip-q" data-tip="Output requests using HTTP PUT method. Typically used for upsert/create operations on the downstream target.">?</span></span></td><td class="text-right" id="mOutPut">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">DELETE Requests <span class="tooltip tooltip-right tip-q" data-tip="Output requests using HTTP DELETE method. Sent when a document deletion is forwarded to the downstream target.">?</span></span></td><td class="text-right" id="mOutDelete">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -239,9 +273,9 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Bytes Sent</td><td class="text-right" id="mBytesOut">--</td></tr>
-              <tr><td class="font-medium">Dead Letters</td><td class="text-right text-warning" id="mDeadLetters">--</td></tr>
-              <tr><td class="font-medium">Endpoint</td><td class="text-right" id="mEndpointUp">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Bytes Sent <span class="tooltip tooltip-right tip-q" data-tip="Total bytes sent to the output endpoint. Compare with Bytes Received to understand data amplification or reduction through mapping/transforms.">?</span></span></td><td class="text-right" id="mBytesOut">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Dead Letters <span class="tooltip tooltip-right tip-q" data-tip="Documents that failed all retries and were written to the dead letter queue. Review these at /api/dlq — they can be retried or discarded manually.">?</span></span></td><td class="text-right text-warning" id="mDeadLetters">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Endpoint <span class="tooltip tooltip-right tip-q" data-tip="Whether the output target is currently reachable (UP/DOWN). Checked via periodic health probes. DOWN means documents will queue up or fail.">?</span></span></td><td class="text-right" id="mEndpointUp">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -256,8 +290,8 @@
               </div>
             </div>
             <table class="table table-sm"><tbody>
-              <tr><td class="font-medium">Resp p50</td><td class="text-right" id="mRespP50">--</td></tr>
-              <tr><td class="font-medium">Resp p99</td><td class="text-right" id="mRespP99">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Resp p50 <span class="tooltip tooltip-right tip-q" data-tip="Median (50th percentile) output response time. Half of all requests complete faster than this. This is your typical latency.">?</span></span></td><td class="text-right" id="mRespP50">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Resp p99 <span class="tooltip tooltip-right tip-q" data-tip="99th percentile output response time — the worst-case tail latency. If this is much higher than p50, some requests are hitting slow paths or timeouts.">?</span></span></td><td class="text-right" id="mRespP99">--</td></tr>
             </tbody></table>
           </div>
         </div>
@@ -265,27 +299,30 @@
       </div>
 
     </div>
-  </main>
 
-  <!-- Footer -->
-  <footer class="footer footer-center p-4 bg-base-100 text-base-content">
-    <p>Changes Worker v1.4.0</p>
-  </footer>
+  <!-- Status Detail Modal -->
+  <dialog id="statusModal" class="modal">
+    <div class="modal-box max-w-lg">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+      </form>
+      <div class="flex items-center gap-3 mb-4">
+        <span id="modalDot" class="dot dot-yellow"></span>
+        <h3 id="modalTitle" class="text-lg font-bold">Status Detail</h3>
+      </div>
+      <div id="modalBody" class="space-y-1"></div>
+      <div class="divider my-2"></div>
+      <div id="modalMetrics" class="overflow-x-auto">
+        <table class="table table-sm table-zebra"><tbody id="modalMetricsBody"></tbody></table>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
 
 <script>
 // ── Debug flag: add ?debug=true to URL to enable console logging ─
 var DEBUG = new URLSearchParams(window.location.search).get('debug') === 'true';
 function dbg() { if (DEBUG) console.log.apply(console, ['[CW]'].concat(Array.prototype.slice.call(arguments))); }
-
-// ── Theme ────────────────────────────────────────────────────
-var themeToggle = document.getElementById('themeToggle');
-themeToggle.checked = (localStorage.getItem('cw_theme') || 'dark') === 'light';
-themeToggle.addEventListener('change', function() {
-  var theme = themeToggle.checked ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', theme);
-  localStorage.setItem('cw_theme', theme);
-  rebuildCharts();
-});
 
 // ── Helpers ──────────────────────────────────────────────────
 function fmt(n) {
@@ -367,7 +404,11 @@ var chartHistory = {
   filtered: [],
   outSuccess: [],
   outErrors: [],
-  deadLetters: []
+  outSkipped: [],
+  deadLetters: [],
+  avgPollTime: [],
+  avgProcessTime: [],
+  avgOutputTime: []
 };
 // Track previous totals so we can compute deltas
 var prev = {};
@@ -383,6 +424,7 @@ function pushHistory(m) {
     ['filtered',        'changes_worker_changes_filtered_total'],
     ['outSuccess',      'changes_worker_output_success_total'],
     ['outErrors',       'changes_worker_output_errors_total'],
+    ['outSkipped',      'changes_worker_output_skipped_total'],
     ['deadLetters',     'changes_worker_dead_letter_total']
   ];
   for (var i = 0; i < keys.length; i++) {
@@ -393,10 +435,34 @@ function pushHistory(m) {
     chartHistory[hk].push(delta);
     if (chartHistory[hk].length > MAX_POINTS) chartHistory[hk].shift();
   }
+
+  // Avg output response time (cumulative: total _sum / total _count)
+  var ortSum = 0, ortCount = 0;
+  for (var k in m) {
+    if (k.indexOf('changes_worker_output_response_time_seconds_sum') === 0) ortSum = m[k];
+    if (k.indexOf('changes_worker_output_response_time_seconds_count') === 0) ortCount = m[k];
+  }
+  var avgOut = ortCount > 0 ? (ortSum / ortCount) * 1000 : null; // ms
+  chartHistory.avgOutputTime.push(avgOut);
+  if (chartHistory.avgOutputTime.length > MAX_POINTS) chartHistory.avgOutputTime.shift();
+
+  // Avg poll time (cumulative: uptime / poll_cycles)
+  var uptime = m['changes_worker_uptime_seconds'] || 0;
+  var pollCycles = m['changes_worker_poll_cycles_total'] || 0;
+  var avgPoll = pollCycles > 0 ? (uptime / pollCycles) * 1000 : null; // ms
+  chartHistory.avgPollTime.push(avgPoll);
+  if (chartHistory.avgPollTime.length > MAX_POINTS) chartHistory.avgPollTime.shift();
+
+  // Avg processing time per doc (cumulative: response_time_sum / processed)
+  // Re-use the output response time sum as the best proxy for per-doc processing time
+  var processed = m['changes_worker_changes_processed_total'] || 0;
+  var avgProc = processed > 0 ? (ortSum / processed) * 1000 : null; // ms per doc
+  chartHistory.avgProcessTime.push(avgProc);
+  if (chartHistory.avgProcessTime.length > MAX_POINTS) chartHistory.avgProcessTime.shift();
 }
 
 // ── ECharts ──────────────────────────────────────────────────
-var cFeed, cProcess, cOutput;
+var cFeed, cProcess, cOutput, cFeedAvg, cProcessAvg, cOutputAvg;
 
 function chartColors() {
   var dark = document.documentElement.getAttribute('data-theme') === 'dark';
@@ -415,9 +481,15 @@ function rebuildCharts() {
   if (cFeed) cFeed.dispose();
   if (cProcess) cProcess.dispose();
   if (cOutput) cOutput.dispose();
-  cFeed    = makeChart(document.getElementById('chartFeed'));
-  cProcess = makeChart(document.getElementById('chartProcess'));
-  cOutput  = makeChart(document.getElementById('chartOutput'));
+  if (cFeedAvg) cFeedAvg.dispose();
+  if (cProcessAvg) cProcessAvg.dispose();
+  if (cOutputAvg) cOutputAvg.dispose();
+  cFeed       = makeChart(document.getElementById('chartFeed'));
+  cProcess    = makeChart(document.getElementById('chartProcess'));
+  cOutput     = makeChart(document.getElementById('chartOutput'));
+  cFeedAvg    = makeChart(document.getElementById('chartFeedAvg'));
+  cProcessAvg = makeChart(document.getElementById('chartProcessAvg'));
+  cOutputAvg  = makeChart(document.getElementById('chartOutputAvg'));
   renderCharts();
 }
 
@@ -453,6 +525,30 @@ function lineSeries(name, data, color) {
   };
 }
 
+function lineOptMs(title, series) {
+  var c = chartColors();
+  return {
+    backgroundColor: 'transparent',
+    textStyle: { color: c.text, fontSize: 10 },
+    tooltip: { trigger: 'axis', textStyle: { fontSize: 11 }, valueFormatter: function(v) { return v != null ? v.toFixed(2) + ' ms' : '--'; } },
+    legend: { bottom: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+    grid: { top: 8, left: 46, right: 12, bottom: 30 },
+    xAxis: {
+      type: 'category', data: chartHistory.labels, boundaryGap: false,
+      axisLabel: { show: false },
+      axisLine: { lineStyle: { color: c.split } },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      axisLabel: { fontSize: 9, color: c.text, formatter: function(v) { return v.toFixed(1); } },
+      splitLine: { lineStyle: { color: c.split } }
+    },
+    series: series
+  };
+}
+
 function renderCharts() {
   var c = chartColors();
   if (cFeed) {
@@ -471,7 +567,23 @@ function renderCharts() {
     cOutput.setOption(lineOpt('Output', [
       lineSeries('Success', chartHistory.outSuccess, c.green),
       lineSeries('Errors', chartHistory.outErrors, c.red),
+      lineSeries('Skipped', chartHistory.outSkipped, c.blue),
       lineSeries('Dead Letters', chartHistory.deadLetters, c.yellow)
+    ]), true);
+  }
+  if (cFeedAvg) {
+    cFeedAvg.setOption(lineOptMs('Avg Poll', [
+      lineSeries('Avg Poll', chartHistory.avgPollTime, c.blue)
+    ]), true);
+  }
+  if (cProcessAvg) {
+    cProcessAvg.setOption(lineOptMs('Avg Process', [
+      lineSeries('Avg/doc', chartHistory.avgProcessTime, c.blue)
+    ]), true);
+  }
+  if (cOutputAvg) {
+    cOutputAvg.setOption(lineOptMs('Avg Response', [
+      lineSeries('Avg Resp', chartHistory.avgOutputTime, c.green)
     ]), true);
   }
 }
@@ -480,69 +592,286 @@ window.addEventListener('resize', function() {
   if (cFeed) cFeed.resize();
   if (cProcess) cProcess.resize();
   if (cOutput) cOutput.resize();
+  if (cFeedAvg) cFeedAvg.resize();
+  if (cProcessAvg) cProcessAvg.resize();
+  if (cOutputAvg) cOutputAvg.resize();
 });
 
 // ── Status Dots (computed from metrics, not a separate endpoint) ─
 var metricsReachable = false;
 
+// Stores last computed diagnostics so the modal can show them on click
+var statusDiag = { feed: null, process: null, output: null, cbl: null };
+var lastMetrics = null;
+
+function diagOk(text)   { return { icon: '✅', text: text, level: 'ok' }; }
+function diagWarn(text)  { return { icon: '⚠️', text: text, level: 'warn' }; }
+function diagErr(text)   { return { icon: '❌', text: text, level: 'error' }; }
+function diagInfo(text)  { return { icon: 'ℹ️', text: text, level: 'info' }; }
+
 function computeStatus(m, cfg) {
+  lastMetrics = m;
   var uptime     = m['changes_worker_uptime_seconds'] || 0;
   var pollCycles = m['changes_worker_poll_cycles_total'] || 0;
   var pollErrors = m['changes_worker_poll_errors_total'] || 0;
+  var retries    = m['changes_worker_retries_total'] || 0;
+  var retryExh   = m['changes_worker_retry_exhausted_total'] || 0;
+  var streamRecon = m['changes_worker_stream_reconnects_total'] || 0;
 
   dbg('computeStatus: uptime=' + uptime + ' pollCycles=' + pollCycles + ' pollErrors=' + pollErrors);
   dbg('computeStatus: cfg output.mode=' + ((cfg && cfg.output) ? cfg.output.mode : 'NO CFG'));
 
-  // Changes Feed
+  // ── Changes Feed ─────────────────────────────────────────
+  var feedChecks = [];
   var feedColor = 'red';
-  if (uptime > 0) {
+  var feedMetrics = {
+    'Uptime': fmtUptime(uptime),
+    'Poll Cycles': fmt(pollCycles),
+    'Poll Errors': fmt(pollErrors),
+    'Error Ratio': pollCycles > 0 ? ((pollErrors / pollCycles) * 100).toFixed(1) + '%' : '0%',
+    'Retries': fmt(retries),
+    'Retries Exhausted': fmt(retryExh),
+    'Stream Reconnects': fmt(streamRecon),
+    'Bytes Received': fmtBytes(m['changes_worker_bytes_received_total'])
+  };
+  if (uptime <= 0) {
+    feedChecks.push(diagErr('Worker is not running — uptime is zero'));
+    feedChecks.push(diagInfo('Check that the changes-worker container started successfully'));
+  } else {
+    feedChecks.push(diagOk('Worker is running (uptime: ' + fmtUptime(uptime) + ')'));
     var errorRatio = pollCycles > 0 ? pollErrors / pollCycles : 0;
-    feedColor = errorRatio > 0.1 ? 'yellow' : 'green';
+    var feedReceived = m['changes_worker_changes_received_total'] || 0;
+    if (pollCycles === 0 && feedReceived === 0) {
+      feedChecks.push(diagWarn('No poll cycles completed yet — still starting up'));
+      feedColor = 'yellow';
+    } else if (pollCycles === 0 && feedReceived > 0) {
+      feedColor = 'green';
+      feedChecks.push(diagOk('Streaming mode — ' + fmt(feedReceived) + ' change(s) received'));
+    } else if (errorRatio > 0.1) {
+      feedColor = 'yellow';
+      feedChecks.push(diagWarn('High error ratio: ' + (errorRatio * 100).toFixed(1) + '% of poll cycles failed'));
+      feedChecks.push(diagInfo('Possible causes: gateway unreachable, auth expired, network timeout'));
+    } else {
+      feedColor = 'green';
+      feedChecks.push(diagOk('Error ratio is healthy: ' + (errorRatio * 100).toFixed(1) + '%'));
+    }
+    if (retryExh > 0) {
+      feedChecks.push(diagWarn(fmt(retryExh) + ' request(s) exhausted all retries — gateway may be overloaded'));
+    }
+    if (retries > 0 && retryExh === 0) {
+      feedChecks.push(diagInfo(fmt(retries) + ' retry attempt(s) — all eventually succeeded'));
+    }
+    if (streamRecon > 0) {
+      feedChecks.push(diagInfo(fmt(streamRecon) + ' stream reconnection(s) detected'));
+    }
   }
-  dbg('  feed -> ' + feedColor);
+  statusDiag.feed = { color: feedColor, checks: feedChecks, metrics: feedMetrics };
   setDot('dotFeed', feedColor);
 
-  // Processing
+  // ── Processing ───────────────────────────────────────────
+  var procChecks = [];
+  var processed   = m['changes_worker_changes_processed_total'] || 0;
+  var received    = m['changes_worker_changes_received_total'] || 0;
+  var filtered    = m['changes_worker_changes_filtered_total'] || 0;
+  var batches     = m['changes_worker_batches_total'] || 0;
+  var batchFail   = m['changes_worker_batches_failed_total'] || 0;
+  var docFetchErr = m['changes_worker_doc_fetch_errors_total'] || 0;
+  var chkSaveErr  = m['changes_worker_checkpoint_save_errors_total'] || 0;
+  var chkLoadErr  = m['changes_worker_checkpoint_load_errors_total'] || 0;
+  var procMetrics = {
+    'Changes Received': fmt(received),
+    'Changes Processed': fmt(processed),
+    'Changes Filtered': fmt(filtered),
+    'Batches': fmt(batches),
+    'Batches Failed': fmt(batchFail),
+    'Doc Fetch Errors': fmt(docFetchErr),
+    'Checkpoint Saves': fmt(m['changes_worker_checkpoint_saves_total']),
+    'Checkpoint Save Errors': fmt(chkSaveErr),
+    'Checkpoint Load Errors': fmt(chkLoadErr)
+  };
   var procColor = 'red';
-  if (uptime > 30) procColor = 'green';
-  else if (uptime > 0) procColor = 'yellow';
-  dbg('  process -> ' + procColor);
+  if (uptime > 30 || (uptime > 0 && processed > 0)) {
+    procColor = 'green';
+    procChecks.push(diagOk('Worker running for ' + fmtUptime(uptime)));
+  } else if (uptime > 0) {
+    procColor = 'yellow';
+    procChecks.push(diagWarn('Worker just started (' + fmtUptime(uptime) + ') — still warming up'));
+  } else {
+    procChecks.push(diagErr('Worker is not running'));
+  }
+  if (batchFail > 0) {
+    procColor = procColor === 'red' ? 'red' : 'yellow';
+    procChecks.push(diagWarn(fmt(batchFail) + ' batch(es) failed — output was unreachable during processing'));
+  } else if (batches > 0) {
+    procChecks.push(diagOk('All ' + fmt(batches) + ' batch(es) processed successfully'));
+  }
+  if (docFetchErr > 0) {
+    procChecks.push(diagWarn(fmt(docFetchErr) + ' doc fetch error(s) — some documents could not be retrieved'));
+  }
+  if (chkSaveErr > 0) {
+    procChecks.push(diagWarn(fmt(chkSaveErr) + ' checkpoint save error(s) — fell back to local storage'));
+    procChecks.push(diagInfo('Checkpoint saves to Sync Gateway failed; local file/CBL fallback was used'));
+  }
+  if (chkLoadErr > 0) {
+    procChecks.push(diagWarn(fmt(chkLoadErr) + ' checkpoint load error(s) — could not read from Sync Gateway'));
+  }
+  if (received > 0 && processed === 0 && filtered === 0) {
+    procChecks.push(diagInfo('Changes received but none processed or filtered yet'));
+  }
+  if (filtered > 0) {
+    procChecks.push(diagInfo(fmt(filtered) + ' change(s) filtered out (deletes/removes)'));
+  }
+  statusDiag.process = { color: procColor, checks: procChecks, metrics: procMetrics };
   setDot('dotProcess', procColor);
 
-  // Output
+  // ── Output ───────────────────────────────────────────────
   var outMode  = (cfg && cfg.output) ? cfg.output.mode : 'stdout';
   var epUp     = m['changes_worker_output_endpoint_up'];
   var outErr   = m['changes_worker_output_errors_total'] || 0;
   var outTotal = m['changes_worker_output_requests_total'] || 0;
+  var outOk    = m['changes_worker_output_success_total'] || 0;
+  var outSkip  = m['changes_worker_output_skipped_total'] || 0;
+  var dlq      = m['changes_worker_dead_letter_total'] || 0;
+  var mapErr   = m['changes_worker_mapper_errors_total'] || 0;
 
   dbg('  output: mode=' + outMode + ' epUp=' + epUp + ' outErr=' + outErr + ' outTotal=' + outTotal);
+
+  var outChecks = [];
+  var outMetrics = {
+    'Mode': outMode,
+    'Requests Total': fmt(outTotal),
+    'Success': fmt(outOk),
+    'Errors': fmt(outErr),
+    'Skipped': fmt(outSkip),
+    'Dead Letters': fmt(dlq),
+    'Mapper Errors': fmt(mapErr),
+    'Endpoint': epUp === 1 ? 'UP' : epUp === 0 ? 'DOWN' : '--',
+    'Bytes Sent': fmtBytes(m['changes_worker_bytes_output_total'])
+  };
 
   var outColor = 'red';
   if (outMode === 'stdout') {
     outColor = uptime > 0 ? 'green' : 'red';
+    if (uptime > 0) {
+      outChecks.push(diagOk('Output mode is stdout — no external endpoint needed'));
+    } else {
+      outChecks.push(diagErr('Worker not running'));
+    }
   } else if (epUp === 0) {
     outColor = 'red';
+    outChecks.push(diagErr('Output endpoint is DOWN — the target is unreachable'));
+    if (outMode === 'http') {
+      var targetUrl = (cfg && cfg.output) ? cfg.output.target_url : '';
+      outChecks.push(diagInfo('Target URL: ' + (targetUrl || 'not configured')));
+      outChecks.push(diagInfo('Check: DNS resolution, firewall rules, target service health'));
+    }
+    if (outMode === 'db') {
+      outChecks.push(diagInfo('Check: database host/port, credentials, connection pool'));
+    }
   } else if (outTotal > 0 && outErr > 0) {
-    outColor = (outErr / outTotal) > 0.1 ? 'yellow' : 'green';
+    var errRatio = outErr / outTotal;
+    outColor = errRatio > 0.1 ? 'yellow' : 'green';
+    if (errRatio > 0.1) {
+      outChecks.push(diagWarn('Error rate is ' + (errRatio * 100).toFixed(1) + '% (' + fmt(outErr) + '/' + fmt(outTotal) + ')'));
+      outChecks.push(diagInfo('Some requests are failing — check target service logs'));
+    } else {
+      outChecks.push(diagOk('Error rate is low: ' + (errRatio * 100).toFixed(1) + '%'));
+    }
   } else if (uptime > 0) {
     outColor = 'green';
+    if (outTotal > 0) {
+      outChecks.push(diagOk(fmt(outOk) + ' request(s) sent successfully with no errors'));
+    } else {
+      outChecks.push(diagOk('Endpoint is up — no documents sent yet'));
+    }
   }
-  dbg('  output -> ' + outColor);
+  if (dlq > 0) {
+    outChecks.push(diagWarn(fmt(dlq) + ' document(s) sent to the dead letter queue'));
+    outChecks.push(diagInfo('Review dead letters at /api/dlq to retry or discard'));
+  }
+  if (mapErr > 0) {
+    outChecks.push(diagWarn(fmt(mapErr) + ' schema mapper error(s) — check mapping definitions'));
+  }
+  if (outSkip > 0) {
+    outChecks.push(diagInfo(fmt(outSkip) + ' document(s) skipped (no mapper match or null doc)'));
+  }
+  statusDiag.output = { color: outColor, checks: outChecks, metrics: outMetrics };
   setDot('dotOutput', outColor);
 }
 
+// ── Status Detail Modal ──────────────────────────────────────
+var statusTitles = {
+  feed: 'Changes Feed', process: 'Processing', cbl: 'Couchbase Lite', output: 'Output'
+};
+
+function showStatusDetail(which) {
+  var diag = statusDiag[which];
+  if (!diag) {
+    // No diagnostics yet (e.g., CBL with no metrics data)
+    diag = { color: 'yellow', checks: [diagInfo('No diagnostic data available yet')], metrics: {} };
+  }
+  document.getElementById('modalTitle').textContent = statusTitles[which] + ' Status';
+  document.getElementById('modalDot').className = 'dot dot-' + diag.color;
+
+  var bodyHtml = '';
+  for (var i = 0; i < diag.checks.length; i++) {
+    var c = diag.checks[i];
+    bodyHtml += '<div class="diag-item"><span class="diag-icon">' + c.icon + '</span><span class="diag-text">' + c.text + '</span></div>';
+  }
+  document.getElementById('modalBody').innerHTML = bodyHtml;
+
+  var metricsHtml = '';
+  var mk = diag.metrics || {};
+  for (var key in mk) {
+    if (mk.hasOwnProperty(key)) {
+      var val = mk[key];
+      var valClass = '';
+      if (val === 'DOWN') valClass = ' class="text-error font-semibold"';
+      else if (val === 'UP') valClass = ' class="text-success font-semibold"';
+      else if (/^0[^.]/.test(String(val)) || val === '0' || val === '0%') valClass = ' class="opacity-50"';
+      metricsHtml += '<tr><td class="font-medium text-sm">' + key + '</td><td class="text-right text-sm"' + valClass + '>' + val + '</td></tr>';
+    }
+  }
+  document.getElementById('modalMetricsBody').innerHTML = metricsHtml;
+
+  document.getElementById('statusModal').showModal();
+}
+
 // ── CBL status from server ───────────────────────────────────
+var cblStatus = null;
+
 function loadCBLStatus() {
   dbg('loadCBLStatus: fetching /api/status');
   fetch('/api/status')
     .then(function(r) { return r.json(); })
     .then(function(s) {
       dbg('loadCBLStatus: response', s);
-      setDot('dotCBL', s.cbl || 'red');
+      cblStatus = s;
+      var color = s.cbl || 'red';
+      setDot('dotCBL', color);
+      // Build CBL diagnostics
+      var checks = [];
+      var metrics = {};
+      if (color === 'green') {
+        checks.push(diagOk('Couchbase Lite is available and operational'));
+        checks.push(diagInfo('Local storage is using CBL for checkpoints, config, and DLQ'));
+      } else {
+        checks.push(diagErr('Couchbase Lite is not available'));
+        checks.push(diagInfo('CBL native library may not be installed in the container'));
+        checks.push(diagInfo('Falling back to file-based storage for checkpoints and config'));
+      }
+      metrics['CBL Available'] = color === 'green' ? 'Yes' : 'No';
+      metrics['Storage Mode'] = color === 'green' ? 'Couchbase Lite' : 'File-based';
+      statusDiag.cbl = { color: color, checks: checks, metrics: metrics };
     })
     .catch(function(e) {
       dbg('loadCBLStatus: ERROR', e);
       setDot('dotCBL', 'red');
+      statusDiag.cbl = {
+        color: 'red',
+        checks: [diagErr('Could not reach /api/status endpoint'), diagInfo('Error: ' + e.message)],
+        metrics: { 'API Reachable': 'No' }
+      };
     });
 }
 
@@ -575,23 +904,35 @@ function loadConfig() {
       ? '<span class="text-error">None</span>'
       : '<span class="text-success">' + mapCount + '</span> <span class="opacity-50 text-xs">(' + mapNames.join(', ') + ')</span>';
 
-    var rows = [
-      ['Source', cfg.gateway?.src ?? '--'],
-      ['Database', cfg.gateway?.database ?? '--'],
-      ['Keyspace', (cfg.gateway?.scope || '--') + '.' + (cfg.gateway?.collection || '--')],
-      ['Output', outDetail],
-      ['Format', cfg.output?.output_format ?? 'json'],
-      ['Schema Mappings', mapDisplay],
+    var dbKeyspace = (cfg.gateway?.database || '--') + ' / ' + (cfg.gateway?.scope || '--') + '.' + (cfg.gateway?.collection || '--');
+    var sourceRows = [
+      ['Source', (cfg.gateway?.src ?? '--') + '<br><span class="opacity-50 text-xs">' + (cfg.gateway?.url ?? '') + '</span>'],
+      ['Database / Keyspace', dbKeyspace],
+      ['Feed Type', cfg.changes_feed?.feed_type ?? '--']
+    ];
+    var processRows = [
       ['Sequential', cfg.processing?.sequential ? 'Yes' : 'No'],
+      ['Schema Mappings', mapDisplay]
+    ];
+    var outputRows = [
+      ['Output', outDetail],
+      ['Format', cfg.output?.mode === 'db' ? (cfg.output?.db?.mapping?.mode === 'jsonb' ? 'jsonb' : 'columns') : (cfg.output?.output_format ?? 'json')],
       ['Halt on Fail', cfg.output?.halt_on_failure !== false ? 'Yes' : 'No']
     ];
-    document.querySelector('#configTable tbody').innerHTML = rows
-      .map(function(r) { return '<tr><td class="font-medium">' + r[0] + '</td><td class="text-right">' + r[1] + '</td></tr>'; })
-      .join('');
+    function renderRows(id, rows) {
+      document.querySelector('#' + id + ' tbody').innerHTML = rows
+        .map(function(r) { return '<tr><td class="font-medium">' + r[0] + '</td><td class="text-right">' + r[1] + '</td></tr>'; })
+        .join('');
+    }
+    renderRows('configTableSource', sourceRows);
+    renderRows('configTableProcess', processRows);
+    renderRows('configTableOutput', outputRows);
   }).catch(function(e) {
     dbg('loadConfig: ERROR', e);
-    document.querySelector('#configTable tbody').innerHTML =
-      '<tr><td colspan="2" class="text-center text-error">Failed to load</td></tr>';
+    var errHtml = '<tr><td colspan="2" class="text-center text-error">Failed to load</td></tr>';
+    document.querySelector('#configTableSource tbody').innerHTML = errHtml;
+    document.querySelector('#configTableProcess tbody').innerHTML = errHtml;
+    document.querySelector('#configTableOutput tbody').innerHTML = errHtml;
   });
 }
 
@@ -663,6 +1004,7 @@ function loadMetrics() {
       setText('mOutRequests', fmt(m['changes_worker_output_requests_total']));
       setText('mOutSuccess',  fmt(m['changes_worker_output_success_total']));
       setText('mOutErrors',   fmt(m['changes_worker_output_errors_total']));
+      setText('mOutSkipped',  fmt(m['changes_worker_output_skipped_total']));
       setText('mOutPut',      fmt(getLabeled(m, 'changes_worker_output_requests_by_method_total', 'method="PUT"')));
       setText('mOutDelete',   fmt(getLabeled(m, 'changes_worker_output_requests_by_method_total', 'method="DELETE"')));
       setText('mBytesOut',    fmtBytes(m['changes_worker_bytes_output_total']));
@@ -690,10 +1032,15 @@ function setUnknown() {
   // Push zero-value data points so charts still render with flat lines
   chartHistory.labels.push(timeLabel());
   if (chartHistory.labels.length > MAX_POINTS) chartHistory.labels.shift();
-  var hKeys = ['changesReceived','pollErrors','processed','filtered','outSuccess','outErrors','deadLetters'];
+  var hKeys = ['changesReceived','pollErrors','processed','filtered','outSuccess','outErrors','outSkipped','deadLetters'];
   for (var i = 0; i < hKeys.length; i++) {
     chartHistory[hKeys[i]].push(0);
     if (chartHistory[hKeys[i]].length > MAX_POINTS) chartHistory[hKeys[i]].shift();
+  }
+  var avgKeys = ['avgPollTime','avgProcessTime','avgOutputTime'];
+  for (var j = 0; j < avgKeys.length; j++) {
+    chartHistory[avgKeys[j]].push(null);
+    if (chartHistory[avgKeys[j]].length > MAX_POINTS) chartHistory[avgKeys[j]].shift();
   }
   renderCharts();
 }
@@ -710,6 +1057,10 @@ document.addEventListener('DOMContentLoaded', function() {
   setInterval(loadCBLStatus, 30000);
 });
 </script>
+
+  </main>
+  </div><!-- /sidebar-main -->
+  <script src="/static/js/sidebar.js"></script>
 
 </body>
 </html>

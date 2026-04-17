@@ -7,6 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
   <script src="/static/js/tailwind.js"></script>
   <script>
     (function(){
@@ -15,34 +16,15 @@
     })();
   </script>
 </head>
-<body class="min-h-screen flex flex-col bg-base-200">
+<body class="min-h-screen bg-base-200">
+  <div id="sidebar-root"></div>
 
-  <!-- Navbar -->
-  <nav class="navbar bg-base-100 shadow-sm px-4">
-    <div class="flex-1">
-      <a href="/" class="text-xl font-bold">Changes Worker Admin</a>
-    </div>
-    <div class="flex-none">
-      <ul class="menu menu-horizontal px-1 gap-1">
-        <li><a href="/">Dashboard</a></li>
-        <li><a href="/config">Config</a></li>
-        <li><a href="/schema">Schema Mappings</a></li>
-        <li><a href="/transforms" class="active">Transforms</a></li>
-        <li><a href="/wizard">Wizard</a></li>
-      </ul>
-      <label class="label cursor-pointer gap-2 ml-4">
-        <span class="label-text text-sm">Dark</span>
-        <input type="checkbox" id="themeToggle" class="toggle toggle-sm" />
-        <span class="label-text text-sm">Light</span>
-      </label>
-    </div>
-  </nav>
-
-  <main class="flex-1 container mx-auto p-6 space-y-6">
+  <div class="sidebar-main">
+  <main class="container mx-auto p-6 space-y-6">
 
     <div class="card bg-base-100 shadow rounded-2xl">
       <div class="card-body p-6">
-        <h1 class="text-2xl font-bold mb-2">Transform Functions Reference</h1>
+        <h1 class="text-2xl font-bold mb-2">Glossary: Schema Mapping - Transform Functions Reference</h1>
         <p class="opacity-70 mb-4">These functions can be applied to field values during schema mapping. Select from the dropdown or type directly in the transform input. Functions can be chained: <code class="bg-base-200 px-1 rounded">trim().lowercase()</code></p>
 
         <!-- Quick jump -->
@@ -416,7 +398,7 @@
         <div class="divider"></div>
         <h3 class="font-semibold mb-2">Chaining Transforms</h3>
         <p class="opacity-70 mb-3">Transforms can be chained using dot notation. Each function receives the output of the previous one:</p>
-        <div class="mockup-code bg-base-200">
+        <div class="mockup-code">
           <pre><code>trim().lowercase()                      — trim whitespace, then lowercase
 trim().replace(,"-"," ").propercase()   — clean and title-case a name
 to_float().to_decimal(,2)               — parse number then format to 2 decimals
@@ -426,7 +408,7 @@ split(,",")[0].trim()                   — take first CSV value and trim it</co
         <div class="divider"></div>
         <h3 class="font-semibold mb-2">Mapping Format</h3>
         <p class="opacity-70 mb-3">In the generated mapping JSON, columns without transforms are stored as simple strings. Columns with transforms use an object:</p>
-        <div class="mockup-code bg-base-200">
+        <div class="mockup-code">
           <pre><code>{
   "columns": {
     "doc_id": "$._id",
@@ -440,20 +422,9 @@ split(,",")[0].trim()                   — take first CSV value and trim it</co
     </div>
 
   </main>
+  </div><!-- /sidebar-main -->
 
-  <footer class="footer footer-center p-4 bg-base-100 text-base-content">
-    <p>Changes Worker v1.4.0</p>
-  </footer>
-
-<script>
-  var themeToggle = document.getElementById('themeToggle');
-  themeToggle.checked = (localStorage.getItem('cw_theme') || 'dark') === 'light';
-  themeToggle.addEventListener('change', function() {
-    var theme = themeToggle.checked ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('cw_theme', theme);
-  });
-</script>
+  <script src="/static/js/sidebar.js"></script>
 
 </body>
 </html>

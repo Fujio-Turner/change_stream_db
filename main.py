@@ -66,13 +66,13 @@ class MetricsCollector:
     on demand when the /_metrics endpoint is hit.
     """
 
-    def __init__(self, src: str, database: str):
+    def __init__(self, src: str, database: str, log_dir: str = "logs", cbl_db_dir: str = ""):
         self._lock = threading.Lock()
         self._start_time = time.monotonic()
         self._labels = f'src="{src}",database="{database}"'
         self._process = psutil.Process()
-        self._log_dir: str = "logs"
-        self._cbl_db_dir: str | None = None
+        self._log_dir = log_dir
+        self._cbl_db_dir = cbl_db_dir
 
         # Counters (monotonically increasing)
         self.poll_cycles_total: int = 0
@@ -88,6 +88,7 @@ class MetricsCollector:
         self.checkpoint_saves_total: int = 0
         self.checkpoint_save_errors_total: int = 0
         self.retries_total: int = 0
+        self.retry_exhausted_total: int = 0
 
         # Output by HTTP method (PUT / DELETE)
         self.output_put_total: int = 0
@@ -95,7 +96,12 @@ class MetricsCollector:
         self.output_put_errors_total: int = 0
         self.output_delete_errors_total: int = 0
         self.output_success_total: int = 0
+        self.output_skipped_total: int = 0
         self.dead_letter_total: int = 0
+
+        # Batch processing
+        self.batches_total: int = 0
+        self.batches_failed_total: int = 0
 
         # Bytes tracking
         self.bytes_received_total: int = 0     # bytes from _changes + bulk_get/GETs
@@ -105,14 +111,51 @@ class MetricsCollector:
         self.feed_deletes_seen_total: int = 0  # changes with deleted=true in the feed
         self.feed_removes_seen_total: int = 0  # changes with removed=true in the feed
 
+        # Doc fetch
+        self.doc_fetch_requests_total: int = 0
+        self.doc_fetch_errors_total: int = 0
+
+        # Mapper (DB mode)
+        self.mapper_matched_total: int = 0
+        self.mapper_skipped_total: int = 0
+        self.mapper_errors_total: int = 0
+        self.mapper_ops_total: int = 0
+
+        # DB transaction retry / error classification
+        self.db_retries_total: int = 0
+        self.db_retry_exhausted_total: int = 0
+        self.db_transient_errors_total: int = 0
+        self.db_permanent_errors_total: int = 0
+        self.db_pool_reconnects_total: int = 0
+
+        # Stream (continuous/websocket)
+        self.stream_reconnects_total: int = 0
+        self.stream_messages_total: int = 0
+        self.stream_parse_errors_total: int = 0
+
+        # Health check probes
+        self.health_probes_total: int = 0
+        self.health_probe_failures_total: int = 0
+
+        # Checkpoint loads
+        self.checkpoint_loads_total: int = 0
+        self.checkpoint_load_errors_total: int = 0
+
         # Gauges (can go up and down)
         self.last_batch_size: int = 0
         self.last_poll_timestamp: float = 0.0
         self.checkpoint_seq: str = "0"
         self.output_endpoint_up: int = 1
+        self.active_tasks: int = 0
 
         # Output response time tracking (for summary) – capped to avoid unbounded growth
         self._output_resp_times: deque[float] = deque(maxlen=10000)
+
+        # Stage timing deques
+        self._changes_request_times: deque[float] = deque(maxlen=10000)
+        self._batch_processing_times: deque[float] = deque(maxlen=10000)
+        self._doc_fetch_times: deque[float] = deque(maxlen=10000)
+        self._health_probe_times: deque[float] = deque(maxlen=10000)
 
     def inc(self, name: str, value: int = 1) -> None:
         with self._lock:
@@ -126,23 +169,53 @@ class MetricsCollector:
         with self._lock:
             self._output_resp_times.append(seconds)
 
+    def record_changes_request_time(self, seconds: float) -> None:
+        with self._lock:
+            self._changes_request_times.append(seconds)
+
+    def record_batch_processing_time(self, seconds: float) -> None:
+        with self._lock:
+            self._batch_processing_times.append(seconds)
+
+    def record_doc_fetch_time(self, seconds: float) -> None:
+        with self._lock:
+            self._doc_fetch_times.append(seconds)
+
+    def record_health_probe_time(self, seconds: float) -> None:
+        with self._lock:
+            self._health_probe_times.append(seconds)
+
     def render(self) -> str:
         """Render all metrics in Prometheus text exposition format."""
         with self._lock:
             uptime = time.monotonic() - self._start_time
             labels = self._labels
 
-            # Output response time summary stats
-            ort = self._output_resp_times
-            ort_count = len(ort)
-            ort_sum = sum(ort) if ort else 0.0
-            ort_sorted = sorted(ort) if ort else []
+            # Snapshot all timing deques under the lock
+            ort = list(self._output_resp_times)
+            crt = list(self._changes_request_times)
+            bpt = list(self._batch_processing_times)
+            dft = list(self._doc_fetch_times)
+            hpt = list(self._health_probe_times)
 
-            def _quantile(q: float) -> float:
-                if not ort_sorted:
-                    return 0.0
-                idx = int(q * (len(ort_sorted) - 1))
-                return ort_sorted[idx]
+        # Pre-compute sorted arrays and stats for each timing deque
+        def _stats(data: list[float]) -> tuple[int, float, list[float]]:
+            count = len(data)
+            total = sum(data) if data else 0.0
+            sorted_data = sorted(data) if data else []
+            return count, total, sorted_data
+
+        def _quantile(sorted_data: list[float], q: float) -> float:
+            if not sorted_data:
+                return 0.0
+            idx = int(q * (len(sorted_data) - 1))
+            return sorted_data[idx]
+
+        ort_count, ort_sum, ort_sorted = _stats(ort)
+        crt_count, crt_sum, crt_sorted = _stats(crt)
+        bpt_count, bpt_sum, bpt_sorted = _stats(bpt)
+        dft_count, dft_sum, dft_sorted = _stats(dft)
+        hpt_count, hpt_sum, hpt_sorted = _stats(hpt)
 
         lines: list[str] = []
 
@@ -155,6 +228,14 @@ class MetricsCollector:
             lines.append(f"# HELP {name} {help_text}")
             lines.append(f"# TYPE {name} gauge")
             lines.append(f"{name}{{{labels}}} {value}")
+
+        def _summary(name: str, help_text: str, sorted_data: list[float], s_count: int, s_sum: float):
+            lines.append(f"# HELP {name} {help_text}")
+            lines.append(f"# TYPE {name} summary")
+            for q in (0.5, 0.9, 0.99):
+                lines.append(f'{name}{{{labels},quantile="{q}"}} {_quantile(sorted_data, q):.6f}')
+            lines.append(f"{name}_sum{{{labels}}} {s_sum:.6f}")
+            lines.append(f"{name}_count{{{labels}}} {s_count}")
 
         # -- Process info --
         _gauge("changes_worker_uptime_seconds",
@@ -197,6 +278,10 @@ class MetricsCollector:
         # -- Doc fetching --
         _counter("changes_worker_docs_fetched_total",
                  "Total documents fetched via bulk_get or individual GET.", self.docs_fetched_total)
+        _counter("changes_worker_doc_fetch_requests_total",
+                 "Total doc fetch requests (bulk_get or individual batch).", self.doc_fetch_requests_total)
+        _counter("changes_worker_doc_fetch_errors_total",
+                 "Total doc fetch errors.", self.doc_fetch_errors_total)
 
         # -- Output --
         _counter("changes_worker_output_requests_total",
@@ -217,6 +302,8 @@ class MetricsCollector:
 
         _counter("changes_worker_output_success_total",
                  "Total output requests that succeeded.", self.output_success_total)
+        _counter("changes_worker_output_skipped_total",
+                 "Total documents skipped at output (no mapper match or empty ops).", self.output_skipped_total)
         _counter("changes_worker_dead_letter_total",
                  "Total documents written to the dead letter queue.", self.dead_letter_total)
 
@@ -224,18 +311,19 @@ class MetricsCollector:
                "Whether the output endpoint is reachable (1=up, 0=down).", self.output_endpoint_up)
 
         # Output response time summary
-        lines.append("# HELP changes_worker_output_response_time_seconds Output HTTP response time in seconds.")
-        lines.append("# TYPE changes_worker_output_response_time_seconds summary")
-        for q in (0.5, 0.9, 0.99):
-            lines.append(f'changes_worker_output_response_time_seconds{{{labels},quantile="{q}"}} {_quantile(q):.6f}')
-        lines.append(f"changes_worker_output_response_time_seconds_sum{{{labels}}} {ort_sum:.6f}")
-        lines.append(f"changes_worker_output_response_time_seconds_count{{{labels}}} {ort_count}")
+        _summary("changes_worker_output_response_time_seconds",
+                 "Output HTTP response time in seconds.",
+                 ort_sorted, ort_count, ort_sum)
 
         # -- Checkpoint --
         _counter("changes_worker_checkpoint_saves_total",
                  "Total checkpoint save operations.", self.checkpoint_saves_total)
         _counter("changes_worker_checkpoint_save_errors_total",
                  "Total checkpoint save errors (fell back to local file).", self.checkpoint_save_errors_total)
+        _counter("changes_worker_checkpoint_loads_total",
+                 "Total checkpoint load operations.", self.checkpoint_loads_total)
+        _counter("changes_worker_checkpoint_load_errors_total",
+                 "Total checkpoint load errors.", self.checkpoint_load_errors_total)
         lines.append("# HELP changes_worker_checkpoint_seq Current checkpoint sequence value.")
         lines.append("# TYPE changes_worker_checkpoint_seq gauge")
         # Sequence can be a non-numeric string (e.g. "12:34"), expose as info label
@@ -244,157 +332,209 @@ class MetricsCollector:
         # -- Retries --
         _counter("changes_worker_retries_total",
                  "Total HTTP retry attempts across all requests.", self.retries_total)
+        _counter("changes_worker_retry_exhausted_total",
+                 "Total times all retries were exhausted.", self.retry_exhausted_total)
 
-        # ── System metrics (collected live on each render) ────────────
-        self._render_system_metrics(lines, labels, _gauge, _counter)
+        # -- Batches --
+        _counter("changes_worker_batches_total",
+                 "Total batches processed.", self.batches_total)
+        _counter("changes_worker_batches_failed_total",
+                 "Total batches that failed (output down).", self.batches_failed_total)
+
+        # -- Mapper (DB mode) --
+        _counter("changes_worker_mapper_matched_total",
+                 "Total documents matched by a schema mapper.", self.mapper_matched_total)
+        _counter("changes_worker_mapper_skipped_total",
+                 "Total documents skipped (no mapper match).", self.mapper_skipped_total)
+        _counter("changes_worker_mapper_errors_total",
+                 "Total mapper errors.", self.mapper_errors_total)
+        _counter("changes_worker_mapper_ops_total",
+                 "Total SQL operations generated by mappers.", self.mapper_ops_total)
+
+        # -- DB transaction resilience --
+        _counter("changes_worker_db_retries_total",
+                 "Total DB transaction retry attempts.", self.db_retries_total)
+        _counter("changes_worker_db_retry_exhausted_total",
+                 "Total times all DB retries were exhausted.", self.db_retry_exhausted_total)
+        _counter("changes_worker_db_transient_errors_total",
+                 "Total transient DB errors (connection, deadlock, serialization).", self.db_transient_errors_total)
+        _counter("changes_worker_db_permanent_errors_total",
+                 "Total permanent DB errors (constraint, type mismatch).", self.db_permanent_errors_total)
+        _counter("changes_worker_db_pool_reconnects_total",
+                 "Total DB connection pool reconnections.", self.db_pool_reconnects_total)
+
+        # -- Stream (continuous/websocket) --
+        _counter("changes_worker_stream_reconnects_total",
+                 "Total stream reconnections.", self.stream_reconnects_total)
+        _counter("changes_worker_stream_messages_total",
+                 "Total stream messages received.", self.stream_messages_total)
+        _counter("changes_worker_stream_parse_errors_total",
+                 "Total stream message parse errors.", self.stream_parse_errors_total)
+
+        # -- Health check probes --
+        _counter("changes_worker_health_probes_total",
+                 "Total health check probes sent.", self.health_probes_total)
+        _counter("changes_worker_health_probe_failures_total",
+                 "Total health check probe failures.", self.health_probe_failures_total)
+
+        # -- Active tasks gauge --
+        _gauge("changes_worker_active_tasks",
+               "Number of currently active document processing tasks.", self.active_tasks)
+
+        # -- Timing summaries --
+        _summary("changes_worker_changes_request_time_seconds",
+                 "Time to complete a _changes HTTP request in seconds.",
+                 crt_sorted, crt_count, crt_sum)
+
+        _summary("changes_worker_batch_processing_time_seconds",
+                 "Time to process a batch of changes in seconds.",
+                 bpt_sorted, bpt_count, bpt_sum)
+
+        _summary("changes_worker_doc_fetch_time_seconds",
+                 "Time to fetch documents (bulk_get or individual) in seconds.",
+                 dft_sorted, dft_count, dft_sum)
+
+        _summary("changes_worker_health_probe_time_seconds",
+                 "Time for a health check probe in seconds.",
+                 hpt_sorted, hpt_count, hpt_sum)
+
+        # ── SYSTEM metrics (psutil / gc / threading) ────────────────────
+        try:
+            proc = self._process
+            cpu_times = proc.cpu_times()
+            mem_info = proc.memory_info()
+
+            _gauge("changes_worker_process_cpu_percent",
+                   "Process CPU usage as a percentage of one core.",
+                   proc.cpu_percent(interval=0))
+            _counter("changes_worker_process_cpu_user_seconds_total",
+                     "User-space CPU seconds consumed by the worker process.",
+                     f"{cpu_times.user:.3f}")
+            _counter("changes_worker_process_cpu_system_seconds_total",
+                     "Kernel-space CPU seconds consumed by the worker process.",
+                     f"{cpu_times.system:.3f}")
+            _gauge("changes_worker_process_memory_rss_bytes",
+                   "Resident Set Size of the worker process in bytes.",
+                   mem_info.rss)
+            _gauge("changes_worker_process_memory_vms_bytes",
+                   "Virtual Memory Size of the worker process in bytes.",
+                   mem_info.vms)
+            _gauge("changes_worker_process_memory_percent",
+                   "Percentage of system RAM used by the worker process.",
+                   f"{proc.memory_percent():.2f}")
+            _gauge("changes_worker_process_threads",
+                   "Number of OS threads used by the worker process.",
+                   proc.num_threads())
+            try:
+                _gauge("changes_worker_process_open_fds",
+                       "Number of open file descriptors.",
+                       proc.num_fds())
+            except AttributeError:
+                pass  # num_fds() not available on Windows
+
+            _gauge("changes_worker_python_threads_active",
+                   "Number of active Python threads.",
+                   threading.active_count())
+
+            # GC stats per generation
+            gc_counts = gc.get_count()
+            gc_stats = gc.get_stats()
+            for gen in range(3):
+                _gauge(f"changes_worker_python_gc_gen{gen}_count",
+                       f"Number of objects tracked by GC generation {gen}.",
+                       gc_counts[gen])
+                _counter(f"changes_worker_python_gc_gen{gen}_collections_total",
+                         f"Total GC collection runs for generation {gen}.",
+                         gc_stats[gen]["collections"])
+
+            # System-wide metrics
+            _gauge("changes_worker_system_cpu_count",
+                   "Number of logical CPU cores on the host.",
+                   psutil.cpu_count(logical=True))
+            _gauge("changes_worker_system_cpu_percent",
+                   "Host-wide CPU usage percentage.",
+                   psutil.cpu_percent(interval=0))
+
+            vmem = psutil.virtual_memory()
+            _gauge("changes_worker_system_memory_total_bytes",
+                   "Total physical memory on the host.", vmem.total)
+            _gauge("changes_worker_system_memory_available_bytes",
+                   "Available physical memory on the host.", vmem.available)
+            _gauge("changes_worker_system_memory_used_bytes",
+                   "Used physical memory on the host.", vmem.used)
+            _gauge("changes_worker_system_memory_percent",
+                   "Host memory usage percentage.", vmem.percent)
+
+            swap = psutil.swap_memory()
+            _gauge("changes_worker_system_swap_total_bytes",
+                   "Total swap space on the host.", swap.total)
+            _gauge("changes_worker_system_swap_used_bytes",
+                   "Used swap space on the host.", swap.used)
+
+            try:
+                disk = psutil.disk_usage("/")
+                _gauge("changes_worker_system_disk_total_bytes",
+                       "Total disk space.", disk.total)
+                _gauge("changes_worker_system_disk_used_bytes",
+                       "Used disk space.", disk.used)
+                _gauge("changes_worker_system_disk_free_bytes",
+                       "Free disk space.", disk.free)
+                _gauge("changes_worker_system_disk_percent",
+                       "Disk usage percentage.", disk.percent)
+            except OSError:
+                pass
+
+            net = psutil.net_io_counters()
+            if net:
+                _counter("changes_worker_system_network_bytes_sent_total",
+                         "Total bytes sent over all network interfaces.", net.bytes_sent)
+                _counter("changes_worker_system_network_bytes_recv_total",
+                         "Total bytes received over all network interfaces.", net.bytes_recv)
+                _counter("changes_worker_system_network_packets_sent_total",
+                         "Total packets sent over all network interfaces.", net.packets_sent)
+                _counter("changes_worker_system_network_packets_recv_total",
+                         "Total packets received over all network interfaces.", net.packets_recv)
+                _counter("changes_worker_system_network_errin_total",
+                         "Total incoming network errors.", net.errin)
+                _counter("changes_worker_system_network_errout_total",
+                         "Total outgoing network errors.", net.errout)
+
+            # Log directory size
+            log_dir = self._log_dir
+            if log_dir and os.path.isdir(log_dir):
+                total_log_bytes = 0
+                for dirpath, _, filenames in os.walk(log_dir):
+                    for fname in filenames:
+                        try:
+                            total_log_bytes += os.path.getsize(os.path.join(dirpath, fname))
+                        except OSError:
+                            pass
+                _gauge("changes_worker_log_dir_size_bytes",
+                       "Total size of the log directory in bytes.", total_log_bytes)
+
+            # CBL database size
+            cbl_dir = self._cbl_db_dir
+            if cbl_dir and os.path.exists(cbl_dir):
+                total_cbl_bytes = 0
+                if os.path.isdir(cbl_dir):
+                    for dirpath, _, filenames in os.walk(cbl_dir):
+                        for fname in filenames:
+                            try:
+                                total_cbl_bytes += os.path.getsize(os.path.join(dirpath, fname))
+                            except OSError:
+                                pass
+                else:
+                    try:
+                        total_cbl_bytes = os.path.getsize(cbl_dir)
+                    except OSError:
+                        pass
+                _gauge("changes_worker_cbl_db_size_bytes",
+                       "Total size of the Couchbase Lite database in bytes.", total_cbl_bytes)
+        except Exception:
+            pass  # system metrics are best-effort
 
         lines.append("")
         return "\n".join(lines)
-
-    # ------------------------------------------------------------------ #
-    # System / runtime metrics
-    # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _dir_size_bytes(path: str) -> int:
-        """Total size of all files under *path* in bytes."""
-        total = 0
-        if not os.path.isdir(path):
-            return 0
-        for dirpath, _, filenames in os.walk(path):
-            for f in filenames:
-                try:
-                    total += os.path.getsize(os.path.join(dirpath, f))
-                except OSError:
-                    pass
-        return total
-
-    def _render_system_metrics(self, lines: list[str], labels: str,
-                               _gauge, _counter) -> None:
-        proc = self._process
-
-        # -- Python process: CPU --
-        try:
-            cpu_pct = proc.cpu_percent(interval=0)
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            cpu_pct = 0.0
-        _gauge("changes_worker_process_cpu_percent",
-               "Process CPU usage percent (0-100 per core).", f"{cpu_pct:.1f}")
-
-        cpu_times = proc.cpu_times()
-        _counter("changes_worker_process_cpu_user_seconds_total",
-                 "Cumulative user CPU seconds.", f"{cpu_times.user:.3f}")
-        _counter("changes_worker_process_cpu_system_seconds_total",
-                 "Cumulative system CPU seconds.", f"{cpu_times.system:.3f}")
-
-        # -- Python process: memory --
-        mem = proc.memory_info()
-        _gauge("changes_worker_process_memory_rss_bytes",
-               "Resident set size in bytes.", mem.rss)
-        _gauge("changes_worker_process_memory_vms_bytes",
-               "Virtual memory size in bytes.", mem.vms)
-
-        try:
-            mem_pct = proc.memory_percent()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            mem_pct = 0.0
-        _gauge("changes_worker_process_memory_percent",
-               "Process memory usage as percent of total system RAM.", f"{mem_pct:.2f}")
-
-        # -- Python threads --
-        _gauge("changes_worker_process_threads",
-               "Number of threads used by the process.", proc.num_threads())
-        _gauge("changes_worker_python_threads_active",
-               "Number of active Python threading.Thread objects.", threading.active_count())
-
-        # -- Python GC --
-        gc_counts = gc.get_count()
-        _gauge("changes_worker_python_gc_gen0_count",
-               "Objects in GC generation 0.", gc_counts[0])
-        _gauge("changes_worker_python_gc_gen1_count",
-               "Objects in GC generation 1.", gc_counts[1])
-        _gauge("changes_worker_python_gc_gen2_count",
-               "Objects in GC generation 2.", gc_counts[2])
-
-        gc_stats = gc.get_stats()
-        for i, stat in enumerate(gc_stats):
-            _counter(f"changes_worker_python_gc_gen{i}_collections_total",
-                     f"Number of GC collections for generation {i}.", stat["collections"])
-
-        # -- Open file descriptors --
-        try:
-            _gauge("changes_worker_process_open_fds",
-                   "Number of open file descriptors.", proc.num_fds())
-        except AttributeError:
-            pass  # num_fds() not available on Windows
-
-        # -- System: CPU --
-        _gauge("changes_worker_system_cpu_count",
-               "Number of logical CPUs on the host.", psutil.cpu_count() or 0)
-        sys_cpu = psutil.cpu_percent(interval=0)
-        _gauge("changes_worker_system_cpu_percent",
-               "System-wide CPU usage percent.", f"{sys_cpu:.1f}")
-
-        # -- System: memory --
-        vm = psutil.virtual_memory()
-        _gauge("changes_worker_system_memory_total_bytes",
-               "Total physical memory in bytes.", vm.total)
-        _gauge("changes_worker_system_memory_available_bytes",
-               "Available physical memory in bytes.", vm.available)
-        _gauge("changes_worker_system_memory_used_bytes",
-               "Used physical memory in bytes.", vm.used)
-        _gauge("changes_worker_system_memory_percent",
-               "System memory usage percent.", f"{vm.percent:.1f}")
-
-        swap = psutil.swap_memory()
-        _gauge("changes_worker_system_swap_total_bytes",
-               "Total swap space in bytes.", swap.total)
-        _gauge("changes_worker_system_swap_used_bytes",
-               "Used swap space in bytes.", swap.used)
-
-        # -- System: disk --
-        try:
-            disk = psutil.disk_usage("/")
-            _gauge("changes_worker_system_disk_total_bytes",
-                   "Total disk space on root partition in bytes.", disk.total)
-            _gauge("changes_worker_system_disk_used_bytes",
-                   "Used disk space on root partition in bytes.", disk.used)
-            _gauge("changes_worker_system_disk_free_bytes",
-                   "Free disk space on root partition in bytes.", disk.free)
-            _gauge("changes_worker_system_disk_percent",
-                   "Disk usage percent on root partition.", f"{disk.percent:.1f}")
-        except OSError:
-            pass
-
-        # -- System: network I/O --
-        try:
-            net = psutil.net_io_counters()
-            _counter("changes_worker_system_network_bytes_sent_total",
-                     "Total bytes sent across all network interfaces.", net.bytes_sent)
-            _counter("changes_worker_system_network_bytes_recv_total",
-                     "Total bytes received across all network interfaces.", net.bytes_recv)
-            _counter("changes_worker_system_network_packets_sent_total",
-                     "Total packets sent across all network interfaces.", net.packets_sent)
-            _counter("changes_worker_system_network_packets_recv_total",
-                     "Total packets received across all network interfaces.", net.packets_recv)
-            _counter("changes_worker_system_network_errin_total",
-                     "Total incoming network errors.", net.errin)
-            _counter("changes_worker_system_network_errout_total",
-                     "Total outgoing network errors.", net.errout)
-        except Exception:
-            pass
-
-        # -- Storage: log directory --
-        log_bytes = self._dir_size_bytes(self._log_dir)
-        _gauge("changes_worker_log_dir_size_bytes",
-               "Total size of the log directory in bytes.", log_bytes)
-
-        # -- Storage: CBL database --
-        if self._cbl_db_dir:
-            cbl_bytes = self._dir_size_bytes(self._cbl_db_dir)
-            _gauge("changes_worker_cbl_db_size_bytes",
-                   "Total size of the Couchbase Lite database directory in bytes.", cbl_bytes)
-
 
 async def _metrics_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
     """aiohttp handler for GET /_metrics"""
@@ -413,6 +553,10 @@ async def _restart_handler(request: aiohttp.web.Request) -> aiohttp.web.Response
     restart_event: asyncio.Event | None = request.app.get("restart_event")
     if restart_event is None:
         return aiohttp.web.json_response({"error": "restart not supported"}, status=500)
+    # If offline, clear the offline flag so the restart loop resumes
+    offline_event: asyncio.Event | None = request.app.get("offline_event")
+    if offline_event is not None and offline_event.is_set():
+        offline_event.clear()
     log_event(logger, "info", "CONTROL", "restart requested via /_restart endpoint")
     restart_event.set()
     return aiohttp.web.json_response({"ok": True, "message": "restart signal sent"})
@@ -428,9 +572,43 @@ async def _shutdown_handler(request: aiohttp.web.Request) -> aiohttp.web.Respons
     return aiohttp.web.json_response({"ok": True, "message": "shutdown signal sent"})
 
 
+async def _offline_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """POST /_offline — pause the changes feed. Worker stays alive."""
+    offline_event: asyncio.Event | None = request.app.get("offline_event")
+    restart_event: asyncio.Event | None = request.app.get("restart_event")
+    if offline_event is None or restart_event is None:
+        return aiohttp.web.json_response({"error": "offline not supported"}, status=500)
+    if offline_event.is_set():
+        return aiohttp.web.json_response({"ok": True, "message": "already offline"})
+    log_event(logger, "info", "CONTROL", "offline requested via /_offline endpoint")
+    offline_event.set()
+    restart_event.set()  # break the current feed loop
+    return aiohttp.web.json_response({"ok": True, "message": "going offline"})
+
+
+async def _online_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """POST /_online — resume the changes feed with current config."""
+    offline_event: asyncio.Event | None = request.app.get("offline_event")
+    if offline_event is None:
+        return aiohttp.web.json_response({"error": "online not supported"}, status=500)
+    if not offline_event.is_set():
+        return aiohttp.web.json_response({"ok": True, "message": "already online"})
+    log_event(logger, "info", "CONTROL", "online requested via /_online endpoint")
+    offline_event.clear()
+    return aiohttp.web.json_response({"ok": True, "message": "going online"})
+
+
+async def _status_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """GET /_status — return worker online/offline state."""
+    offline_event: asyncio.Event | None = request.app.get("offline_event")
+    is_offline = offline_event.is_set() if offline_event is not None else False
+    return aiohttp.web.json_response({"online": not is_offline})
+
+
 async def start_metrics_server(metrics: MetricsCollector, host: str, port: int,
                                restart_event: asyncio.Event | None = None,
                                shutdown_event: asyncio.Event | None = None,
+                               offline_event: asyncio.Event | None = None,
                                ) -> aiohttp.web.AppRunner:
     """Start a lightweight HTTP server that serves /_metrics in Prometheus format."""
     from aiohttp import web
@@ -441,10 +619,15 @@ async def start_metrics_server(metrics: MetricsCollector, host: str, port: int,
         app["restart_event"] = restart_event
     if shutdown_event is not None:
         app["shutdown_event"] = shutdown_event
+    if offline_event is not None:
+        app["offline_event"] = offline_event
     app.router.add_get("/_metrics", _metrics_handler)
     app.router.add_get("/metrics", _metrics_handler)
     app.router.add_post("/_restart", _restart_handler)
     app.router.add_post("/_shutdown", _shutdown_handler)
+    app.router.add_post("/_offline", _offline_handler)
+    app.router.add_post("/_online", _online_handler)
+    app.router.add_get("/_status", _status_handler)
 
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
@@ -460,20 +643,28 @@ async def start_metrics_server(metrics: MetricsCollector, host: str, port: int,
 # ---------------------------------------------------------------------------
 
 def load_config(path: str | None = None) -> dict:
+    """Load config from CBL (source of truth) or fall back to config.json.
+
+    When CBL is available, config.json is only used as a seed on the very
+    first startup.  After that, all config changes go through CBL via the
+    Admin UI.  To re-seed from config.json, delete the CBL volume.
+    """
     if USE_CBL:
         store = CBLStore()
         cfg = store.load_config()
         if cfg:
+            logger.info("Config loaded from CBL (config.json is ignored)")
             ic(cfg)
             return cfg
-        # First run: import from file
+        # First run: seed from file → CBL
         if path:
             with open(path) as f:
                 cfg = json.load(f)
             store.save_config(cfg)
+            logger.info("First start — seeded config from %s into CBL", path)
             ic(cfg)
             return cfg
-    # Fallback: read from file directly
+    # Fallback: no CBL — read from file directly
     with open(path or "config.json") as f:
         cfg = json.load(f)
     ic(cfg)
@@ -853,6 +1044,11 @@ class Checkpoint:
 
         ic(self._uuid, self._local_doc_id, raw)
 
+        self._metrics = None
+
+    def set_metrics(self, metrics: "MetricsCollector | None") -> None:
+        self._metrics = metrics
+
     @property
     def local_doc_path(self) -> str:
         """Returns the REST path segment: _local/checkpoint-{uuid}"""
@@ -883,6 +1079,8 @@ class Checkpoint:
                       "loaded checkpoint from Sync Gateway",
                       operation="SELECT", seq=self._seq,
                       doc_id=self._local_doc_id, storage="sg")
+            if self._metrics:
+                self._metrics.inc("checkpoint_loads_total")
         except ClientHTTPError as exc:
             if exc.status == 404:
                 log_event(logger, "info", "CHECKPOINT",
@@ -894,11 +1092,17 @@ class Checkpoint:
                           "checkpoint load fell back to local storage",
                           operation="SELECT", status=exc.status, storage="fallback")
                 self._seq = self._load_fallback()
+                if self._metrics:
+                    self._metrics.inc("checkpoint_loads_total")
+                    self._metrics.inc("checkpoint_load_errors_total")
         except Exception as exc:
             log_event(logger, "warn", "CHECKPOINT",
                       "checkpoint load fell back to local storage: %s" % exc,
                       operation="SELECT", storage="fallback")
             self._seq = self._load_fallback()
+            if self._metrics:
+                self._metrics.inc("checkpoint_loads_total")
+                self._metrics.inc("checkpoint_load_errors_total")
 
         return self._seq
 
@@ -937,6 +1141,8 @@ class Checkpoint:
                           "checkpoint save fell back to local storage: %s" % exc,
                           operation="UPDATE", seq=seq, storage="fallback")
                 self._save_fallback(seq)
+                if self._metrics:
+                    self._metrics.inc("checkpoint_save_errors_total")
 
     # -- Local file fallback ---------------------------------------------------
 
@@ -981,6 +1187,10 @@ class RetryableHTTP:
         self._backoff_base = retry_cfg.get("backoff_base_seconds", 1)
         self._backoff_max = retry_cfg.get("backoff_max_seconds", 60)
         self._retry_statuses = set(retry_cfg.get("retry_on_status", [500, 502, 503, 504]))
+        self._metrics = None
+
+    def set_metrics(self, metrics: "MetricsCollector | None") -> None:
+        self._metrics = metrics
 
     async def request(self, method: str, url: str, **kwargs) -> aiohttp.ClientResponse:
         last_exc: Exception | None = None
@@ -996,6 +1206,8 @@ class RetryableHTTP:
                               http_method=method, url=url,
                               status=resp.status, attempt=attempt)
                     resp.release()
+                    if self._metrics:
+                        self._metrics.inc("retries_total")
                 elif 400 <= resp.status < 500:
                     log_event(logger, "error", "HTTP",
                               "client error",
@@ -1015,6 +1227,8 @@ class RetryableHTTP:
                           "connection error: %s" % exc,
                           http_method=method, url=url, attempt=attempt)
                 last_exc = exc
+                if self._metrics:
+                    self._metrics.inc("retries_total")
 
             delay = min(self._backoff_base * (2 ** (attempt - 1)), self._backoff_max)
             log_event(logger, "info", "RETRY",
@@ -1022,6 +1236,8 @@ class RetryableHTTP:
                       delay_seconds=delay, attempt=attempt)
             await asyncio.sleep(delay)
 
+        if self._metrics:
+            self._metrics.inc("retry_exhausted_total")
         raise ConnectionError(f"All {self._max_retries} retries exhausted for {method} {url}") from last_exc
 
 
@@ -1098,6 +1314,7 @@ async def _fetch_docs_bulk_get(http: RetryableHTTP, base_url: str, rows: list[di
     url = f"{base_url}/_bulk_get?revs=false"
     payload = {"docs": docs_req}
     ic(url, len(docs_req))
+    t0 = time.monotonic()
     resp = await http.request("POST", url, json=payload, auth=auth, headers={**headers, "Content-Type": "application/json"})
     # _bulk_get returns multipart/mixed or JSON depending on SG version
     ct = resp.content_type or ""
@@ -1124,6 +1341,9 @@ async def _fetch_docs_bulk_get(http: RetryableHTTP, base_url: str, rows: list[di
                     results.append(json.loads(line))
                 except json.JSONDecodeError:
                     pass
+    if metrics:
+        metrics.inc("doc_fetch_requests_total")
+        metrics.record_doc_fetch_time(time.monotonic() - t0)
     return results
 
 
@@ -1140,6 +1360,7 @@ async def _fetch_docs_individually(http: RetryableHTTP, base_url: str, rows: lis
     sem = asyncio.Semaphore(max_concurrent)
     results: list[dict] = []
     lock = asyncio.Lock()
+    t0 = time.monotonic()
 
     async def _get_one(row: dict) -> None:
         doc_id = row.get("id", "")
@@ -1161,10 +1382,15 @@ async def _fetch_docs_individually(http: RetryableHTTP, base_url: str, rows: lis
                     results.append(doc)
             except Exception as exc:
                 logger.warning("Failed to fetch doc %s: %s", doc_id, exc)
+                if metrics:
+                    metrics.inc("doc_fetch_errors_total")
 
     tasks = [asyncio.create_task(_get_one(r)) for r in rows]
     ic(f"Fetching {len(tasks)} docs individually (Edge Server, concurrency={max_concurrent})")
     await asyncio.gather(*tasks)
+    if metrics:
+        metrics.inc("doc_fetch_requests_total")
+        metrics.record_doc_fetch_time(time.monotonic() - t0)
     return results
 
 
@@ -1234,6 +1460,7 @@ async def _process_changes_batch(
     Process a batch of _changes results: filter, fetch docs, forward to output,
     checkpoint.  Returns (new_since, output_failed).
     """
+    batch_t0 = time.monotonic()
     sequential = proc_cfg.get("sequential", False)
 
     if metrics:
@@ -1306,6 +1533,8 @@ async def _process_changes_batch(
 
     async def process_one(change: dict) -> dict:
         async with semaphore:
+            if metrics:
+                metrics.inc("active_tasks")
             doc_id = change.get("id", "")
             if feed_cfg.get("include_docs"):
                 doc = change.get("doc", change)
@@ -1331,6 +1560,8 @@ async def _process_changes_batch(
                 log_event(logger, "warn", "OUTPUT", "document delivery failed",
                           operation=op, doc_id=doc_id,
                           status=result.get("status"))
+            if metrics:
+                metrics.set("active_tasks", max(0, metrics.active_tasks - 1))
             return result
 
     if every_n_docs > 0 and sequential:
@@ -1405,6 +1636,10 @@ async def _process_changes_batch(
     output.log_stats()
 
     if output_failed:
+        if metrics:
+            metrics.record_batch_processing_time(time.monotonic() - batch_t0)
+            metrics.inc("batches_total")
+            metrics.inc("batches_failed_total")
         return since, True
 
     if not (every_n_docs > 0 and sequential):
@@ -1413,6 +1648,10 @@ async def _process_changes_batch(
         if metrics:
             metrics.inc("checkpoint_saves_total")
             metrics.set("checkpoint_seq", since)
+
+    if metrics:
+        metrics.record_batch_processing_time(time.monotonic() - batch_t0)
+        metrics.inc("batches_total")
 
     return since, False
 
@@ -1456,13 +1695,15 @@ async def _catch_up_normal(
         ic(changes_url, params, since, "catch-up")
 
         try:
+            t0_changes = time.monotonic()
             resp = await http.request("GET", changes_url, params=params,
-                                      auth=basic_auth, headers=auth_headers,
-                                      timeout=changes_http_timeout)
+                                       auth=basic_auth, headers=auth_headers,
+                                       timeout=changes_http_timeout)
             raw_body = await resp.read()
             body = json.loads(raw_body)
             if metrics:
                 metrics.inc("bytes_received_total", len(raw_body))
+                metrics.record_changes_request_time(time.monotonic() - t0_changes)
             resp.release()
             failure_count = 0
         except (ClientHTTPError, RedirectHTTPError) as exc:
@@ -1566,6 +1807,8 @@ async def _consume_continuous_stream(
             raise
 
         logger.info("CONTINUOUS stream: connected, listening for changes")
+        if metrics and failure_count > 0:
+            metrics.inc("stream_reconnects_total")
         failure_count = 0
 
         try:
@@ -1584,8 +1827,12 @@ async def _consume_continuous_stream(
 
                 try:
                     row = json.loads(line)
+                    if metrics:
+                        metrics.inc("stream_messages_total")
                 except json.JSONDecodeError:
                     logger.warning("Continuous stream: unparseable line: %s", line[:200])
+                    if metrics:
+                        metrics.inc("stream_parse_errors_total")
                     continue
 
                 row_seq = str(row.get("seq", since))
@@ -1702,6 +1949,8 @@ async def _consume_websocket_stream(
             continue
 
         logger.info("WEBSOCKET stream: connected, sending payload")
+        if metrics and failure_count > 0:
+            metrics.inc("stream_reconnects_total")
         failure_count = 0
 
         try:
@@ -1721,8 +1970,12 @@ async def _consume_websocket_stream(
 
                     try:
                         parsed = json.loads(msg.data)
+                        if metrics:
+                            metrics.inc("stream_messages_total")
                     except json.JSONDecodeError:
                         logger.warning("WebSocket: unparseable message (length=%d)", len(msg.data))
+                        if metrics:
+                            metrics.inc("stream_parse_errors_total")
                         continue
 
                     # SG may send a single dict or an array of change rows
@@ -1824,6 +2077,8 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
 
     channels = feed_cfg.get("channels", [])
     checkpoint = Checkpoint(cfg.get("checkpoint", {}), gw, channels)
+    if metrics:
+        checkpoint.set_metrics(metrics)
 
     # Session-level timeout is kept loose; the _changes request uses its own.
     timeout = aiohttp.ClientTimeout(total=None, sock_read=None)
@@ -1842,6 +2097,8 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
 
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         http = RetryableHTTP(session, retry_cfg)
+        if metrics:
+            http.set_metrics(metrics)
 
         output_mode = out_cfg.get("mode", "stdout")
         db_output = None  # track DB forwarder for cleanup
@@ -1975,6 +2232,7 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
                 ic(changes_url, params, since)
 
                 try:
+                    t0_changes = time.monotonic()
                     resp = await http.request("GET", changes_url, params=params,
                                               auth=basic_auth, headers=auth_headers,
                                               timeout=changes_http_timeout)
@@ -1982,6 +2240,7 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
                     body = json.loads(raw_body)
                     if metrics:
                         metrics.inc("bytes_received_total", len(raw_body))
+                        metrics.record_changes_request_time(time.monotonic() - t0_changes)
                     resp.release()
                 except (ClientHTTPError, RedirectHTTPError) as exc:
                     logger.error("Non-retryable error polling _changes: %s", exc)
@@ -2162,16 +2421,16 @@ def main() -> None:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
 
-    # Run one-time migrations if CBL is available
-    if USE_CBL:
-        migrate_files_to_cbl(args.config)
-        migrate_default_to_collections()
-
     cfg = load_config(args.config)
     _ensure_full_logging_config(cfg)
     configure_logging(cfg.get("logging", {}))
 
     log_event(logger, "info", "PROCESSING", "changes_worker v%s starting (CBL=%s)" % (__version__, USE_CBL))
+
+    # Run migrations after logging is configured so we can see output
+    if USE_CBL:
+        migrate_files_to_cbl(args.config)
+        migrate_default_to_collections()
 
     # ── Startup config validation ────────────────────────────────────────
     src, warnings, errors = validate_config(cfg)
@@ -2206,6 +2465,7 @@ def main() -> None:
 
     shutdown_event = asyncio.Event()
     restart_event = asyncio.Event()
+    offline_event = asyncio.Event()
 
     def _signal_handler() -> None:
         logger.info("Shutdown signal received")
@@ -2233,13 +2493,13 @@ def main() -> None:
 
     if metrics_cfg.get("enabled", False):
         database = cfg.get("gateway", {}).get("database", "")
-        metrics = MetricsCollector(src, database)
-        log_cfg = cfg.get("logging", {}).get("file", {})
-        if log_cfg.get("path"):
-            metrics._log_dir = str(Path(log_cfg["path"]).parent)
-        cbl_cfg = cfg.get("couchbase_lite", {})
-        if cbl_cfg.get("db_dir"):
-            metrics._cbl_db_dir = cbl_cfg["db_dir"]
+        log_dir = cfg.get("logging", {}).get("file", {}).get("path", "logs/changes_worker.log")
+        log_dir = os.path.dirname(log_dir) or "logs"
+        cbl_db_dir = ""
+        if USE_CBL:
+            from cbl_store import CBL_DB_DIR, CBL_DB_NAME
+            cbl_db_dir = os.path.join(CBL_DB_DIR, f"{CBL_DB_NAME}.cblite2")
+        metrics = MetricsCollector(src, database, log_dir=log_dir, cbl_db_dir=cbl_db_dir)
 
     loop = asyncio.new_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -2252,7 +2512,8 @@ def main() -> None:
             metrics_runner = loop.run_until_complete(
                 start_metrics_server(metrics, metrics_host, metrics_port,
                                      restart_event=restart_event,
-                                     shutdown_event=shutdown_event)
+                                     shutdown_event=shutdown_event,
+                                     offline_event=offline_event)
             )
 
         # ── Restart loop: reload config & re-enter poll_changes ──────
@@ -2268,6 +2529,16 @@ def main() -> None:
 
             if shutdown_event.is_set():
                 break
+
+            # If offline, wait until online or shutdown
+            if offline_event.is_set():
+                log_event(logger, "info", "CONTROL", "worker is offline – waiting for /_online signal")
+                while offline_event.is_set() and not shutdown_event.is_set():
+                    loop.run_until_complete(asyncio.sleep(0.5))
+                if shutdown_event.is_set():
+                    break
+                restart_event.clear()
+                log_event(logger, "info", "CONTROL", "worker is back online")
 
             # restart_event was set — reload config and restart
             log_event(logger, "info", "CONTROL", "reloading config for restart")

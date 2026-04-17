@@ -1,0 +1,212 @@
+/* ── Sidebar Layout — uses DaisyUI theme tokens ──────────── */
+:root {
+  --sidebar-width: 220px;
+  --sidebar-collapsed-width: 56px;
+  --sidebar-transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Container */
+.sidebar {
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  width: var(--sidebar-width);
+  background: oklch(var(--color-base-100));
+  color: oklch(var(--color-base-content));
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+  transition: width var(--sidebar-transition);
+  overflow: hidden;
+  border-right: 1px solid oklch(var(--color-base-300));
+}
+.sidebar.collapsed { width: var(--sidebar-collapsed-width); }
+
+/* Push page content right */
+.sidebar-main {
+  margin-left: var(--sidebar-width);
+  transition: margin-left var(--sidebar-transition);
+  min-height: 100vh;
+}
+.sidebar.collapsed ~ .sidebar-main {
+  margin-left: var(--sidebar-collapsed-width);
+}
+
+/* Brand / logo — shows logo + text in expanded, only logo in collapsed */
+.sidebar-brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 12px;
+  border-bottom: 1px solid oklch(var(--color-base-300));
+  flex-shrink: 0; min-height: 56px;
+}
+.sidebar-brand img { width: 28px; height: 28px; flex-shrink: 0; }
+.sidebar-brand-text {
+  font-size: 14px; font-weight: 700;
+  white-space: nowrap; overflow: hidden;
+  transition: opacity var(--sidebar-transition), width var(--sidebar-transition);
+}
+.sidebar.collapsed .sidebar-brand-text { opacity: 0; width: 0; }
+
+/* Toggle button — visible only in expanded mode, positioned at top-right */
+.sidebar-toggle {
+  position: absolute; top: 14px; right: 8px;
+  background: none; border: none;
+  color: oklch(var(--color-base-content));
+  cursor: pointer; padding: 4px; opacity: 0.5;
+  transition: opacity var(--sidebar-transition), transform var(--sidebar-transition);
+  z-index: 2;
+  display: flex; align-items: center; justify-content: center;
+}
+.sidebar-toggle:hover { opacity: 1; }
+.sidebar-toggle img { width: 18px; height: 18px; transition: transform var(--sidebar-transition); }
+/* In collapsed mode, hide the hamburger — user clicks the logo area to expand */
+.sidebar.collapsed .sidebar-toggle { opacity: 0; pointer-events: none; }
+
+/* Clickable expand zone — the entire brand area becomes clickable when collapsed */
+.sidebar.collapsed .sidebar-brand { cursor: pointer; }
+
+/* Nav list */
+.sidebar-nav {
+  flex: 1; display: flex; flex-direction: column;
+  padding: 10px 6px; gap: 1px;
+  overflow-y: auto; overflow-x: hidden;
+}
+
+/* Section labels */
+.sidebar-section {
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  color: oklch(var(--color-base-content));
+  opacity: 0.4;
+  padding: 10px 10px 4px;
+  white-space: nowrap; overflow: hidden;
+  transition: opacity var(--sidebar-transition);
+}
+.sidebar.collapsed .sidebar-section { opacity: 0; height: 0; padding: 0; margin: 0; }
+
+/* Link items */
+.sidebar-link {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: 6px;
+  text-decoration: none;
+  color: oklch(var(--color-base-content));
+  font-size: 13px; white-space: nowrap;
+  transition: background 0.15s;
+  position: relative;
+}
+.sidebar-link:hover {
+  background: oklch(var(--color-base-200));
+}
+.sidebar-link.active {
+  background: oklch(var(--color-primary) / 0.12);
+  color: oklch(var(--color-primary));
+  font-weight: 600;
+}
+.sidebar-link.active::before {
+  content: ''; position: absolute;
+  left: -6px; top: 6px; bottom: 6px; width: 3px;
+  background: oklch(var(--color-primary));
+  border-radius: 0 3px 3px 0;
+}
+
+/* Icon container */
+.sidebar-link-icon {
+  width: 20px; height: 20px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.sidebar-link-icon img {
+  width: 18px; height: 18px;
+  opacity: 0.7;
+}
+.sidebar-link.active .sidebar-link-icon img { opacity: 1; }
+
+/* SVG icons use stroke="currentColor" which defaults to black in <img>;
+   invert them in dark mode so they render white on the dark sidebar. */
+[data-theme="dark"] .sidebar-link-icon img { filter: invert(1); }
+
+/* Label text — hidden smoothly when collapsed */
+.sidebar-link-text {
+  overflow: hidden;
+  transition: opacity var(--sidebar-transition), width var(--sidebar-transition);
+}
+.sidebar.collapsed .sidebar-link-text { opacity: 0; width: 0; }
+
+/* Collapsed tooltip on hover */
+.sidebar.collapsed .sidebar-link:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(var(--sidebar-collapsed-width) - 2px);
+  top: 50%; transform: translateY(-50%);
+  background: oklch(var(--color-neutral));
+  color: oklch(var(--color-neutral-content));
+  padding: 5px 10px; border-radius: 6px;
+  font-size: 12px; white-space: nowrap; z-index: 100;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  pointer-events: none;
+}
+
+/* Divider */
+.sidebar-divider {
+  height: 1px;
+  background: oklch(var(--color-base-300));
+  margin: 6px 10px;
+  flex-shrink: 0;
+}
+
+/* Footer */
+.sidebar-footer {
+  padding: 10px 12px;
+  border-top: 1px solid oklch(var(--color-base-300));
+  flex-shrink: 0;
+}
+.sidebar-theme-toggle {
+  font-size: 12px;
+  color: oklch(var(--color-base-content));
+  opacity: 0.7;
+}
+.sidebar-theme-btn {
+  display: flex; align-items: center; gap: 8px;
+  background: none; border: none; padding: 6px 4px;
+  color: inherit; cursor: pointer; border-radius: 6px;
+  white-space: nowrap; overflow: hidden;
+  transition: background 0.15s;
+}
+.sidebar-theme-btn:hover { background: oklch(var(--color-base-200)); }
+.sidebar-theme-label {
+  transition: opacity var(--sidebar-transition), width var(--sidebar-transition);
+}
+.sidebar.collapsed .sidebar-theme-label { opacity: 0; width: 0; overflow: hidden; }
+.sidebar.collapsed .sidebar-controls .tooltip { display: none; }
+.sidebar-version {
+  margin-top: 6px; font-size: 10px; opacity: 0.35;
+  white-space: nowrap; overflow: hidden;
+  transition: opacity var(--sidebar-transition);
+}
+.sidebar.collapsed .sidebar-version { opacity: 0; }
+
+/* Mobile */
+@media (max-width: 768px) {
+  .sidebar {
+    transform: translateX(-100%);
+    width: var(--sidebar-width) !important;
+  }
+  .sidebar.mobile-open { transform: translateX(0); }
+  .sidebar-main { margin-left: 0 !important; }
+  .sidebar-mobile-toggle { display: flex !important; }
+  .sidebar.collapsed .sidebar-toggle { opacity: 0.5; pointer-events: auto; }
+  .sidebar-overlay.active {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.4); z-index: 40;
+  }
+}
+.sidebar-mobile-toggle {
+  display: none;
+  position: fixed; top: 10px; left: 10px; z-index: 60;
+  background: oklch(var(--color-base-100));
+  color: oklch(var(--color-base-content));
+  border: 1px solid oklch(var(--color-base-300));
+  border-radius: 6px; padding: 6px 8px; cursor: pointer;
+  align-items: center; justify-content: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+}
+.sidebar-mobile-toggle img { width: 18px; height: 18px; }
+.sidebar-overlay { display: none; }

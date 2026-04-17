@@ -7,6 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
   <script src="/static/js/tailwind.js"></script>
   <script>
     (function(){
@@ -21,30 +22,11 @@
     .step-card.active { display: block; }
   </style>
 </head>
-<body class="min-h-screen flex flex-col bg-base-200">
+<body class="min-h-screen bg-base-200">
+  <div id="sidebar-root"></div>
 
-  <!-- Navbar -->
-  <nav class="navbar bg-base-100 shadow-sm px-4">
-    <div class="flex-1">
-      <a href="/" class="text-xl font-bold">Changes Worker Admin</a>
-    </div>
-    <div class="flex-none">
-      <ul class="menu menu-horizontal px-1 gap-1">
-        <li><a href="/">Dashboard</a></li>
-        <li><a href="/config">Config</a></li>
-        <li><a href="/schema">Schema Mappings</a></li>
-        <li><a href="/transforms">Transforms</a></li>
-        <li><a href="/wizard" class="active">Wizard</a></li>
-      </ul>
-      <label class="label cursor-pointer gap-2 ml-4">
-        <span class="label-text text-sm">Dark</span>
-        <input type="checkbox" id="themeToggle" class="toggle toggle-sm" />
-        <span class="label-text text-sm">Light</span>
-      </label>
-    </div>
-  </nav>
-
-  <main class="flex-1 container mx-auto p-6 max-w-5xl">
+  <div class="sidebar-main">
+  <main class="container mx-auto p-6 max-w-5xl">
 
     <!-- Step Indicators -->
     <ul class="steps steps-horizontal w-full mb-6">
@@ -133,8 +115,8 @@
 
           <!-- Test buttons -->
           <div class="flex items-center gap-3 mt-4">
-            <button class="btn btn-primary btn-sm" id="btnTestSource" onclick="testSource()">🔌 Test Connection</button>
-            <button class="btn btn-accent btn-sm" id="btnFetchSample" onclick="fetchSample()">🎲 Fetch Random Sample</button>
+            <button class="btn btn-primary btn-sm" id="btnTestSource" onclick="testSource()">Test Connection</button>
+            <button class="btn btn-accent btn-sm" id="btnFetchSample" onclick="fetchSample()">Fetch Random Sample</button>
             <span id="srcStatus" class="text-sm"></span>
           </div>
 
@@ -243,7 +225,12 @@
               </div>
               <div>
                 <label class="label label-text text-xs font-semibold">Host</label>
-                <input id="outDbHost" type="text" class="input input-bordered input-sm w-full" value="localhost" />
+                <select id="outDbHostSelect" class="select select-bordered select-sm w-full" onchange="onOutDbHostChange()">
+                  <option value="host.docker.internal" selected>host.docker.internal</option>
+                  <option value="localhost">localhost</option>
+                  <option value="__custom__">Custom…</option>
+                </select>
+                <input id="outDbHost" type="text" class="input input-bordered input-sm w-full mt-1 hidden" value="host.docker.internal" placeholder="e.g. 192.168.1.100 or db.example.com" />
               </div>
               <div>
                 <label class="label label-text text-xs font-semibold">Port</label>
@@ -273,8 +260,8 @@
               </div>
             </div>
             <div class="flex items-center gap-3 mt-4">
-              <button class="btn btn-primary btn-sm" id="btnTestDb" onclick="testDbConn()">🔌 Test Connection</button>
-              <button class="btn btn-success btn-sm" id="btnFetchTables" onclick="fetchDbTables()">📥 Fetch Tables</button>
+              <button class="btn btn-primary btn-sm" id="btnTestDb" onclick="testDbConn()">Test Connection</button>
+              <button class="btn btn-success btn-sm" id="btnFetchTables" onclick="fetchDbTables()">Fetch Tables</button>
               <span id="outDbStatus" class="text-sm"></span>
             </div>
             <!-- Fetched tables list -->
@@ -375,8 +362,8 @@
 
           <!-- Save button -->
           <div class="flex items-center gap-3 mt-4">
-            <button class="btn btn-success" onclick="saveWizardConfig()">💾 Save &amp; Apply Config</button>
-            <button class="btn btn-secondary btn-sm" onclick="saveWizardMapping()">💾 Save Mapping</button>
+            <button class="btn btn-success" onclick="saveWizardConfig()">Save &amp; Apply Config</button>
+            <button class="btn btn-secondary btn-sm" onclick="saveWizardMapping()">Save Mapping</button>
             <span id="wizSaveStatus" class="text-sm"></span>
           </div>
         </div>
@@ -389,22 +376,7 @@
       <button class="btn btn-primary" id="btnNext" onclick="nextStep()">Next →</button>
     </div>
 
-  </main>
-
-  <footer class="footer footer-center p-4 bg-base-100 text-base-content">
-    <p>Changes Worker v1.4.0</p>
-  </footer>
-
 <script>
-// ── Theme toggle ─────────────────────────────────────────────
-var themeToggle = document.getElementById('themeToggle');
-themeToggle.checked = (localStorage.getItem('cw_theme') || 'dark') === 'light';
-themeToggle.addEventListener('change', function() {
-  var theme = themeToggle.checked ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', theme);
-  localStorage.setItem('cw_theme', theme);
-});
-
 // ── Utility ──────────────────────────────────────────────────
 function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
@@ -505,10 +477,10 @@ async function testSource() {
     });
     var data = await res.json();
     if (data.error) {
-      status.textContent = '❌ ' + (data.detail || data.error);
+      status.textContent = (data.detail || data.error);
       status.className = 'text-sm text-error';
     } else {
-      status.textContent = '✅ Connected! Got ' + (data.pool_size || 1) + ' docs';
+      status.textContent = 'Connected! Got ' + (data.pool_size || 1) + ' docs';
       status.className = 'text-sm text-success';
       if (data.doc) {
         wizardSampleDoc = data.doc;
@@ -516,7 +488,7 @@ async function testSource() {
       }
     }
   } catch (e) {
-    status.textContent = '❌ ' + e.message;
+    status.textContent = e.message;
     status.className = 'text-sm text-error';
   }
   btn.classList.remove('loading');
@@ -536,16 +508,16 @@ async function fetchSample() {
     });
     var data = await res.json();
     if (data.error) {
-      status.textContent = '❌ ' + (data.detail || data.error);
+      status.textContent = (data.detail || data.error);
       status.className = 'text-sm text-error';
     } else {
       wizardSampleDoc = data.doc;
       showSampleDoc(data.doc);
-      status.textContent = '🎲 Random pick from ' + (data.pool_size || 1) + ' docs';
+      status.textContent = 'Random pick from ' + (data.pool_size || 1) + ' docs';
       status.className = 'text-sm text-success';
     }
   } catch (e) {
-    status.textContent = '❌ ' + e.message;
+    status.textContent = e.message;
     status.className = 'text-sm text-error';
   }
   btn.classList.remove('loading');
@@ -599,14 +571,14 @@ async function testOutput() {
     });
     var data = await res.json();
     if (data.ok) {
-      status.textContent = '✅ Reachable! HTTP ' + (data.status || '200');
+      status.textContent = 'Reachable! HTTP ' + (data.status || '200');
       status.className = 'text-sm text-success';
     } else {
-      status.textContent = '❌ ' + (data.error || 'Unreachable');
+      status.textContent = (data.error || 'Unreachable');
       status.className = 'text-sm text-error';
     }
   } catch (e) {
-    status.textContent = '❌ ' + e.message;
+    status.textContent = e.message;
     status.className = 'text-sm text-error';
   }
   btn.classList.remove('loading');
@@ -642,10 +614,23 @@ function onOutDbTypeChange() {
   else document.getElementById('outDbSchema').value = '';
 }
 
+function onOutDbHostChange() {
+  var sel = document.getElementById('outDbHostSelect');
+  var input = document.getElementById('outDbHost');
+  if (sel.value === '__custom__') {
+    input.classList.remove('hidden');
+    input.value = '';
+    input.focus();
+  } else {
+    input.classList.add('hidden');
+    input.value = sel.value;
+  }
+}
+
 function getOutDbConfig() {
   return {
     db_type: document.getElementById('outDbType').value,
-    host: document.getElementById('outDbHost').value.trim(),
+    host: document.getElementById('outDbHost').value.trim() || document.getElementById('outDbHostSelect').value,
     port: parseInt(document.getElementById('outDbPort').value) || 5432,
     database: document.getElementById('outDbName').value.trim(),
     user: document.getElementById('outDbUser').value.trim(),
@@ -669,14 +654,14 @@ async function testDbConn() {
     });
     var data = await res.json();
     if (data.ok) {
-      status.textContent = '✅ Connected! ' + (data.version || '').substring(0, 60);
+      status.textContent = 'Connected! ' + (data.version || '').substring(0, 60);
       status.className = 'text-sm text-success';
     } else {
-      status.textContent = '❌ ' + (data.error || 'Connection failed');
+      status.textContent = (data.error || 'Connection failed');
       status.className = 'text-sm text-error';
     }
   } catch (e) {
-    status.textContent = '❌ ' + e.message;
+    status.textContent = e.message;
     status.className = 'text-sm text-error';
   }
   btn.classList.remove('loading');
@@ -696,18 +681,18 @@ async function fetchDbTables() {
     });
     var data = await res.json();
     if (data.error) {
-      status.textContent = '❌ ' + (data.detail || data.error);
+      status.textContent = (data.detail || data.error);
       status.className = 'text-sm text-error';
       btn.classList.remove('loading');
       return;
     }
     wizIntrospectedTables = data.tables || [];
-    status.textContent = '✅ Found ' + wizIntrospectedTables.length + ' table(s)';
+    status.textContent = 'Found ' + wizIntrospectedTables.length + ' table(s)';
     status.className = 'text-sm text-success';
     renderWizDbTableList(wizIntrospectedTables);
     document.getElementById('outDbTableList').classList.remove('hidden');
   } catch (e) {
-    status.textContent = '❌ ' + e.message;
+    status.textContent = e.message;
     status.className = 'text-sm text-error';
   }
   btn.classList.remove('loading');
@@ -992,7 +977,7 @@ function wizSaveCurrentTableEdits() {
     t.foreign_key.column = document.getElementById('wizTblFKCol').value.trim();
     t.foreign_key.references = document.getElementById('wizTblFKRef').value.trim();
     t.source_array = document.getElementById('wizTblSourceArray').value.trim();
-    t.replace_strategy = document.getElementById('wizTblReplaceStrategy').value.trim();
+    t.replace_strategy = document.getElementById('wizTblReplaceStrategy').value;
     t.on_delete = document.getElementById('wizTblOnDelete').value;
     t.columns = {};
     document.querySelectorAll('.wiz-col-row').forEach(function(row) {
@@ -1030,7 +1015,12 @@ function wizRenderTableEditor() {
       '<div><label class="label label-text text-xs">Source Array</label><input id="wizTblSourceArray" type="text" class="input input-bordered input-sm w-full" placeholder="$.items" value="' + esc(t.source_array) + '" oninput="updateConfigPreview()"></div>' +
       '<div><label class="label label-text text-xs">FK Column</label><input id="wizTblFKCol" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.column) + '" oninput="updateConfigPreview()"></div>' +
       '<div><label class="label label-text text-xs">FK References</label><input id="wizTblFKRef" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.references) + '" oninput="updateConfigPreview()"></div>' +
-      '<div><label class="label label-text text-xs">Replace Strategy</label><input id="wizTblReplaceStrategy" type="text" class="input input-bordered input-sm w-full" placeholder="delete_insert" value="' + esc(t.replace_strategy) + '" oninput="updateConfigPreview()"></div>' +
+      '<div><label class="label label-text text-xs">Replace Strategy</label>' +
+        '<select id="wizTblReplaceStrategy" class="select select-bordered select-sm w-full" onchange="updateConfigPreview()">' +
+          '<option value=""' + (!t.replace_strategy ? ' selected' : '') + '>-- none --</option>' +
+          '<option value="delete_insert"' + (t.replace_strategy === 'delete_insert' ? ' selected' : '') + '>delete_insert</option>' +
+          '<option value="merge"' + (t.replace_strategy === 'merge' ? ' selected' : '') + '>merge</option>' +
+        '</select></div>' +
     '</div>' +
     '<div class="divider my-1 text-xs opacity-60">Column Mappings</div>' +
     '<div class="flex gap-1 mb-1">' +
@@ -1200,14 +1190,14 @@ async function saveWizardConfig() {
     });
     var data = await res.json();
     if (data.ok) {
-      status.textContent = '✅ Config saved!';
+      status.textContent = 'Config saved!';
       status.className = 'text-sm text-success';
     } else {
-      status.textContent = '❌ ' + (data.error || 'Save failed');
+      status.textContent = (data.error || 'Save failed');
       status.className = 'text-sm text-error';
     }
   } catch (e) {
-    status.textContent = '❌ ' + e.message;
+    status.textContent = e.message;
     status.className = 'text-sm text-error';
   }
 }
@@ -1227,14 +1217,14 @@ async function saveWizardMapping() {
     });
     var data = await res.json();
     if (data.ok) {
-      status.textContent = '✅ Mapping saved as ' + filename;
+      status.textContent = 'Mapping saved as ' + filename;
       status.className = 'text-sm text-success';
     } else {
-      status.textContent = '❌ ' + (data.error || 'Save failed');
+      status.textContent = (data.error || 'Save failed');
       status.className = 'text-sm text-error';
     }
   } catch (e) {
-    status.textContent = '❌ ' + e.message;
+    status.textContent = e.message;
     status.className = 'text-sm text-error';
   }
 }
@@ -1242,6 +1232,10 @@ async function saveWizardMapping() {
 // ── Init ─────────────────────────────────────────────────────
 goToStep(1);
 </script>
+
+  </main>
+  </div><!-- /sidebar-main -->
+  <script src="/static/js/sidebar.js"></script>
 
 </body>
 </html>

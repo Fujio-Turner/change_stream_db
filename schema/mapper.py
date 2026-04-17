@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -123,9 +124,141 @@ def apply_transform(value: Any, transform: str) -> Any:
     if func == "json_stringify":
         return json.dumps(value) if value is not None else None
 
+    if func == "split":
+        if value is None:
+            return None
+        delimiter = args[0] if args else ","
+        # Strip surrounding quotes from the delimiter if present
+        if len(delimiter) >= 2 and delimiter[0] in ('"', "'") and delimiter[-1] == delimiter[0]:
+            delimiter = delimiter[1:-1]
+        return str(value).split(delimiter)
+    if func == "left":
+        if value is None:
+            return None
+        n = int(args[0]) if args else 1
+        return str(value)[:n]
+    if func == "right":
+        if value is None:
+            return None
+        n = int(args[0]) if args else 1
+        return str(value)[-n:] if n else ""
+    if func == "substring":
+        if value is None:
+            return None
+        s = str(value)
+        start = int(args[0]) if len(args) > 0 else 0
+        length = int(args[1]) if len(args) > 1 else len(s) - start
+        return s[start:start + length]
+    if func == "replace":
+        if value is None:
+            return None
+        old = args[0] if len(args) > 0 else ""
+        new = args[1] if len(args) > 1 else ""
+        # Strip quotes
+        if len(old) >= 2 and old[0] in ('"', "'") and old[-1] == old[0]:
+            old = old[1:-1]
+        if len(new) >= 2 and new[0] in ('"', "'") and new[-1] == new[0]:
+            new = new[1:-1]
+        return str(value).replace(old, new)
+    if func == "startswith":
+        if value is None:
+            return False
+        prefix = args[0] if args else ""
+        if len(prefix) >= 2 and prefix[0] in ('"', "'") and prefix[-1] == prefix[0]:
+            prefix = prefix[1:-1]
+        return str(value).startswith(prefix)
+    if func == "endswith":
+        if value is None:
+            return False
+        suffix = args[0] if args else ""
+        if len(suffix) >= 2 and suffix[0] in ('"', "'") and suffix[-1] == suffix[0]:
+            suffix = suffix[1:-1]
+        return str(value).endswith(suffix)
+    if func == "contains":
+        if value is None:
+            return False
+        substr = args[0] if args else ""
+        if len(substr) >= 2 and substr[0] in ('"', "'") and substr[-1] == substr[0]:
+            substr = substr[1:-1]
+        return substr in str(value)
+    if func == "regex_match":
+        if value is None:
+            return False
+        pattern = args[0] if args else ""
+        if len(pattern) >= 2 and pattern[0] in ('"', "'") and pattern[-1] == pattern[0]:
+            pattern = pattern[1:-1]
+        return bool(re.search(pattern, str(value)))
+
     # Unrecognised transform – pass through unchanged
     logger.debug("Unrecognised transform %r – passing value through", transform)
     return value
+
+
+# ---------------------------------------------------------------------------
+# Expression evaluation (for source matching)
+# ---------------------------------------------------------------------------
+
+# Matches expressions like:  split($._id,"::")[0]  or  lowercase($._id)
+_EXPR_INDEX_RE = re.compile(
+    r"^(\w+)\(([^)]*)\)\[(\d+)\]$"
+)
+_EXPR_PLAIN_RE = re.compile(
+    r"^(\w+)\(([^)]*)\)$"
+)
+
+
+def evaluate_expression(doc: dict, expression: str) -> Any:
+    """Evaluate a transform expression against *doc* and return the result.
+
+    Supports forms like::
+
+        split($._id,"::")[0]    → split the _id field by "::" and take index 0
+        lowercase($._id)        → lowercase the _id field
+        $._id                   → plain path resolution (no transform)
+
+    The expression is resolved by:
+    1. Extracting the JSON-path argument from inside the function call.
+    2. Resolving the path against *doc* to get the value.
+    3. Applying the transform function.
+    4. Optionally indexing into the result with ``[N]``.
+    """
+    expression = expression.strip()
+
+    # Plain JSON-path with no function wrapper
+    if expression.startswith("$"):
+        return resolve_path(doc, expression)
+
+    # func(...)[N]  – transform with index access
+    m = _EXPR_INDEX_RE.match(expression)
+    if m:
+        func_name = m.group(1)
+        raw_args = m.group(2)
+        index = int(m.group(3))
+
+        # Find the JSON-path argument
+        parts = [p.strip() for p in raw_args.split(",") if p.strip()]
+        path_arg = next((p for p in parts if p.startswith("$")), None)
+        value = resolve_path(doc, path_arg) if path_arg else None
+
+        # Rebuild the transform string
+        transform_str = f"{func_name}({raw_args})"
+        result = apply_transform(value, transform_str)
+
+        if isinstance(result, (list, tuple)):
+            return result[index] if index < len(result) else None
+        return None
+
+    # func(...)  – transform without index
+    m = _EXPR_PLAIN_RE.match(expression)
+    if m:
+        raw_args = m.group(2)
+        parts = [p.strip() for p in raw_args.split(",") if p.strip()]
+        path_arg = next((p for p in parts if p.startswith("$")), None)
+        value = resolve_path(doc, path_arg) if path_arg else None
+        transform_str = expression
+        return apply_transform(value, transform_str)
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -268,11 +401,32 @@ class SchemaMapper:
     # ------------------------------------------------------------------ #
 
     def matches(self, doc: dict) -> bool:
-        """Return ``True`` if *doc* satisfies the source filter."""
+        """Return ``True`` if *doc* satisfies the source filter.
+
+        The match block supports two modes:
+
+        **Field mode** (simple)::
+
+            {"field": "type", "value": "order"}
+
+        **Expression mode** (string functions on doc fields)::
+
+            {"expression": "split($._id,\"::\")[0]", "value": "invoice"}
+
+        Expressions can use any supported transform function, optionally with
+        an index accessor for functions that return lists (e.g. ``split``).
+        """
         if not self.match:
             return True
-        field = self.match.get("field")
+
         value = self.match.get("value")
+        expression = self.match.get("expression")
+
+        if expression is not None:
+            resolved = evaluate_expression(doc, expression)
+            return resolved == value
+
+        field = self.match.get("field")
         if field is None:
             return True
         return doc.get(field) == value
@@ -412,6 +566,10 @@ class SchemaMapper:
             value = resolve_column(item, col_def)
             if value is None and item is not parent_doc:
                 value = resolve_column(parent_doc, col_def)
+            # Sanitize float inf/nan – PostgreSQL integer/numeric columns reject them
+            if isinstance(value, float) and (math.isinf(value) or math.isnan(value)):
+                logger.warning("Column %r has non-finite value %r – replacing with None", col_name, value)
+                value = None
             row[col_name] = value
         return row
 
