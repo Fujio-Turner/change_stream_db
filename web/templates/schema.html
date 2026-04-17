@@ -75,6 +75,12 @@
             <li><a onclick="loadTemplate('sensors_json')">Sensors (JSON)</a></li>
           </ul>
         </div>
+        <div class="dropdown">
+          <label tabindex="0" class="btn btn-ghost btn-sm">Saved Files ▾</label>
+          <ul tabindex="0" class="dropdown-content menu p-2 shadow-lg bg-base-200 rounded-box w-64 z-50" id="fileListDropdown">
+            <li><a class="text-base-content/50">Loading...</a></li>
+          </ul>
+        </div>
         <button class="btn btn-info btn-sm" onclick="document.getElementById('dbImportModal').showModal()">🗄️ Import from Database</button>
         <button class="btn btn-warning btn-sm" onclick="document.getElementById('ddlModal').showModal()">📄 Upload DDL</button>
         <button class="btn btn-primary btn-sm" onclick="validateMapping()">🧪 Validate Mapping</button>
@@ -113,7 +119,7 @@
     <!-- DB Import Modal -->
     <dialog id="dbImportModal" class="modal">
       <div class="modal-box w-11/12 max-w-3xl">
-        <h3 class="font-bold text-lg mb-4">🗄️ Import Table Schema from Database</h3>
+        <h3 class="font-bold text-lg mb-4">Import Table Schema from Database</h3>
         <div class="grid grid-cols-2 gap-3 mb-4">
           <div>
             <label class="label label-text text-xs">Database Type</label>
@@ -153,8 +159,8 @@
           </div>
         </div>
         <div class="flex gap-2 mb-3">
-          <button class="btn btn-primary btn-sm" id="btnTestConn" onclick="testDbConnection()">🔌 Test Connection</button>
-          <button class="btn btn-success btn-sm" id="btnIntrospect" onclick="introspectDb()">📥 Fetch Tables</button>
+          <button class="btn btn-primary btn-sm" id="btnTestConn" onclick="testDbConnection()">Test Connection</button>
+          <button class="btn btn-success btn-sm" id="btnIntrospect" onclick="introspectDb()">Fetch Tables</button>
           <span id="dbStatus" class="text-sm self-center"></span>
         </div>
         <!-- Table list from introspection -->
@@ -177,7 +183,7 @@
     <!-- DDL Upload Modal -->
     <dialog id="ddlModal" class="modal">
       <div class="modal-box w-11/12 max-w-2xl">
-        <h3 class="font-bold text-lg mb-4">📄 Import from CREATE TABLE DDL</h3>
+        <h3 class="font-bold text-lg mb-4">Import from CREATE TABLE DDL</h3>
         <p class="text-sm opacity-60 mb-3">Paste one or more CREATE TABLE statements (Postgres, MySQL, MSSQL, or Oracle syntax).</p>
         <textarea id="ddlInput" class="textarea textarea-bordered w-full font-mono text-sm" rows="12"
                   placeholder="CREATE TABLE orders (
@@ -207,7 +213,7 @@ CREATE TABLE order_items (
     <!-- Validate Result Modal -->
     <dialog id="validateModal" class="modal">
       <div class="modal-box w-11/12 max-w-2xl">
-        <h3 class="font-bold text-lg mb-4">🧪 Mapping Validation Result</h3>
+        <h3 class="font-bold text-lg mb-4">Mapping Validation Result</h3>
         <div id="validateResultContent"></div>
         <div class="modal-action">
           <form method="dialog"><button class="btn">Close</button></form>
@@ -222,7 +228,7 @@ CREATE TABLE order_items (
         <form method="dialog">
           <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
         </form>
-        <h3 class="font-bold text-lg mb-2">🤖 AI Assist — Schema Mapping Generator</h3>
+        <h3 class="font-bold text-lg mb-2">AI Assist — Schema Mapping Generator</h3>
         <p class="text-sm opacity-60 mb-4">Copy the context JSON below and paste it into your AI assistant (ChatGPT, Claude, etc.). Then paste the AI's response back to import it.</p>
 
         <div class="tabs tabs-boxed mb-3">
@@ -252,7 +258,7 @@ CREATE TABLE order_items (
                     placeholder='Paste the AI-generated mapping JSON here...'></textarea>
           <div id="aiImportStatus" class="text-sm mt-2"></div>
           <div class="flex gap-2 mt-3">
-            <button class="btn btn-success" onclick="importAIResponse()">✅ Import Mapping</button>
+            <button class="btn btn-success" onclick="importAIResponse()">Import Mapping</button>
           </div>
         </div>
 
@@ -267,10 +273,13 @@ CREATE TABLE order_items (
       <div class="w-[45%] flex flex-col gap-4">
         <div class="card bg-base-100 shadow-sm rounded-2xl flex-1 flex flex-col">
           <div class="card-body p-4 flex-1 flex flex-col">
-            <div class="tabs tabs-boxed mb-3">
-              <a class="tab tab-active" id="tabPaste" onclick="switchSourceTab('paste')">Paste JSON</a>
-              <a class="tab" id="tabSchema" onclick="switchSourceTab('schema')">JSON Schema</a>
-              <a class="tab" id="tabLive" onclick="fetchLiveSample()">Live Sample</a>
+            <div class="flex items-center gap-2 mb-3">
+              <div class="tabs tabs-boxed">
+                <a class="tab tab-active" id="tabPaste" onclick="switchSourceTab('paste')">Paste JSON</a>
+                <a class="tab" id="tabSchema" onclick="switchSourceTab('schema')">JSON Schema</a>
+                <a class="tab" id="tabLive" onclick="fetchLiveSample()">Live Sample</a>
+              </div>
+              <button class="btn btn-primary btn-sm" onclick="validateMapping()">Validate Mapping</button>
             </div>
 
             <!-- Paste JSON panel -->
@@ -332,11 +341,17 @@ CREATE TABLE order_items (
                     <span class="badge badge-ghost badge-sm cursor-help">?</span>
                   </div>
                 </div>
-                <div class="flex gap-2 mb-2">
+                <div class="flex items-center gap-2 mb-2">
                   <select id="matchMode" class="select select-bordered select-sm w-36" onchange="onMatchModeChange()">
                     <option value="field">Field</option>
                     <option value="expression">Expression</option>
                   </select>
+                  <div id="matchModeHelpField" class="tooltip tooltip-right" data-tip="Field mode: match documents where a top-level field equals a value. Enter the field name (e.g. &quot;type&quot; or &quot;docType&quot;) and the expected value. Only documents where that field matches will be processed by this mapping.">
+                    <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                  </div>
+                  <div id="matchModeHelpExpr" class="tooltip tooltip-right hidden" data-tip="Expression mode: use string functions to extract a value from any field before matching. Useful when the type is embedded in the document key (e.g. _id = &quot;invoice::12345&quot;). Supported: split($._id,&quot;::&quot;)[0], lowercase(), uppercase(), left(), right(), substring(), contains(), startswith(), endswith(), regex_match().">
+                    <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                  </div>
                 </div>
                 <div id="matchFieldRow" class="flex gap-2">
                   <input id="matchField" type="text" placeholder="field (e.g. type)" class="input input-bordered input-sm flex-1" oninput="onMappingChange()" />
@@ -345,6 +360,116 @@ CREATE TABLE order_items (
                 <div id="matchExprRow" class="flex gap-2 hidden">
                   <input id="matchExpression" type="text" placeholder='expression e.g. split($._id,"::")[0]' class="input input-bordered input-sm flex-[2]" oninput="onMappingChange()" />
                   <input id="matchExprValue" type="text" placeholder="value (e.g. invoice)" class="input input-bordered input-sm flex-1" oninput="onMappingChange()" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Source Connection (collapsible) -->
+            <div class="collapse collapse-arrow bg-base-200 rounded-xl mb-3">
+              <input type="checkbox" id="srcConnToggle" />
+              <div class="collapse-title py-2 px-3 min-h-0">
+                <div class="flex items-center gap-2">
+                  <h4 class="text-sm font-semibold">Source Connection</h4>
+                  <div class="tooltip tooltip-right" data-tip="Optional per-mapping source override. If left blank, the global config.json connection is used. Useful when this mapping targets a different changes feed, database, scope, or collection.">
+                    <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                  </div>
+                </div>
+              </div>
+              <div class="collapse-content px-3 pb-3">
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <label class="label label-text text-xs">Source Type</label>
+                    <select id="srcType" class="select select-bordered select-sm w-full" oninput="onMappingChange()">
+                      <option value="">-- use global --</option>
+                      <option value="sync_gateway">Sync Gateway</option>
+                      <option value="app_services">App Services</option>
+                      <option value="edge_server">Edge Server</option>
+                      <option value="couchdb">CouchDB</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="label label-text text-xs">URL</label>
+                    <input id="srcUrl" type="text" class="input input-bordered input-sm w-full" placeholder="http://localhost:4984" oninput="onMappingChange()" />
+                  </div>
+                  <div>
+                    <label class="label label-text text-xs">Database</label>
+                    <input id="srcDatabase" type="text" class="input input-bordered input-sm w-full" placeholder="db" oninput="onMappingChange()" />
+                  </div>
+                  <div>
+                    <label class="label label-text text-xs">Scope</label>
+                    <input id="srcScope" type="text" class="input input-bordered input-sm w-full" placeholder="_default" oninput="onMappingChange()" />
+                  </div>
+                  <div>
+                    <label class="label label-text text-xs">Collection</label>
+                    <input id="srcCollection" type="text" class="input input-bordered input-sm w-full" placeholder="_default" oninput="onMappingChange()" />
+                  </div>
+                  <div>
+                    <label class="label label-text text-xs">Feed Type</label>
+                    <select id="srcFeedType" class="select select-bordered select-sm w-full" oninput="onMappingChange()">
+                      <option value="">-- use global --</option>
+                      <option value="longpoll">Long Poll</option>
+                      <option value="continuous">Continuous</option>
+                      <option value="normal">Normal</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Output Connection (collapsible) -->
+            <div class="collapse collapse-arrow bg-base-200 rounded-xl mb-3">
+              <input type="checkbox" id="outConnToggle" />
+              <div class="collapse-title py-2 px-3 min-h-0">
+                <div class="flex items-center gap-2">
+                  <h4 class="text-sm font-semibold">Output Connection</h4>
+                  <div class="tooltip tooltip-right" data-tip="Optional per-mapping output override. If left blank, the global config.json output is used. Lets each mapping write to a different database or target.">
+                    <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                  </div>
+                </div>
+              </div>
+              <div class="collapse-content px-3 pb-3">
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <label class="label label-text text-xs">Output Mode</label>
+                    <select id="outMode" class="select select-bordered select-sm w-full" oninput="onMappingChange()">
+                      <option value="">-- use global --</option>
+                      <option value="postgres">PostgreSQL</option>
+                      <option value="mysql">MySQL</option>
+                      <option value="mssql">MS SQL Server</option>
+                      <option value="oracle">Oracle</option>
+                      <option value="rest_api">REST API</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="label label-text text-xs">Host</label>
+                    <input id="outHost" type="text" class="input input-bordered input-sm w-full" placeholder="localhost" oninput="onMappingChange()" />
+                  </div>
+                  <div>
+                    <label class="label label-text text-xs">Port</label>
+                    <input id="outPort" type="number" class="input input-bordered input-sm w-full" placeholder="5432" oninput="onMappingChange()" />
+                  </div>
+                  <div>
+                    <label class="label label-text text-xs">Database</label>
+                    <input id="outDatabase" type="text" class="input input-bordered input-sm w-full" placeholder="mydb" oninput="onMappingChange()" />
+                  </div>
+                  <div>
+                    <label class="label label-text text-xs">User</label>
+                    <input id="outUser" type="text" class="input input-bordered input-sm w-full" placeholder="postgres" oninput="onMappingChange()" />
+                  </div>
+                  <div>
+                    <label class="label label-text text-xs">Password</label>
+                    <input id="outPassword" type="password" class="input input-bordered input-sm w-full" oninput="onMappingChange()" />
+                  </div>
+                  <div>
+                    <label class="label label-text text-xs">Schema</label>
+                    <input id="outSchema" type="text" class="input input-bordered input-sm w-full" placeholder="public" oninput="onMappingChange()" />
+                  </div>
+                  <div class="flex items-end">
+                    <label class="label cursor-pointer gap-2">
+                      <span class="label-text text-xs">SSL</span>
+                      <input id="outSSL" type="checkbox" class="checkbox checkbox-sm" oninput="onMappingChange()" />
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>
@@ -391,11 +516,26 @@ CREATE TABLE order_items (
       </div>
     </div>
 
-    <!-- Relationship Diagram -->
+    <!-- Diagrams (tabbed) -->
     <div class="card bg-base-100 shadow-sm rounded-2xl">
       <div class="card-body p-4">
-        <h3 class="font-semibold text-base mb-2">Table Relationship Diagram</h3>
-        <div id="chart" style="width: 100%; height: 350px;"></div>
+        <div class="flex items-center gap-3 mb-2">
+          <div class="tabs tabs-boxed">
+            <a class="tab tab-active" id="diagTabRelation" onclick="switchDiagramTab('relation')">Relationships</a>
+            <a class="tab" id="diagTabTree" onclick="switchDiagramTab('tree')">Coverage Tree</a>
+          </div>
+          <div class="ml-auto flex items-center gap-2">
+            <button class="btn btn-outline btn-sm text-lg px-3" onclick="diagramZoom(1.3)" title="Zoom In">+</button>
+            <button class="btn btn-outline btn-sm text-lg px-3" onclick="diagramZoom(1/1.3)" title="Zoom Out">−</button>
+            <button class="btn btn-outline btn-sm text-lg px-3" onclick="diagramReset()" title="Reset View">⌂</button>
+          </div>
+        </div>
+        <div id="diagRelation">
+          <div id="chart" style="width: 100%; height: 350px;"></div>
+        </div>
+        <div id="diagTree" class="hidden">
+          <div id="chartTree" style="width: 100%; height: 600px;"></div>
+        </div>
       </div>
     </div>
 
@@ -426,8 +566,11 @@ themeToggle.addEventListener('change', function() {
   document.documentElement.setAttribute('data-theme', theme);
   localStorage.setItem('cw_theme', theme);
   if (chartInstance) chartInstance.dispose();
+  if (treeChartInstance) treeChartInstance.dispose();
   chartInstance = echarts.init(document.getElementById('chart'));
+  treeChartInstance = echarts.init(document.getElementById('chartTree'));
   renderDiagram();
+  renderTreeDiagram();
 });
 
 // ── State ────────────────────────────────────────────────────
@@ -438,6 +581,8 @@ var currentFile = null;
 var outputMode = 'tables'; // 'tables' or 'json'
 var jsonFields = [];       // [{key, path, transform}] for JSON output mode
 var chartInstance = echarts.init(document.getElementById('chart'));
+var treeChartInstance = echarts.init(document.getElementById('chartTree'));
+var activeDiagramTab = 'relation';
 
 // ── Transform functions ──────────────────────────────────────
 var TRANSFORMS = [
@@ -972,8 +1117,12 @@ function saveCurrentTableEdits() {
       var colName = row.querySelector('.col-name').value.trim();
       var colPath = row.querySelector('.col-path').value.trim();
       var colTransform = row.querySelector('input.col-transform') ? row.querySelector('input.col-transform').value.trim() : '';
-      if (colName && colPath) {
-        t.columns[colName] = colTransform ? { path: colPath, transform: colTransform } : colPath;
+      if (colName) {
+        if (colPath) {
+          t.columns[colName] = colTransform ? { path: colPath, transform: colTransform } : colPath;
+        } else {
+          t.columns[colName] = '';
+        }
       }
     });
   }
@@ -1099,6 +1248,8 @@ function onMatchModeChange() {
   var mode = document.getElementById('matchMode').value;
   document.getElementById('matchFieldRow').classList.toggle('hidden', mode !== 'field');
   document.getElementById('matchExprRow').classList.toggle('hidden', mode !== 'expression');
+  document.getElementById('matchModeHelpField').classList.toggle('hidden', mode !== 'field');
+  document.getElementById('matchModeHelpExpr').classList.toggle('hidden', mode !== 'expression');
   onMappingChange();
 }
 
@@ -1107,6 +1258,7 @@ function onMappingChange() {
   var mapping = buildMapping();
   document.getElementById('mappingOutput').textContent = JSON.stringify(mapping, null, 2);
   renderDiagram();
+  if (activeDiagramTab === 'tree') renderTreeDiagram();
   updateCoverage();
 }
 
@@ -1228,6 +1380,41 @@ function buildMapping() {
   }
   var mapping = { source: { match: matchObj }, output_format: outputMode };
 
+  // Source connection override
+  var srcConn = {};
+  var st = document.getElementById('srcType').value;
+  if (st) srcConn.src = st;
+  var su = document.getElementById('srcUrl').value.trim();
+  if (su) srcConn.url = su;
+  var sd = document.getElementById('srcDatabase').value.trim();
+  if (sd) srcConn.database = sd;
+  var ss = document.getElementById('srcScope').value.trim();
+  if (ss) srcConn.scope = ss;
+  var sc = document.getElementById('srcCollection').value.trim();
+  if (sc) srcConn.collection = sc;
+  var sf = document.getElementById('srcFeedType').value;
+  if (sf) srcConn.feed_type = sf;
+  if (Object.keys(srcConn).length) mapping.source.connection = srcConn;
+
+  // Output connection override
+  var outConn = {};
+  var om = document.getElementById('outMode').value;
+  if (om) outConn.mode = om;
+  var oh = document.getElementById('outHost').value.trim();
+  if (oh) outConn.host = oh;
+  var op = document.getElementById('outPort').value.trim();
+  if (op) outConn.port = parseInt(op, 10);
+  var od = document.getElementById('outDatabase').value.trim();
+  if (od) outConn.database = od;
+  var ou = document.getElementById('outUser').value.trim();
+  if (ou) outConn.user = ou;
+  var ow = document.getElementById('outPassword').value;
+  if (ow) outConn.password = ow;
+  var os = document.getElementById('outSchema').value.trim();
+  if (os) outConn.schema = os;
+  if (document.getElementById('outSSL').checked) outConn.ssl = true;
+  if (Object.keys(outConn).length) mapping.output = outConn;
+
   if (outputMode === 'json') {
     // Save JSON field rows from DOM
     jsonFields = [];
@@ -1286,6 +1473,23 @@ function loadTemplate(name) {
     document.getElementById('matchExprValue').value = '';
   }
   onMatchModeChange();
+  // Clear connection overrides (templates use global config)
+  document.getElementById('srcType').value = '';
+  document.getElementById('srcUrl').value = '';
+  document.getElementById('srcDatabase').value = '';
+  document.getElementById('srcScope').value = '';
+  document.getElementById('srcCollection').value = '';
+  document.getElementById('srcFeedType').value = '';
+  document.getElementById('srcConnToggle').checked = false;
+  document.getElementById('outMode').value = '';
+  document.getElementById('outHost').value = '';
+  document.getElementById('outPort').value = '';
+  document.getElementById('outDatabase').value = '';
+  document.getElementById('outUser').value = '';
+  document.getElementById('outPassword').value = '';
+  document.getElementById('outSchema').value = '';
+  document.getElementById('outSSL').checked = false;
+  document.getElementById('outConnToggle').checked = false;
   switchOutputMode(m.output_format || 'tables');
   if (outputMode === 'json') {
     jsonFields = [];
@@ -1418,6 +1622,189 @@ function renderDiagram() {
   }, true);
 }
 
+// ── Diagram Tabs ─────────────────────────────────────────────
+function switchDiagramTab(tab) {
+  activeDiagramTab = tab;
+  document.getElementById('diagTabRelation').classList.toggle('tab-active', tab === 'relation');
+  document.getElementById('diagTabTree').classList.toggle('tab-active', tab === 'tree');
+  document.getElementById('diagRelation').classList.toggle('hidden', tab !== 'relation');
+  document.getElementById('diagTree').classList.toggle('hidden', tab !== 'tree');
+  if (tab === 'relation') { chartInstance.resize(); renderDiagram(); }
+  if (tab === 'tree') { treeChartInstance.resize(); renderTreeDiagram(); }
+}
+
+var diagramZoomLevel = { relation: 1, tree: 1 };
+
+function diagramZoom(factor) {
+  var chart = activeDiagramTab === 'tree' ? treeChartInstance : chartInstance;
+  diagramZoomLevel[activeDiagramTab] *= factor;
+  var zoom = diagramZoomLevel[activeDiagramTab];
+  chart.setOption({ series: [{ zoom: zoom }] });
+}
+
+function diagramReset() {
+  diagramZoomLevel[activeDiagramTab] = 1;
+  if (activeDiagramTab === 'tree') { renderTreeDiagram(); }
+  else { renderDiagram(); }
+}
+
+function renderTreeDiagram() {
+  if (outputMode === 'json') {
+    // JSON mode: show a flat list of mapped keys
+    if (!jsonFields.length) { treeChartInstance.clear(); return; }
+    var children = jsonFields.map(function(f) {
+      var mapped = !!f.path;
+      return {
+        name: f.key + (f.path ? '  ←  ' + f.path : '  ⚠ unmapped'),
+        symbolSize: 12,
+        itemStyle: { color: mapped ? '#22c55e' : '#ef4444', borderColor: mapped ? '#16a34a' : '#dc2626' },
+        label: { fontWeight: mapped ? 'bold' : 'normal', color: mapped ? '#22c55e' : '#ef4444', fontSize: 14 }
+      };
+    });
+    treeChartInstance.setOption({
+      tooltip: { trigger: 'item', formatter: function(p) { return p.name; } },
+      series: [{
+        type: 'tree', layout: 'orthogonal', orient: 'LR', roam: true,
+        edgeShape: 'polyline', edgeForkPosition: '63%',
+        initialTreeDepth: 3, expandAndCollapse: false,
+        symbol: 'circle', symbolSize: 14,
+        lineStyle: { width: 2.5, color: '#888' },
+        label: { fontSize: 14, fontFamily: 'monospace', position: 'right', verticalAlign: 'middle', align: 'left', distance: 10 },
+        leaves: { label: { fontSize: 14 } },
+        data: [{
+          name: 'Target JSON',
+          itemStyle: { color: '#3b82f6', borderColor: '#2563eb' },
+          label: { fontWeight: 'bold', color: '#3b82f6', fontSize: 16 },
+          children: children
+        }]
+      }]
+    }, true);
+    return;
+  }
+
+  if (!tables.length) { treeChartInstance.clear(); return; }
+
+  var isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  var labelBg = isDark ? 'rgba(30,30,30,0.9)' : 'rgba(255,255,255,0.92)';
+
+  // Build set of all mapped source paths across all tables
+  var mappedPaths = {};
+  for (var i = 0; i < tables.length; i++) {
+    var cols = tables[i].columns || {};
+    var keys = Object.keys(cols);
+    for (var j = 0; j < keys.length; j++) {
+      var v = cols[keys[j]];
+      var p = typeof v === 'object' ? (v.path || '') : (v || '');
+      if (p) mappedPaths[keys[j]] = true;
+    }
+  }
+
+  // Collect all source field paths for unmapped detection
+  var sourcePathSet = {};
+  for (var si = 0; si < sourceFields.length; si++) {
+    if (sourceFields[si].type !== 'object' && sourceFields[si].type !== 'array') {
+      sourcePathSet[sourceFields[si].path] = true;
+    }
+  }
+
+  // Build tree: root → parent tables → child tables, each with column children
+  var parentNodes = [];
+  var childMap = {}; // parent name → [child table nodes]
+
+  for (var ti = 0; ti < tables.length; ti++) {
+    var t = tables[ti];
+    var colKeys = Object.keys(t.columns || {});
+    var colChildren = colKeys.map(function(colName) {
+      var cv = t.columns[colName];
+      var cp = typeof cv === 'object' ? (cv.path || '') : (cv || '');
+      var hasTx = typeof cv === 'object' && cv.transform;
+      var mapped = !!cp;
+      var displayName = colName + (cp ? '  ←  ' + cp : '  ⚠ unmapped') + (hasTx ? '  ƒ' : '');
+      return {
+        name: displayName,
+        symbolSize: 12,
+        itemStyle: { color: mapped ? '#22c55e' : '#ef4444', borderColor: mapped ? '#16a34a' : '#dc2626' },
+        label: { fontWeight: mapped ? 'bold' : 'normal', color: mapped ? '#22c55e' : '#ef4444', fontSize: 14,
+          backgroundColor: labelBg, borderRadius: 4, padding: [4, 8] }
+      };
+    });
+
+    var allMapped = colKeys.length > 0 && colChildren.every(function(c) { return c.itemStyle.color === '#22c55e'; });
+    var noneMapped = colChildren.every(function(c) { return c.itemStyle.color === '#ef4444'; });
+    var tblColor = allMapped ? '#22c55e' : noneMapped ? '#ef4444' : '#eab308';
+    var tblBorder = allMapped ? '#16a34a' : noneMapped ? '#dc2626' : '#ca8a04';
+
+    var tblLabel = t.name + '  (' + colKeys.length + ' cols)';
+    if (t.parent && t.foreign_key && t.foreign_key.column) {
+      tblLabel += '  [FK: ' + t.foreign_key.column + ' → ' + (t.foreign_key.references || 'pk') + ']';
+    }
+    if (t.source_array) {
+      tblLabel += '  [array: ' + t.source_array + ']';
+    }
+
+    var tableNode = {
+      name: tblLabel,
+      symbolSize: 16,
+      itemStyle: { color: tblColor, borderColor: tblBorder },
+      label: { fontWeight: 'bold', color: tblColor, fontSize: 15,
+        backgroundColor: labelBg, borderRadius: 6, padding: [5, 10] },
+      children: colChildren
+    };
+
+    if (t.parent) {
+      if (!childMap[t.parent]) childMap[t.parent] = [];
+      childMap[t.parent].push(tableNode);
+    } else {
+      parentNodes.push(tableNode);
+    }
+  }
+
+  // Attach children to parents
+  for (var pi = 0; pi < parentNodes.length; pi++) {
+    var pName = parentNodes[pi].name.replace(/\s+\(\d+ cols\)$/, '');
+    if (childMap[pName]) {
+      parentNodes[pi].children = (childMap[pName] || []).concat(parentNodes[pi].children || []);
+    }
+  }
+  // Any orphan child tables (parent not found)
+  var parentNames = tables.filter(function(t) { return !t.parent; }).map(function(t) { return t.name; });
+  Object.keys(childMap).forEach(function(pn) {
+    if (parentNames.indexOf(pn) < 0) {
+      parentNodes = parentNodes.concat(childMap[pn]);
+    }
+  });
+
+  var rootNode = {
+    name: 'Source Document',
+    symbolSize: 20,
+    itemStyle: { color: '#3b82f6', borderColor: '#2563eb' },
+    label: { fontWeight: 'bold', color: '#3b82f6', fontSize: 17,
+      backgroundColor: labelBg, borderRadius: 6, padding: [5, 12] },
+    children: parentNodes
+  };
+
+  treeChartInstance.setOption({
+    tooltip: { trigger: 'item', formatter: function(p) { return p.name; } },
+    graphic: [
+      { type: 'circle', left: 20, bottom: 14, shape: { r: 8 }, style: { fill: '#22c55e' } },
+      { type: 'text', left: 34, bottom: 6, style: { text: 'Mapped', fill: '#999', fontSize: 13, fontWeight: 'bold' } },
+      { type: 'circle', left: 110, bottom: 14, shape: { r: 8 }, style: { fill: '#eab308' } },
+      { type: 'text', left: 124, bottom: 6, style: { text: 'Partial', fill: '#999', fontSize: 13, fontWeight: 'bold' } },
+      { type: 'circle', left: 195, bottom: 14, shape: { r: 8 }, style: { fill: '#ef4444' } },
+      { type: 'text', left: 209, bottom: 6, style: { text: 'Unmapped', fill: '#999', fontSize: 13, fontWeight: 'bold' } }
+    ],
+    series: [{
+      type: 'tree', layout: 'orthogonal', orient: 'LR', roam: true,
+      edgeShape: 'polyline', edgeForkPosition: '63%',
+      initialTreeDepth: 3, expandAndCollapse: true,
+      symbol: 'circle', symbolSize: 14,
+      lineStyle: { width: 2.5, color: '#888' },
+      label: { fontSize: 14, fontFamily: 'monospace', position: 'right', verticalAlign: 'middle', align: 'left', distance: 10 },
+      data: [rootNode]
+    }]
+  }, true);
+}
+
 // ── Save / Download / File List ──────────────────────────────
 async function saveMapping() {
   saveCurrentTableEdits();
@@ -1458,6 +1845,7 @@ function downloadMapping() {
 }
 
 async function loadFileList(autoLoadFirst) {
+  var dropdown = document.getElementById('fileListDropdown');
   var tbody = document.getElementById('mappingsTableBody');
   var countBadge = document.getElementById('mappingCount');
   try {
@@ -1468,10 +1856,13 @@ async function loadFileList(autoLoadFirst) {
       return !n.endsWith('.meta.json');
     });
     countBadge.textContent = files.length;
+
     if (!files.length) {
+      dropdown.innerHTML = '<li><a class="text-base-content/50">No saved mappings</a></li>';
       tbody.innerHTML = '<tr><td colspan="6" class="text-center opacity-50">No saved mappings. Create one above and click Save.</td></tr>';
       return;
     }
+
     // Sort: active first, then by updated_at descending
     files.sort(function(a, b) {
       var aa = a.active !== false ? 1 : 0;
@@ -1479,7 +1870,15 @@ async function loadFileList(autoLoadFirst) {
       if (aa !== ba) return ba - aa;
       return (b.updated_at || '').localeCompare(a.updated_at || '');
     });
-    tbody.innerHTML = files.map(function(f, idx) {
+
+    // Populate dropdown
+    dropdown.innerHTML = files.map(function(f) {
+      var name = typeof f === 'string' ? f : f.name || f.filename;
+      return '<li class="flex"><a class="flex-1" onclick="openFile(\'' + esc(name) + '\')">' + esc(name) + '</a></li>';
+    }).join('');
+
+    // Populate table
+    tbody.innerHTML = files.map(function(f) {
       var name = typeof f === 'string' ? f : f.name || f.filename;
       var active = f.active !== false;
       var updated = f.updated_at || '';
@@ -1504,14 +1903,16 @@ async function loadFileList(autoLoadFirst) {
         '<td class="text-sm opacity-70">' + esc(dateStr) + '</td>' +
         '<td><input type="checkbox" class="toggle toggle-sm toggle-success" ' + (active ? 'checked' : '') +
         ' onchange="toggleActive(\'' + esc(name) + '\', this.checked)" /></td>' +
-        '<td><button class="btn btn-ghost btn-xs text-error" onclick="deleteFile(\'' + esc(name) + '\')">🗑</button></td>' +
+        '<td><button class="btn btn-ghost btn-xs text-error" onclick="deleteFile(\'' + esc(name) + '\')">×</button></td>' +
         '</tr>';
     }).join('');
+
     if (autoLoadFirst && !currentFile && files.length) {
       var firstName = typeof files[0] === 'string' ? files[0] : files[0].name || files[0].filename;
       openFile(firstName);
     }
   } catch (e) {
+    dropdown.innerHTML = '<li><a class="text-error">Failed to load</a></li>';
     tbody.innerHTML = '<tr><td colspan="6" class="text-center text-error">Failed to load mappings</td></tr>';
   }
 }
@@ -1559,6 +1960,29 @@ async function openFile(name) {
       }
       onMatchModeChange();
     }
+    // Populate source connection
+    var srcConn = (mapping.source || {}).connection || {};
+    document.getElementById('srcType').value = srcConn.src || '';
+    document.getElementById('srcUrl').value = srcConn.url || '';
+    document.getElementById('srcDatabase').value = srcConn.database || '';
+    document.getElementById('srcScope').value = srcConn.scope || '';
+    document.getElementById('srcCollection').value = srcConn.collection || '';
+    document.getElementById('srcFeedType').value = srcConn.feed_type || '';
+    // Auto-expand if has values
+    if (Object.keys(srcConn).length) document.getElementById('srcConnToggle').checked = true;
+
+    // Populate output connection
+    var outConn = mapping.output || {};
+    document.getElementById('outMode').value = outConn.mode || '';
+    document.getElementById('outHost').value = outConn.host || '';
+    document.getElementById('outPort').value = outConn.port || '';
+    document.getElementById('outDatabase').value = outConn.database || '';
+    document.getElementById('outUser').value = outConn.user || '';
+    document.getElementById('outPassword').value = outConn.password || '';
+    document.getElementById('outSchema').value = outConn.schema || '';
+    document.getElementById('outSSL').checked = !!outConn.ssl;
+    if (Object.keys(outConn).length) document.getElementById('outConnToggle').checked = true;
+
     // Detect output mode
     var mode = mapping.output_format || (mapping.mapping ? 'json' : 'tables');
     switchOutputMode(mode);
@@ -1868,14 +2292,14 @@ async function testDbConnection() {
     });
     var data = await res.json();
     if (data.ok) {
-      status.textContent = '✅ Connected! ' + (data.version || '').substring(0, 60);
+      status.textContent = 'Connected! ' + (data.version || '').substring(0, 60);
       status.className = 'text-sm self-center text-success';
     } else {
-      status.textContent = '❌ ' + (data.error || 'Connection failed');
+      status.textContent = 'Error: ' + (data.error || 'Connection failed');
       status.className = 'text-sm self-center text-error';
     }
   } catch (e) {
-    status.textContent = '❌ ' + e.message;
+    status.textContent = 'Error: ' + e.message;
     status.className = 'text-sm self-center text-error';
   }
   btn.classList.remove('loading');
@@ -1894,19 +2318,19 @@ async function introspectDb() {
     });
     var data = await res.json();
     if (data.error) {
-      status.textContent = '❌ ' + (data.detail || data.error);
+      status.textContent = 'Error: ' + (data.detail || data.error);
       status.className = 'text-sm self-center text-error';
       btn.classList.remove('loading');
       return;
     }
     introspectedTables = data.tables || [];
-    status.textContent = '✅ Found ' + introspectedTables.length + ' table(s)';
+    status.textContent = 'Found ' + introspectedTables.length + ' table(s)';
     status.className = 'text-sm self-center text-success';
     renderDbTableList(introspectedTables);
     document.getElementById('dbTableList').classList.remove('hidden');
     document.getElementById('btnImportSelected').disabled = false;
   } catch (e) {
-    status.textContent = '❌ ' + e.message;
+    status.textContent = 'Error: ' + e.message;
     status.className = 'text-sm self-center text-error';
   }
   btn.classList.remove('loading');
@@ -1995,7 +2419,7 @@ async function parseDDL() {
     });
     var data = await res.json();
     if (data.error) {
-      status.textContent = '❌ ' + (data.detail || data.error);
+      status.textContent = 'Error: ' + (data.detail || data.error);
       status.className = 'text-sm mt-2 text-error';
       return;
     }
@@ -2032,7 +2456,7 @@ async function parseDDL() {
     document.getElementById('ddlModal').close();
     showStatus('Imported ' + parsed.length + ' table(s) from DDL', 'success');
   } catch (e) {
-    status.textContent = '❌ ' + e.message;
+    status.textContent = 'Error: ' + e.message;
     status.className = 'text-sm mt-2 text-error';
   }
 }
@@ -2363,7 +2787,7 @@ function importAIResponse() {
 
   // Show explanation if provided
   if (mapping._explanation && mapping._explanation.length) {
-    var explHtml = '<h3 class="font-bold text-lg mb-3">🤖 AI Reasoning</h3>';
+    var explHtml = '<h3 class="font-bold text-lg mb-3">AI Reasoning</h3>';
     explHtml += '<div class="space-y-2">';
     for (var ei = 0; ei < mapping._explanation.length; ei++) {
       explHtml += '<div class="flex items-start gap-2"><span class="opacity-40 mt-0.5">•</span><span class="text-sm">' + escapeHtml(mapping._explanation[ei]) + '</span></div>';
