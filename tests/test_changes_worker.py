@@ -1862,6 +1862,7 @@ class TestRetryableHTTPShutdown(unittest.TestCase):
             event = asyncio.Event()
             http.set_shutdown_event(event)
             # Set shutdown after a tiny delay
+
             async def _set_later():
                 await asyncio.sleep(0.05)
                 event.set()

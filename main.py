@@ -1747,7 +1747,7 @@ async def _process_changes_batch(
             # DLQ all unprocessed docs if shutdown + dlq_inflight_on_shutdown
             if is_shutdown and (shutdown_cfg or {}).get("dlq_inflight_on_shutdown", False) and dlq.enabled:
                 # In sequential mode, we know which docs haven't been tried yet
-                processed_ids = set()
+                processed_ids = set()  # noqa: F841
                 if sequential:
                     # Find which docs were already processed (succeeded or failed above)
                     # The current change that raised is the boundary
