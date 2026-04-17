@@ -19,5 +19,5 @@ asyncpg                    # for PostgreSQL output
 # oracledb                 # for Oracle output (pip install oracledb)
 
 # Development / CI
-flake8                     # linting
+ruff                       # linting + formatting
 pytest                     # unit tests
