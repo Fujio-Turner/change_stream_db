@@ -46,7 +46,7 @@ jobs:
           pip install pytest
 
       - name: Syntax check all .py files
-        run: python -m py_compile main.py pipeline_logging.py cbl_store.py rest/output_http.py
+        run: python -m py_compile main.py pipeline_logging.py cbl_store.py rest/output_http.py schema/mapper.py schema/validator.py
 
       - name: Run tests
         run: pytest tests/ -v --tb=short

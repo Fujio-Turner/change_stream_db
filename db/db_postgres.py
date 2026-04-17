@@ -173,11 +173,9 @@ class PostgresOutputForwarder:
 
         # Find the first matching mapper
         mapper = None
-        mapper_name = None
         for m in self._mappers:
             if m.matches(doc):
                 mapper = m
-                mapper_name = m.mapping.get("_source_name", m.match.get("value", "unknown"))
                 break
         if not mapper:
             logger.debug("Doc %s does not match any mapping filter – skipping", doc_id)

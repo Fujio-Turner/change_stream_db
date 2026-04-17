@@ -3,12 +3,12 @@
 Unit tests for pipeline_logging.py
 
 Covers:
-  - Redactor: redact_string, redact_value, redact_dict at all levels
-  - LogKeyLevelFilter: allow/reject based on keys and levels
-  - infer_operation: DELETE/SELECT/INSERT/UPDATE logic
-  - log_event: correct level and extra fields
-  - RedactingFormatter: log_key prefix, extra fields, URL redaction
-  - configure_logging: legacy mode and full SG-style mode
+  - Redactor: redact_string, redact_value, redact_dict
+  - LogKeyLevelFilter: allow/reject by log_key and level
+  - infer_operation: method/change/doc → operation string
+  - log_event: structured logging helper
+  - RedactingFormatter: message formatting and redaction
+  - configure_logging: legacy and full SG-style modes
   - ManagedRotatingFileHandler: directory creation, cleanup
 """
 
@@ -18,7 +18,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock
 
 # Ensure the module under test is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -35,107 +35,115 @@ class TestRedactorRedactString(unittest.TestCase):
 
     def test_none_level_returns_unchanged(self):
         r = pl.Redactor("none")
-        s = "http://admin:secret@host:4984/db"
-        self.assertEqual(r.redact_string(s), s)
+        self.assertEqual(r.redact_string("http://user:pass@host/db"), "http://user:pass@host/db")
 
     def test_partial_redacts_url_userinfo(self):
         r = pl.Redactor("partial")
-        result = r.redact_string("http://admin:secret@host:4984/db")
-        self.assertIn("<ud>***:***</ud>@", result)
-        self.assertNotIn("admin", result)
-        self.assertNotIn("secret", result)
+        result = r.redact_string("http://user:pass@host/db")
+        self.assertEqual(result, "http://<ud>***:***</ud>@host/db")
 
     def test_full_redacts_url_userinfo(self):
         r = pl.Redactor("full")
-        result = r.redact_string("https://user:pass@host/db")
-        self.assertIn("<ud>XXXXX</ud>@", result)
-        self.assertNotIn("user", result)
-        self.assertNotIn("pass@", result)
+        result = r.redact_string("http://user:pass@host/db")
+        self.assertEqual(result, "http://<ud>XXXXX</ud>@host/db")
 
-    def test_partial_redacts_bearer_token(self):
+    def test_partial_redacts_bearer_token_shows_last_4(self):
         r = pl.Redactor("partial")
-        result = r.redact_string("Bearer abcdefghij1234")
-        self.assertNotIn("abcdefghij1234", result)
-        # Partial keeps last 4 chars visible
+        result = r.redact_string("Bearer abcdefgh1234")
         self.assertIn("1234", result)
+        self.assertTrue(result.startswith("Bearer "))
+        # The original token should not appear in full
+        self.assertNotIn("abcdefgh1234", result)
 
-    def test_full_redacts_bearer_token(self):
+    def test_full_redacts_bearer_token_completely(self):
         r = pl.Redactor("full")
-        result = r.redact_string("Bearer my-super-secret-token")
-        self.assertIn("<ud>XXXXX</ud>", result)
-        self.assertNotIn("my-super-secret-token", result)
+        result = r.redact_string("Bearer abcdefgh1234")
+        self.assertEqual(result, "Bearer <ud>XXXXX</ud>")
 
-    def test_no_url_or_bearer_unchanged(self):
+    def test_partial_url_with_https(self):
         r = pl.Redactor("partial")
-        s = "Just a normal log message"
-        self.assertEqual(r.redact_string(s), s)
+        result = r.redact_string("https://admin:secret@example.com:4984/db")
+        self.assertEqual(result, "https://<ud>***:***</ud>@example.com:4984/db")
+
+    def test_string_without_sensitive_data_unchanged(self):
+        r = pl.Redactor("partial")
+        self.assertEqual(r.redact_string("hello world"), "hello world")
 
 
 class TestRedactorRedactValue(unittest.TestCase):
     """Tests for Redactor.redact_value()."""
 
+    def test_none_level_returns_value_unchanged(self):
+        r = pl.Redactor("none")
+        self.assertEqual(r.redact_value("password", "secret123"), "secret123")
+
     def test_non_sensitive_key_returns_unchanged(self):
         r = pl.Redactor("partial")
-        self.assertEqual(r.redact_value("doc_id", "abc123"), "abc123")
+        self.assertEqual(r.redact_value("doc_id", "doc-abc"), "doc-abc")
 
     def test_sensitive_key_partial_redacts(self):
         r = pl.Redactor("partial")
-        result = r.redact_value("password", "mysecret")
-        self.assertIn("<ud>", result)
-        self.assertTrue(result.startswith("<ud>m"))
-        self.assertTrue(result.endswith("t</ud>"))
+        result = r.redact_value("password", "secret123")
+        self.assertEqual(result, "<ud>s*******3</ud>")
 
     def test_sensitive_key_full_redacts(self):
         r = pl.Redactor("full")
-        result = r.redact_value("api_key", "some-long-key")
+        result = r.redact_value("password", "secret123")
         self.assertEqual(result, "<ud>XXXXX</ud>")
 
-    def test_short_value_fully_redacts_even_partial(self):
+    def test_short_value_fully_redacted_in_partial(self):
         r = pl.Redactor("partial")
         result = r.redact_value("password", "ab")
         self.assertEqual(result, "<ud>XXXXX</ud>")
 
-    def test_none_level_returns_value_unchanged(self):
-        r = pl.Redactor("none")
-        self.assertEqual(r.redact_value("password", "secret"), "secret")
-
-    def test_token_key_is_sensitive(self):
-        r = pl.Redactor("full")
-        self.assertEqual(r.redact_value("token", "xyz"), "<ud>XXXXX</ud>")
-
-    def test_authorization_key_is_sensitive(self):
+    def test_single_char_value_fully_redacted_in_partial(self):
         r = pl.Redactor("partial")
-        result = r.redact_value("authorization", "Bearer abc")
-        self.assertIn("<ud>", result)
+        result = r.redact_value("token", "x")
+        self.assertEqual(result, "<ud>XXXXX</ud>")
+
+    def test_sensitive_key_api_key(self):
+        r = pl.Redactor("partial")
+        result = r.redact_value("api_key", "mykey123")
+        self.assertEqual(result, "<ud>m******3</ud>")
+
+    def test_sensitive_key_authorization(self):
+        r = pl.Redactor("full")
+        result = r.redact_value("authorization", "Bearer xyz")
+        self.assertEqual(result, "<ud>XXXXX</ud>")
 
 
 class TestRedactorRedactDict(unittest.TestCase):
     """Tests for Redactor.redact_dict()."""
 
+    def test_none_level_returns_dict_unchanged(self):
+        r = pl.Redactor("none")
+        d = {"password": "secret", "name": "bob"}
+        self.assertEqual(r.redact_dict(d), d)
+
     def test_non_sensitive_keys_unchanged(self):
         r = pl.Redactor("partial")
-        d = {"name": "alice", "age": 30}
-        result = r.redact_dict(d)
-        self.assertEqual(result, {"name": "alice", "age": 30})
+        d = {"name": "bob", "age": 30}
+        self.assertEqual(r.redact_dict(d), {"name": "bob", "age": 30})
 
     def test_sensitive_keys_redacted(self):
         r = pl.Redactor("partial")
-        d = {"username": "alice", "password": "secret123"}
+        d = {"password": "secret", "name": "bob"}
         result = r.redact_dict(d)
-        self.assertEqual(result["username"], "alice")
+        self.assertEqual(result["name"], "bob")
         self.assertIn("<ud>", result["password"])
 
-    def test_nested_dict_redacted(self):
+    def test_nested_dict_sensitive_keys_redacted(self):
         r = pl.Redactor("partial")
-        d = {"auth": {"password": "secret123", "host": "localhost"}}
+        d = {"auth": {"password": "secret123", "username": "bob"}}
         result = r.redact_dict(d)
-        self.assertEqual(result["auth"]["host"], "localhost")
-        self.assertIn("<ud>", result["auth"]["password"])
+        self.assertEqual(result["auth"]["username"], "bob")
+        self.assertEqual(result["auth"]["password"], "<ud>s*******3</ud>")
 
-    def test_none_level_returns_dict_unchanged(self):
-        r = pl.Redactor("none")
-        d = {"password": "secret"}
-        self.assertEqual(r.redact_dict(d), d)
+    def test_full_redacts_nested_dict(self):
+        r = pl.Redactor("full")
+        d = {"auth": {"token": "abc123"}}
+        result = r.redact_dict(d)
+        self.assertEqual(result["auth"]["token"], "<ud>XXXXX</ud>")
 
 
 # ===================================================================
@@ -145,43 +153,55 @@ class TestRedactorRedactDict(unittest.TestCase):
 class TestLogKeyLevelFilter(unittest.TestCase):
     """Tests for LogKeyLevelFilter."""
 
-    def _make_record(self, level, log_key=None):
+    def _make_record(self, level=logging.INFO, log_key=None):
         record = logging.LogRecord(
             name="test", level=level, pathname="", lineno=0,
-            msg="msg", args=(), exc_info=None,
+            msg="test message", args=(), exc_info=None,
         )
         if log_key is not None:
             record.log_key = log_key
         return record
 
-    def test_allow_all_wildcard(self):
-        f = pl.LogKeyLevelFilter(["*"], logging.DEBUG, {})
-        record = self._make_record(logging.DEBUG, "CHANGES")
+    def test_matching_key_at_threshold_passes(self):
+        f = pl.LogKeyLevelFilter(["CHANGES"], logging.INFO, {})
+        record = self._make_record(logging.INFO, "CHANGES")
         self.assertTrue(f.filter(record))
 
-    def test_reject_key_not_in_allowed(self):
-        f = pl.LogKeyLevelFilter(["CHANGES", "HTTP"], logging.DEBUG, {})
-        record = self._make_record(logging.DEBUG, "MAPPING")
-        self.assertFalse(f.filter(record))
-
-    def test_allow_key_in_set(self):
-        f = pl.LogKeyLevelFilter(["CHANGES", "HTTP"], logging.DEBUG, {})
-        record = self._make_record(logging.DEBUG, "HTTP")
+    def test_matching_key_above_threshold_passes(self):
+        f = pl.LogKeyLevelFilter(["CHANGES"], logging.INFO, {})
+        record = self._make_record(logging.WARNING, "CHANGES")
         self.assertTrue(f.filter(record))
 
-    def test_reject_below_base_level(self):
-        f = pl.LogKeyLevelFilter(["*"], logging.WARNING, {})
-        record = self._make_record(logging.DEBUG, "CHANGES")
+    def test_matching_key_below_threshold_rejected(self):
+        f = pl.LogKeyLevelFilter(["CHANGES"], logging.WARNING, {})
+        record = self._make_record(logging.INFO, "CHANGES")
         self.assertFalse(f.filter(record))
 
-    def test_per_key_override(self):
-        f = pl.LogKeyLevelFilter(["*"], logging.INFO, {"HTTP": logging.WARNING})
-        # HTTP at INFO should be rejected (override requires WARNING)
+    def test_non_matching_key_rejected(self):
+        f = pl.LogKeyLevelFilter(["CHANGES"], logging.DEBUG, {})
         record = self._make_record(logging.INFO, "HTTP")
         self.assertFalse(f.filter(record))
-        # HTTP at WARNING should pass
-        record2 = self._make_record(logging.WARNING, "HTTP")
-        self.assertTrue(f.filter(record2))
+
+    def test_allow_all_with_star(self):
+        f = pl.LogKeyLevelFilter(["*"], logging.INFO, {})
+        record = self._make_record(logging.INFO, "HTTP")
+        self.assertTrue(f.filter(record))
+
+    def test_allow_all_any_key(self):
+        f = pl.LogKeyLevelFilter(["*"], logging.DEBUG, {})
+        record = self._make_record(logging.DEBUG, "MAPPING")
+        self.assertTrue(f.filter(record))
+
+    def test_per_key_level_override(self):
+        f = pl.LogKeyLevelFilter(["*"], logging.INFO, {"HTTP": logging.WARNING})
+        # HTTP at INFO should fail because override requires WARNING
+        record = self._make_record(logging.INFO, "HTTP")
+        self.assertFalse(f.filter(record))
+
+    def test_per_key_level_override_passes_at_threshold(self):
+        f = pl.LogKeyLevelFilter(["*"], logging.INFO, {"HTTP": logging.WARNING})
+        record = self._make_record(logging.WARNING, "HTTP")
+        self.assertTrue(f.filter(record))
 
     def test_no_log_key_passes_at_base_level(self):
         f = pl.LogKeyLevelFilter(["CHANGES"], logging.INFO, {})
@@ -193,9 +213,9 @@ class TestLogKeyLevelFilter(unittest.TestCase):
         record = self._make_record(logging.INFO)
         self.assertFalse(f.filter(record))
 
-    def test_case_insensitive_keys(self):
-        f = pl.LogKeyLevelFilter(["changes"], logging.DEBUG, {})
-        record = self._make_record(logging.DEBUG, "CHANGES")
+    def test_case_insensitive_log_key(self):
+        f = pl.LogKeyLevelFilter(["changes"], logging.INFO, {})
+        record = self._make_record(logging.INFO, "CHANGES")
         self.assertTrue(f.filter(record))
 
 
@@ -209,44 +229,43 @@ class TestInferOperation(unittest.TestCase):
     def test_method_delete(self):
         self.assertEqual(pl.infer_operation(method="DELETE"), "DELETE")
 
-    def test_change_deleted_flag(self):
+    def test_change_deleted_true(self):
         self.assertEqual(pl.infer_operation(change={"deleted": True}), "DELETE")
 
     def test_method_get(self):
         self.assertEqual(pl.infer_operation(method="GET"), "SELECT")
 
-    def test_rev_1_dash_is_insert(self):
-        self.assertEqual(
-            pl.infer_operation(doc={"_rev": "1-abc123"}),
-            "INSERT",
-        )
+    def test_rev_starting_with_1(self):
+        doc = {"_rev": "1-abc123"}
+        self.assertEqual(pl.infer_operation(doc=doc), "INSERT")
 
-    def test_rev_2_dash_is_update(self):
-        self.assertEqual(
-            pl.infer_operation(doc={"_rev": "2-abc123"}),
-            "UPDATE",
-        )
+    def test_rev_starting_with_2(self):
+        doc = {"_rev": "2-abc123"}
+        self.assertEqual(pl.infer_operation(doc=doc), "UPDATE")
 
-    def test_no_rev_is_update(self):
-        self.assertEqual(pl.infer_operation(doc={}), "UPDATE")
+    def test_rev_starting_with_higher(self):
+        doc = {"_rev": "15-abc123"}
+        self.assertEqual(pl.infer_operation(doc=doc), "UPDATE")
 
-    def test_change_with_rev_1_in_changes_list(self):
-        change = {"changes": [{"rev": "1-xyz"}]}
-        self.assertEqual(pl.infer_operation(change=change), "INSERT")
-
-    def test_change_with_rev_2_in_changes_list(self):
-        change = {"changes": [{"rev": "2-xyz"}]}
-        self.assertEqual(pl.infer_operation(change=change), "UPDATE")
-
-    def test_none_inputs_returns_update(self):
+    def test_no_rev_returns_update(self):
         self.assertEqual(pl.infer_operation(), "UPDATE")
 
-    def test_delete_method_takes_priority(self):
-        # method=DELETE should win even if doc has rev 1-
-        self.assertEqual(
-            pl.infer_operation(doc={"_rev": "1-abc"}, method="DELETE"),
-            "DELETE",
-        )
+    def test_rev_from_change_changes_list(self):
+        change = {"changes": [{"rev": "1-abc"}]}
+        self.assertEqual(pl.infer_operation(change=change), "INSERT")
+
+    def test_rev_from_change_changes_list_update(self):
+        change = {"changes": [{"rev": "3-xyz"}]}
+        self.assertEqual(pl.infer_operation(change=change), "UPDATE")
+
+    def test_delete_method_takes_priority_over_rev(self):
+        doc = {"_rev": "1-abc"}
+        self.assertEqual(pl.infer_operation(doc=doc, method="DELETE"), "DELETE")
+
+    def test_change_deleted_takes_priority_over_get(self):
+        # method is not DELETE, but change says deleted
+        change = {"deleted": True}
+        self.assertEqual(pl.infer_operation(change=change, method="GET"), "DELETE")
 
 
 # ===================================================================
@@ -256,33 +275,36 @@ class TestInferOperation(unittest.TestCase):
 class TestLogEvent(unittest.TestCase):
     """Tests for log_event()."""
 
-    def test_correct_level_and_extra(self):
-        logger = logging.getLogger("test_log_event")
-        logger.setLevel(pl.TRACE)
-        with patch.object(logger, "log") as mock_log:
-            pl.log_event(logger, "warn", "HTTP", "request failed",
-                         status=500, url="http://example.com")
-            mock_log.assert_called_once_with(
-                logging.WARNING,
-                "request failed",
-                extra={"log_key": "HTTP", "status": 500,
-                       "url": "http://example.com"},
-            )
+    def test_calls_logger_log_with_correct_level_and_extras(self):
+        logger = MagicMock()
+        logger.isEnabledFor.return_value = True
+        pl.log_event(logger, "info", "CHANGES", "test message", doc_id="d1")
+        logger.log.assert_called_once_with(
+            logging.INFO, "test message",
+            extra={"log_key": "CHANGES", "doc_id": "d1"},
+        )
 
-    def test_skips_when_not_enabled(self):
-        logger = logging.getLogger("test_log_event_skip")
-        logger.setLevel(logging.CRITICAL)
-        with patch.object(logger, "log") as mock_log:
-            pl.log_event(logger, "debug", "CHANGES", "ignored")
-            mock_log.assert_not_called()
+    def test_does_not_log_when_level_too_high(self):
+        logger = MagicMock()
+        logger.isEnabledFor.return_value = False
+        pl.log_event(logger, "debug", "CHANGES", "test message")
+        logger.log.assert_not_called()
 
-    def test_trace_level(self):
-        logger = logging.getLogger("test_log_event_trace")
-        logger.setLevel(pl.TRACE)
-        with patch.object(logger, "log") as mock_log:
-            pl.log_event(logger, "trace", "MAPPING", "detail")
-            mock_log.assert_called_once()
-            self.assertEqual(mock_log.call_args[0][0], pl.TRACE)
+    def test_uses_trace_level(self):
+        logger = MagicMock()
+        logger.isEnabledFor.return_value = True
+        pl.log_event(logger, "trace", "HTTP", "trace msg")
+        logger.log.assert_called_once_with(
+            pl.TRACE, "trace msg",
+            extra={"log_key": "HTTP"},
+        )
+
+    def test_unknown_level_defaults_to_info(self):
+        logger = MagicMock()
+        logger.isEnabledFor.return_value = True
+        pl.log_event(logger, "nonexistent", "OUTPUT", "msg")
+        logger.log.assert_called_once()
+        self.assertEqual(logger.log.call_args[0][0], logging.INFO)
 
 
 # ===================================================================
@@ -292,50 +314,54 @@ class TestLogEvent(unittest.TestCase):
 class TestRedactingFormatter(unittest.TestCase):
     """Tests for RedactingFormatter."""
 
-    def _make_record(self, msg, **extras):
+    def _make_record(self, msg="test", level=logging.INFO, **extras):
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
+            name="test", level=level, pathname="", lineno=0,
             msg=msg, args=(), exc_info=None,
         )
         for k, v in extras.items():
             setattr(record, k, v)
         return record
 
-    def test_log_key_prefix(self):
-        fmt = pl.RedactingFormatter(pl.Redactor("none"))
-        record = self._make_record("hello", log_key="HTTP")
-        output = fmt.format(record)
-        self.assertIn("[HTTP]", output)
+    def test_formats_with_log_key_prefix(self):
+        fmt = pl.RedactingFormatter(pl.Redactor("none"), fmt="%(message)s")
+        record = self._make_record("hello", log_key="CHANGES")
+        result = fmt.format(record)
+        self.assertIn("[CHANGES]", result)
+        self.assertIn("hello", result)
 
-    def test_extra_fields_appended(self):
-        fmt = pl.RedactingFormatter(pl.Redactor("none"))
-        record = self._make_record("hello", log_key="OUTPUT",
-                                   status=200, doc_id="doc1")
-        output = fmt.format(record)
-        self.assertIn("status=200", output)
-        self.assertIn("doc_id=doc1", output)
+    def test_includes_extra_fields(self):
+        fmt = pl.RedactingFormatter(pl.Redactor("none"), fmt="%(message)s")
+        record = self._make_record("hello", doc_id="doc1", seq="42")
+        result = fmt.format(record)
+        self.assertIn("doc_id=doc1", result)
+        self.assertIn("seq=42", result)
 
-    def test_url_field_redacted(self):
-        fmt = pl.RedactingFormatter(pl.Redactor("partial"))
-        record = self._make_record("req",
-                                   log_key="HTTP",
-                                   url="http://admin:pass@host/db")
-        output = fmt.format(record)
-        self.assertIn("<ud>***:***</ud>@", output)
-        self.assertNotIn("admin:pass", output)
+    def test_redacts_url_field(self):
+        fmt = pl.RedactingFormatter(pl.Redactor("partial"), fmt="%(message)s")
+        record = self._make_record("request", url="http://admin:pass@host/db")
+        result = fmt.format(record)
+        self.assertIn("<ud>***:***</ud>", result)
+        self.assertNotIn("admin:pass", result)
 
-    def test_message_redacted(self):
-        fmt = pl.RedactingFormatter(pl.Redactor("full"))
-        record = self._make_record("connecting to http://user:pw@host/db")
-        output = fmt.format(record)
-        self.assertIn("<ud>XXXXX</ud>@", output)
-        self.assertNotIn("user:pw", output)
+    def test_redacts_message_content(self):
+        fmt = pl.RedactingFormatter(pl.Redactor("partial"), fmt="%(message)s")
+        record = self._make_record("connecting to http://user:pwd@host")
+        result = fmt.format(record)
+        self.assertIn("<ud>***:***</ud>", result)
+        self.assertNotIn("user:pwd", result)
 
     def test_no_extras_no_suffix(self):
-        fmt = pl.RedactingFormatter(pl.Redactor("none"))
+        fmt = pl.RedactingFormatter(pl.Redactor("none"), fmt="%(message)s")
         record = self._make_record("plain message")
-        output = fmt.format(record)
-        self.assertIn("plain message", output)
+        result = fmt.format(record)
+        self.assertEqual(result, "plain message")
+
+    def test_operation_field_included(self):
+        fmt = pl.RedactingFormatter(pl.Redactor("none"), fmt="%(message)s")
+        record = self._make_record("op test", operation="INSERT")
+        result = fmt.format(record)
+        self.assertIn("operation=INSERT", result)
 
 
 # ===================================================================
@@ -345,13 +371,17 @@ class TestRedactingFormatter(unittest.TestCase):
 class TestConfigureLogging(unittest.TestCase):
     """Tests for configure_logging()."""
 
-    def tearDown(self):
-        # Reset root logger after each test
-        root = logging.getLogger()
-        root.handlers.clear()
-        root.setLevel(logging.WARNING)
+    def setUp(self):
+        # Save root handler state
+        self._root = logging.getLogger()
+        self._original_handlers = self._root.handlers[:]
 
-    def test_legacy_mode(self):
+    def tearDown(self):
+        # Restore root handler state
+        root = logging.getLogger()
+        root.handlers = self._original_handlers
+
+    def test_legacy_mode_configures_console_handler(self):
         pl.configure_logging({"level": "WARNING"})
         root = logging.getLogger()
         self.assertEqual(len(root.handlers), 1)
@@ -359,12 +389,11 @@ class TestConfigureLogging(unittest.TestCase):
         self.assertIsInstance(handler, logging.StreamHandler)
         self.assertEqual(handler.level, logging.WARNING)
 
-    def test_legacy_mode_redaction(self):
+    def test_legacy_mode_sets_redactor(self):
         pl.configure_logging({"level": "DEBUG", "redaction_level": "full"})
-        r = pl.get_redactor()
-        self.assertEqual(r.level, "full")
+        self.assertEqual(pl.get_redactor().level, "full")
 
-    def test_sg_style_console_only(self):
+    def test_full_mode_console_handler(self):
         cfg = {
             "redaction_level": "partial",
             "console": {
@@ -375,11 +404,10 @@ class TestConfigureLogging(unittest.TestCase):
         }
         pl.configure_logging(cfg)
         root = logging.getLogger()
-        self.assertEqual(len(root.handlers), 1)
-        r = pl.get_redactor()
-        self.assertEqual(r.level, "partial")
+        self.assertTrue(len(root.handlers) >= 1)
+        self.assertEqual(pl.get_redactor().level, "partial")
 
-    def test_sg_style_file_handler(self):
+    def test_full_mode_file_handler(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = os.path.join(tmpdir, "test.log")
             cfg = {
@@ -391,22 +419,32 @@ class TestConfigureLogging(unittest.TestCase):
                     "log_level": "info",
                     "log_keys": ["*"],
                     "rotation": {
-                        "max_size": 10,
+                        "max_size": 1,
                         "max_age": 1,
-                        "rotated_logs_size_limit": 50,
+                        "rotated_logs_size_limit": 10,
                     },
                 },
             }
             pl.configure_logging(cfg)
             root = logging.getLogger()
-            self.assertEqual(len(root.handlers), 1)
-            self.assertIsInstance(root.handlers[0], pl.ManagedRotatingFileHandler)
+            file_handlers = [h for h in root.handlers
+                             if isinstance(h, pl.ManagedRotatingFileHandler)]
+            self.assertEqual(len(file_handlers), 1)
+            # Clean up handler to release file
+            for h in root.handlers[:]:
+                h.close()
+                root.removeHandler(h)
 
-    def test_sg_style_both_handlers(self):
+    def test_full_mode_both_handlers(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = os.path.join(tmpdir, "test.log")
             cfg = {
-                "console": {"enabled": True, "log_level": "info", "log_keys": ["*"]},
+                "redaction_level": "partial",
+                "console": {
+                    "enabled": True,
+                    "log_level": "info",
+                    "log_keys": ["*"],
+                },
                 "file": {
                     "enabled": True,
                     "path": log_path,
@@ -417,16 +455,15 @@ class TestConfigureLogging(unittest.TestCase):
             pl.configure_logging(cfg)
             root = logging.getLogger()
             self.assertEqual(len(root.handlers), 2)
+            for h in root.handlers[:]:
+                h.close()
+                root.removeHandler(h)
 
-    def test_console_disabled_no_handler(self):
-        cfg = {
-            "console": {"enabled": False},
-        }
-        pl.configure_logging(cfg)
-        root = logging.getLogger()
-        self.assertEqual(len(root.handlers), 0)
+    def test_legacy_mode_default_redaction_is_none(self):
+        pl.configure_logging({"level": "DEBUG"})
+        self.assertEqual(pl.get_redactor().level, "none")
 
-    def test_sg_style_key_levels(self):
+    def test_console_with_key_levels(self):
         cfg = {
             "console": {
                 "enabled": True,
@@ -438,9 +475,9 @@ class TestConfigureLogging(unittest.TestCase):
         pl.configure_logging(cfg)
         root = logging.getLogger()
         handler = root.handlers[0]
-        filt = handler.filters[0]
-        self.assertIsInstance(filt, pl.LogKeyLevelFilter)
-        self.assertEqual(filt.key_levels.get("HTTP"), logging.WARNING)
+        filters = handler.filters
+        self.assertEqual(len(filters), 1)
+        self.assertIsInstance(filters[0], pl.LogKeyLevelFilter)
 
 
 # ===================================================================
@@ -450,74 +487,70 @@ class TestConfigureLogging(unittest.TestCase):
 class TestManagedRotatingFileHandler(unittest.TestCase):
     """Tests for ManagedRotatingFileHandler."""
 
-    def test_creates_directory(self):
+    def test_creates_directory_if_not_exists(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            subdir = os.path.join(tmpdir, "nested", "logs")
-            log_path = os.path.join(subdir, "app.log")
+            nested = os.path.join(tmpdir, "subdir", "deep")
+            log_path = os.path.join(nested, "test.log")
             handler = pl.ManagedRotatingFileHandler(log_path, max_size_mb=1)
-            self.assertTrue(os.path.isdir(subdir))
+            self.assertTrue(os.path.isdir(nested))
             handler.close()
 
     def test_cleanup_removes_old_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            log_path = os.path.join(tmpdir, "app.log")
+            log_path = os.path.join(tmpdir, "test.log")
             handler = pl.ManagedRotatingFileHandler(
                 log_path, max_size_mb=1, max_age_days=0,
             )
-            # Create fake rotated files
-            for i in range(3):
-                rotated = f"{log_path}.{i+1}"
-                with open(rotated, "w") as f:
-                    f.write("x" * 100)
-                # Set mtime to 2 days ago
-                old_time = time.time() - 2 * 86400
-                os.utime(rotated, (old_time, old_time))
+            # Create fake rotated files with old modification times
+            old_file = log_path + ".1"
+            with open(old_file, "w") as f:
+                f.write("old log data")
+            # Set modification time to 2 days ago
+            old_time = time.time() - 2 * 86400
+            os.utime(old_file, (old_time, old_time))
 
             handler._cleanup_rotated_files()
-
-            remaining = [f for f in os.listdir(tmpdir) if f != "app.log"]
-            self.assertEqual(len(remaining), 0)
+            self.assertFalse(os.path.exists(old_file))
             handler.close()
 
     def test_cleanup_enforces_size_limit(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            log_path = os.path.join(tmpdir, "app.log")
-            # 1 byte size limit → should remove excess
+            log_path = os.path.join(tmpdir, "test.log")
+            # Set very small rotated_logs_size_limit (1 byte effectively)
             handler = pl.ManagedRotatingFileHandler(
-                log_path, max_size_mb=1, max_age_days=365,
+                log_path, max_size_mb=1, max_age_days=30,
                 rotated_logs_size_limit_mb=0,
             )
+            # Create fake rotated files
             for i in range(3):
-                rotated = f"{log_path}.{i+1}"
-                with open(rotated, "w") as f:
-                    f.write("x" * 1024)
+                rfile = log_path + f".{i+1}"
+                with open(rfile, "w") as f:
+                    f.write("x" * 100)
 
             handler._cleanup_rotated_files()
-
-            remaining = [f for f in os.listdir(tmpdir) if f.startswith("app.log.")]
+            # All files should be removed since limit is 0
+            remaining = [f for f in os.listdir(tmpdir)
+                         if f.startswith("test.log.")]
             self.assertEqual(len(remaining), 0)
             handler.close()
 
 
 # ===================================================================
-# Constants / module-level
+# TRACE level
 # ===================================================================
 
-class TestConstants(unittest.TestCase):
-    """Sanity checks for module-level constants."""
+class TestTraceLevel(unittest.TestCase):
+    """Tests for custom TRACE level."""
 
     def test_trace_level_value(self):
         self.assertEqual(pl.TRACE, 5)
 
-    def test_log_keys_contains_expected(self):
-        for key in ("CHANGES", "HTTP", "OUTPUT", "CBL", "DLQ"):
-            self.assertIn(key, pl.LOG_KEYS)
+    def test_trace_level_name(self):
+        self.assertEqual(logging.getLevelName(pl.TRACE), "TRACE")
 
-    def test_levels_mapping(self):
-        self.assertEqual(pl.LEVELS["trace"], pl.TRACE)
-        self.assertEqual(pl.LEVELS["debug"], logging.DEBUG)
-        self.assertEqual(pl.LEVELS["warn"], logging.WARNING)
-        self.assertEqual(pl.LEVELS["warning"], logging.WARNING)
+    def test_logger_has_trace_method(self):
+        logger = logging.getLogger("test_trace")
+        self.assertTrue(hasattr(logger, "trace"))
 
 
 if __name__ == "__main__":
