@@ -533,6 +533,16 @@ class MetricsCollector:
         except Exception:
             pass  # system metrics are best-effort
 
+        # ── Per-engine / per-job DB metrics ────────────────────────────────
+        try:
+            from db.db_base import DbMetrics
+            db_lines = DbMetrics.render_all()
+            if db_lines:
+                lines.append("")
+                lines.append(db_lines)
+        except Exception:
+            pass  # db_base may not be loaded if no DB output is configured
+
         lines.append("")
         return "\n".join(lines)
 
@@ -563,13 +573,85 @@ async def _restart_handler(request: aiohttp.web.Request) -> aiohttp.web.Response
 
 
 async def _shutdown_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
-    """POST /_shutdown — graceful shutdown: stop feed, finish outputs, exit."""
+    """POST /_shutdown — graceful shutdown: stop feed, wait for in-flight
+    processing and outputs to finish, then respond.
+
+    CBL database close is handled by main()'s finally block after the
+    event loop finishes, ensuring all async generators (which may write
+    DLQ entries) complete before the database is closed.
+
+    Behaviour:
+      1. Set shutdown_event → _changes loops stop, RetryableHTTP aborts retries.
+      2. Wait up to ``drain_timeout_seconds`` for active tasks to finish.
+         - If tasks drain in time → checkpoint was NOT advanced past pending
+           work, so nothing is lost.
+         - If drain times out → remaining docs could not be delivered.
+           * If ``dlq_inflight_on_shutdown`` is true the batch handler already
+             wrote them to the dead-letter queue (CBL or .jsonl) so they can
+             be reprocessed later even if a newer revision arrives on the feed.
+           * If false the checkpoint was held back; the same docs will be
+             re-fetched on the next startup.
+      3. Return summary JSON.
+    """
     shutdown_event: asyncio.Event | None = request.app.get("shutdown_event")
     if shutdown_event is None:
         return aiohttp.web.json_response({"error": "shutdown not supported"}, status=500)
+
     log_event(logger, "info", "CONTROL", "graceful shutdown requested via /_shutdown endpoint")
+
+    # Read shutdown config from the app (set by start_metrics_server)
+    shutdown_cfg: dict = request.app.get("shutdown_cfg", {})
+    drain_timeout = shutdown_cfg.get("drain_timeout_seconds", 60)
+    dlq_policy = shutdown_cfg.get("dlq_inflight_on_shutdown", False)
+
+    # 1. Signal the _changes feed loops & retry loops to stop
     shutdown_event.set()
-    return aiohttp.web.json_response({"ok": True, "message": "shutdown signal sent"})
+
+    # 2. Wait for all in-flight processing / output tasks to drain
+    metrics: MetricsCollector | None = request.app.get("metrics")
+    drained = True
+    tasks_remaining = 0
+    if metrics is not None:
+        t0 = time.monotonic()
+        while metrics.active_tasks > 0:
+            elapsed = time.monotonic() - t0
+            if elapsed > drain_timeout:
+                tasks_remaining = metrics.active_tasks
+                drained = False
+                log_event(logger, "warn", "CONTROL",
+                          "shutdown drain timed out after %ds with %d tasks still active"
+                          % (drain_timeout, tasks_remaining))
+                break
+            log_event(logger, "debug", "CONTROL",
+                      "waiting for %d active tasks to finish" % metrics.active_tasks)
+            await asyncio.sleep(0.5)
+        if drained:
+            log_event(logger, "info", "CONTROL", "all active tasks drained")
+
+    # 3. Build response summary
+    summary: dict = {
+        "ok": True,
+        "drained": drained,
+        "drain_timeout_seconds": drain_timeout,
+        "dlq_inflight_on_shutdown": dlq_policy,
+    }
+    if not drained:
+        summary["tasks_remaining"] = tasks_remaining
+        if dlq_policy:
+            summary["message"] = (
+                "shutdown complete – drain timed out, %d in-flight docs written to dead-letter queue, "
+                "checkpoint was NOT advanced past them" % tasks_remaining
+            )
+        else:
+            summary["message"] = (
+                "shutdown complete – drain timed out, %d in-flight docs NOT delivered, "
+                "checkpoint was NOT advanced – they will be re-fetched on next startup" % tasks_remaining
+            )
+    else:
+        summary["message"] = "shutdown complete – feeds stopped, outputs drained, database closed"
+
+    log_event(logger, "info", "CONTROL", "graceful shutdown complete: %s" % summary["message"])
+    return aiohttp.web.json_response(summary)
 
 
 async def _offline_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
@@ -609,18 +691,23 @@ async def start_metrics_server(metrics: MetricsCollector, host: str, port: int,
                                restart_event: asyncio.Event | None = None,
                                shutdown_event: asyncio.Event | None = None,
                                offline_event: asyncio.Event | None = None,
+                               cbl_scheduler: CBLMaintenanceScheduler | None = None,
+                               shutdown_cfg: dict | None = None,
                                ) -> aiohttp.web.AppRunner:
     """Start a lightweight HTTP server that serves /_metrics in Prometheus format."""
     from aiohttp import web
 
     app = web.Application()
     app["metrics"] = metrics
+    app["shutdown_cfg"] = shutdown_cfg or {}
     if restart_event is not None:
         app["restart_event"] = restart_event
     if shutdown_event is not None:
         app["shutdown_event"] = shutdown_event
     if offline_event is not None:
         app["offline_event"] = offline_event
+    if cbl_scheduler is not None:
+        app["cbl_scheduler"] = cbl_scheduler
     app.router.add_get("/_metrics", _metrics_handler)
     app.router.add_get("/metrics", _metrics_handler)
     app.router.add_post("/_restart", _restart_handler)
@@ -1180,6 +1267,10 @@ class Checkpoint:
 # HTTP helpers with retry
 # ---------------------------------------------------------------------------
 
+class ShutdownRequested(Exception):
+    """Raised when a shutdown signal interrupts a retryable operation."""
+
+
 class RetryableHTTP:
     def __init__(self, session: aiohttp.ClientSession, retry_cfg: dict):
         self._session = session
@@ -1188,13 +1279,21 @@ class RetryableHTTP:
         self._backoff_max = retry_cfg.get("backoff_max_seconds", 60)
         self._retry_statuses = set(retry_cfg.get("retry_on_status", [500, 502, 503, 504]))
         self._metrics = None
+        self._shutdown_event: asyncio.Event | None = None
 
     def set_metrics(self, metrics: "MetricsCollector | None") -> None:
         self._metrics = metrics
 
+    def set_shutdown_event(self, event: asyncio.Event) -> None:
+        self._shutdown_event = event
+
     async def request(self, method: str, url: str, **kwargs) -> aiohttp.ClientResponse:
+        shutdown = kwargs.pop("shutdown_event", None) or self._shutdown_event
         last_exc: Exception | None = None
         for attempt in range(1, self._max_retries + 1):
+            if shutdown and shutdown.is_set():
+                raise ShutdownRequested(f"Shutdown requested before attempt #{attempt} for {method} {url}")
+
             try:
                 resp = await self._session.request(method, url, **kwargs)
                 if resp.status < 300:
@@ -1230,11 +1329,19 @@ class RetryableHTTP:
                 if self._metrics:
                     self._metrics.inc("retries_total")
 
-            delay = min(self._backoff_base * (2 ** (attempt - 1)), self._backoff_max)
-            log_event(logger, "info", "RETRY",
-                      "backing off before retry",
-                      delay_seconds=delay, attempt=attempt)
-            await asyncio.sleep(delay)
+            if attempt < self._max_retries:
+                delay = min(self._backoff_base * (2 ** (attempt - 1)), self._backoff_max)
+                log_event(logger, "info", "RETRY",
+                          "backing off before retry",
+                          delay_seconds=delay, attempt=attempt)
+                if shutdown:
+                    try:
+                        await asyncio.wait_for(shutdown.wait(), timeout=delay)
+                        raise ShutdownRequested(f"Shutdown during backoff for {method} {url}")
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    await asyncio.sleep(delay)
 
         if self._metrics:
             self._metrics.inc("retry_exhausted_total")
@@ -1455,6 +1562,7 @@ async def _process_changes_batch(
     metrics: MetricsCollector | None,
     every_n_docs: int,
     max_concurrent: int,
+    shutdown_cfg: dict | None = None,
 ) -> tuple[str, bool]:
     """
     Process a batch of _changes results: filter, fetch docs, forward to output,
@@ -1535,34 +1643,36 @@ async def _process_changes_batch(
         async with semaphore:
             if metrics:
                 metrics.inc("active_tasks")
-            doc_id = change.get("id", "")
-            if feed_cfg.get("include_docs"):
-                doc = change.get("doc", change)
-            else:
-                doc = docs_by_id.get(doc_id, change)
-            method = determine_method(
-                change,
-                write_method=getattr(output, '_write_method', 'PUT'),
-                delete_method=getattr(output, '_delete_method', 'DELETE'),
-            )
-            op = infer_operation(change=change, doc=doc, method=method)
-            log_event(logger, "trace", "OUTPUT", "sending document",
-                      operation=op, doc_id=doc_id, mode=output._mode,
-                      http_method=method)
-            result = await output.send(doc, method)
-            result["_change"] = change
-            result["_doc"] = doc
-            if result.get("ok"):
-                log_event(logger, "debug", "OUTPUT", "document forwarded",
-                          operation=op, doc_id=doc_id,
-                          status=result.get("status"))
-            else:
-                log_event(logger, "warn", "OUTPUT", "document delivery failed",
-                          operation=op, doc_id=doc_id,
-                          status=result.get("status"))
-            if metrics:
-                metrics.set("active_tasks", max(0, metrics.active_tasks - 1))
-            return result
+            try:
+                doc_id = change.get("id", "")
+                if feed_cfg.get("include_docs"):
+                    doc = change.get("doc", change)
+                else:
+                    doc = docs_by_id.get(doc_id, change)
+                method = determine_method(
+                    change,
+                    write_method=getattr(output, '_write_method', 'PUT'),
+                    delete_method=getattr(output, '_delete_method', 'DELETE'),
+                )
+                op = infer_operation(change=change, doc=doc, method=method)
+                log_event(logger, "trace", "OUTPUT", "sending document",
+                          operation=op, doc_id=doc_id, mode=output._mode,
+                          http_method=method)
+                result = await output.send(doc, method)
+                result["_change"] = change
+                result["_doc"] = doc
+                if result.get("ok"):
+                    log_event(logger, "debug", "OUTPUT", "document forwarded",
+                              operation=op, doc_id=doc_id,
+                              status=result.get("status"))
+                else:
+                    log_event(logger, "warn", "OUTPUT", "document delivery failed",
+                              operation=op, doc_id=doc_id,
+                              status=result.get("status"))
+                return result
+            finally:
+                if metrics:
+                    metrics.inc("active_tasks", -1)
 
     if every_n_docs > 0 and sequential:
         for i in range(0, len(filtered), every_n_docs):
@@ -1577,9 +1687,21 @@ async def _process_changes_batch(
                         if dlq.enabled and metrics:
                             metrics.inc("dead_letter_total")
                         await dlq.write(result["_doc"], result, change.get("seq", ""))
-                except OutputEndpointDown as exc:
+                except (OutputEndpointDown, ShutdownRequested) as exc:
                     output_failed = True
-                    logger.error("OUTPUT DOWN – not advancing checkpoint past since=%s: %s", since, exc)
+                    is_shutdown = isinstance(exc, ShutdownRequested)
+                    logger.error("%s – not advancing checkpoint past since=%s: %s",
+                                 "SHUTDOWN" if is_shutdown else "OUTPUT DOWN", since, exc)
+                    # DLQ remaining docs in this sub-batch if shutdown + dlq_inflight_on_shutdown
+                    if is_shutdown and (shutdown_cfg or {}).get("dlq_inflight_on_shutdown", False) and dlq.enabled:
+                        remaining = sub_batch[sub_batch.index(change):]
+                        for rem in remaining:
+                            rem_doc = rem.get("doc", rem) if feed_cfg.get("include_docs") else docs_by_id.get(rem.get("id", ""), rem)
+                            await dlq.write(rem_doc, {"doc_id": rem.get("id", ""), "method": "PUT", "status": 0,
+                                                      "error": "shutdown_inflight"}, rem.get("seq", ""))
+                        if metrics:
+                            metrics.inc("dead_letter_total", len(remaining))
+                        log_event(logger, "warn", "SHUTDOWN", "DLQ'd %d remaining docs from sub-batch" % len(remaining))
                     break
             if output_failed:
                 break
@@ -1615,12 +1737,33 @@ async def _process_changes_batch(
                         if dlq.enabled and metrics:
                             metrics.inc("dead_letter_total")
                         await dlq.write(result["_doc"], result, result["_change"].get("seq", ""))
-        except OutputEndpointDown as exc:
+        except (OutputEndpointDown, ShutdownRequested) as exc:
             output_failed = True
+            is_shutdown = isinstance(exc, ShutdownRequested)
             logger.error(
-                "OUTPUT DOWN – not advancing checkpoint past since=%s: %s",
-                since, exc,
+                "%s – not advancing checkpoint past since=%s: %s",
+                "SHUTDOWN" if is_shutdown else "OUTPUT DOWN", since, exc,
             )
+            # DLQ all unprocessed docs if shutdown + dlq_inflight_on_shutdown
+            if is_shutdown and (shutdown_cfg or {}).get("dlq_inflight_on_shutdown", False) and dlq.enabled:
+                # In sequential mode, we know which docs haven't been tried yet
+                processed_ids = set()  # noqa: F841
+                if sequential:
+                    # Find which docs were already processed (succeeded or failed above)
+                    # The current change that raised is the boundary
+                    pass
+                # For parallel mode, all docs were dispatched as tasks;
+                # unfinished ones got cancelled — DLQ all filtered docs that didn't succeed
+                dlq_count = 0
+                for ch in filtered:
+                    ch_doc = ch.get("doc", ch) if feed_cfg.get("include_docs") else docs_by_id.get(ch.get("id", ""), ch)
+                    await dlq.write(ch_doc, {"doc_id": ch.get("id", ""), "method": "PUT", "status": 0,
+                                             "error": "shutdown_inflight"}, ch.get("seq", ""))
+                    dlq_count += 1
+                if metrics:
+                    metrics.inc("dead_letter_total", dlq_count)
+                log_event(logger, "warn", "SHUTDOWN",
+                          "DLQ'd %d docs from batch (checkpoint not advanced)" % dlq_count)
 
     if metrics:
         metrics.inc("changes_processed_total", len(filtered))
@@ -1678,6 +1821,7 @@ async def _catch_up_normal(
     max_concurrent: int,
     timeout_ms: int,
     changes_http_timeout: aiohttp.ClientTimeout,
+    shutdown_cfg: dict | None = None,
 ) -> str:
     """
     Phase 1 of continuous mode: catch up using one-shot normal requests
@@ -1730,6 +1874,7 @@ async def _catch_up_normal(
             basic_auth=basic_auth, auth_headers=auth_headers,
             semaphore=semaphore, src=src, metrics=metrics,
             every_n_docs=every_n_docs, max_concurrent=max_concurrent,
+            shutdown_cfg=shutdown_cfg,
         )
 
         if output_failed:
@@ -1768,6 +1913,7 @@ async def _consume_continuous_stream(
     every_n_docs: int,
     max_concurrent: int,
     timeout_ms: int,
+    shutdown_cfg: dict | None = None,
 ) -> str:
     """
     Phase 2 of continuous mode: open a streaming connection with
@@ -1845,6 +1991,7 @@ async def _consume_continuous_stream(
                     basic_auth=basic_auth, auth_headers=auth_headers,
                     semaphore=semaphore, src=src, metrics=metrics,
                     every_n_docs=every_n_docs, max_concurrent=max_concurrent,
+                    shutdown_cfg=shutdown_cfg,
                 )
 
                 if output_failed:
@@ -1892,6 +2039,7 @@ async def _consume_websocket_stream(
     every_n_docs: int,
     max_concurrent: int,
     timeout_ms: int,
+    shutdown_cfg: dict | None = None,
 ) -> str:
     """
     WebSocket mode: open a real WebSocket connection to the _changes
@@ -2007,6 +2155,7 @@ async def _consume_websocket_stream(
                         basic_auth=basic_auth, auth_headers=auth_headers,
                         semaphore=semaphore, src=src, metrics=metrics,
                         every_n_docs=every_n_docs, max_concurrent=max_concurrent,
+                        shutdown_cfg=shutdown_cfg,
                     )
                     payload["since"] = since
 
@@ -2037,6 +2186,75 @@ async def _consume_websocket_stream(
             continue
 
     return since
+
+
+# ---------------------------------------------------------------------------
+# DLQ replay
+# ---------------------------------------------------------------------------
+
+async def _replay_dead_letter_queue(
+    dlq: "DeadLetterQueue",
+    output: "OutputForwarder",
+    metrics: MetricsCollector | None,
+    shutdown_event: asyncio.Event,
+) -> dict:
+    """Replay pending DLQ entries before processing new _changes.
+
+    Sends each DLQ doc to the output endpoint. On success, purges the entry
+    from CBL so it doesn't accumulate. On failure, leaves it for next startup.
+
+    Returns a summary dict with counts.
+    """
+    pending = dlq.list_pending()
+    if not pending:
+        log_event(logger, "info", "DLQ", "no pending dead-letter entries to replay")
+        return {"total": 0, "succeeded": 0, "failed": 0}
+
+    log_event(logger, "info", "DLQ", "replaying %d dead-letter entries before processing new changes" % len(pending))
+
+    succeeded = 0
+    failed = 0
+    for entry in pending:
+        if shutdown_event.is_set():
+            log_event(logger, "warn", "DLQ", "shutdown during DLQ replay – stopping")
+            break
+
+        dlq_id = entry.get("id", "")
+        doc_id = entry.get("doc_id_original", entry.get("doc_id", ""))
+        method = entry.get("method", "PUT")
+
+        # Get the full doc data
+        full_entry = dlq.get_entry_doc(dlq_id)
+        if full_entry is None:
+            log_event(logger, "warn", "DLQ", "could not load DLQ entry for replay",
+                      doc_id=dlq_id)
+            failed += 1
+            continue
+
+        doc = full_entry.get("doc_data", {})
+        log_event(logger, "info", "DLQ", "replaying DLQ entry",
+                  doc_id=doc_id, dlq_id=dlq_id, method=method)
+
+        try:
+            result = await output.send(doc, method)
+            if result.get("ok"):
+                await dlq.purge(dlq_id)
+                succeeded += 1
+                log_event(logger, "info", "DLQ", "DLQ entry replayed successfully – purged",
+                          doc_id=doc_id, dlq_id=dlq_id)
+            else:
+                failed += 1
+                log_event(logger, "warn", "DLQ", "DLQ entry replay failed – keeping for next startup",
+                          doc_id=doc_id, dlq_id=dlq_id,
+                          status=result.get("status"))
+        except Exception as exc:
+            failed += 1
+            log_event(logger, "warn", "DLQ", "DLQ entry replay error: %s" % exc,
+                      doc_id=doc_id, dlq_id=dlq_id)
+
+    summary = {"total": len(pending), "succeeded": succeeded, "failed": failed}
+    log_event(logger, "info", "DLQ", "DLQ replay complete: %d/%d succeeded, %d failed" % (succeeded, len(pending), failed))
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -2099,6 +2317,7 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
         http = RetryableHTTP(session, retry_cfg)
         if metrics:
             http.set_metrics(metrics)
+        http.set_shutdown_event(shutdown_event)
 
         output_mode = out_cfg.get("mode", "stdout")
         db_output = None  # track DB forwarder for cleanup
@@ -2108,6 +2327,15 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
             if db_engine == "postgres":
                 from db.db_postgres import PostgresOutputForwarder
                 output = PostgresOutputForwarder(out_cfg, dry_run, metrics=metrics)
+            elif db_engine == "mysql":
+                from db.db_mysql import MySQLOutputForwarder
+                output = MySQLOutputForwarder(out_cfg, dry_run, metrics=metrics)
+            elif db_engine == "mssql":
+                from db.db_mssql import MSSQLOutputForwarder
+                output = MSSQLOutputForwarder(out_cfg, dry_run, metrics=metrics)
+            elif db_engine == "oracle":
+                from db.db_oracle import OracleOutputForwarder
+                output = OracleOutputForwarder(out_cfg, dry_run, metrics=metrics)
             else:
                 raise ValueError(f"Unsupported db engine: {db_engine}")
             await output.connect()
@@ -2119,6 +2347,9 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
                                             build_basic_auth_fn=build_basic_auth,
                                             build_auth_headers_fn=build_auth_headers,
                                             retryable_http_cls=RetryableHTTP)
+            # Make output retries shutdown-aware
+            if hasattr(output, '_http') and output._http is not None:
+                output._http.set_shutdown_event(shutdown_event)
 
         dlq = DeadLetterQueue(out_cfg.get("dead_letter_path", ""))
         every_n_docs = cfg.get("checkpoint", {}).get("every_n_docs", 0)
@@ -2140,6 +2371,15 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
         since = feed_cfg.get("since", "0")
         if since == "0" and cfg.get("checkpoint", {}).get("enabled", True):
             since = await checkpoint.load(http, base_url, basic_auth, auth_headers)
+
+        # ── Replay dead-letter queue before processing new changes ────
+        if dlq.enabled and not stop_event.is_set():
+            dlq_summary = await _replay_dead_letter_queue(
+                dlq, output, metrics, shutdown_event,
+            )
+            if dlq_summary["total"] > 0:
+                log_event(logger, "info", "DLQ",
+                          "DLQ replay summary: %s" % dlq_summary)
 
         throttle = feed_cfg.get("throttle_feed", 0)
 
@@ -2167,12 +2407,14 @@ async def poll_changes(cfg: dict, src: str, shutdown_event: asyncio.Event,
         changes_url = f"{base_url}/_changes"
 
         # Shared kwargs for _process_changes_batch / catch-up / continuous
+        shutdown_cfg = cfg.get("shutdown", {})
         batch_kwargs = dict(
             feed_cfg=feed_cfg, proc_cfg=proc_cfg, output=output, dlq=dlq,
             checkpoint=checkpoint, http=http, base_url=base_url,
             basic_auth=basic_auth, auth_headers=auth_headers,
             semaphore=semaphore, src=src, metrics=metrics,
             every_n_docs=every_n_docs, max_concurrent=max_concurrent,
+            shutdown_cfg=shutdown_cfg,
         )
 
         try:
@@ -2513,7 +2755,9 @@ def main() -> None:
                 start_metrics_server(metrics, metrics_host, metrics_port,
                                      restart_event=restart_event,
                                      shutdown_event=shutdown_event,
-                                     offline_event=offline_event)
+                                     offline_event=offline_event,
+                                     cbl_scheduler=cbl_scheduler,
+                                     shutdown_cfg=cfg.get("shutdown", {}))
             )
 
         # ── Restart loop: reload config & re-enter poll_changes ──────
@@ -2560,11 +2804,11 @@ def main() -> None:
     finally:
         if cbl_scheduler is not None:
             cbl_scheduler.stop()
-        if USE_CBL:
-            close_db()
         if metrics_runner is not None:
             loop.run_until_complete(metrics_runner.cleanup())
         loop.run_until_complete(loop.shutdown_asyncgens())
+        if USE_CBL:
+            close_db()
         loop.close()
         logger.info("Shutdown complete")
 

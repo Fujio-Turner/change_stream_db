@@ -1798,5 +1798,505 @@ class TestConsumeWebsocketStream(unittest.TestCase):
         self.assertGreaterEqual(params["session"].ws_connect.call_count, 2)
 
 
+# ===================================================================
+# ShutdownRequested exception
+# ===================================================================
+
+class TestShutdownRequested(unittest.TestCase):
+
+    def test_is_exception(self):
+        exc = cw.ShutdownRequested("test shutdown")
+        self.assertIsInstance(exc, Exception)
+        self.assertIn("test shutdown", str(exc))
+
+
+# ===================================================================
+# RetryableHTTP – shutdown-aware behaviour
+# ===================================================================
+
+class TestRetryableHTTPShutdown(unittest.TestCase):
+
+    def test_raises_shutdown_before_first_attempt(self):
+        """If shutdown_event is already set, raises ShutdownRequested immediately."""
+        session = MagicMock()
+        session.request = AsyncMock()
+
+        http = cw.RetryableHTTP(session, {"max_retries": 3, "backoff_base_seconds": 0, "backoff_max_seconds": 0})
+        event = asyncio.Event()
+        event.set()
+        http.set_shutdown_event(event)
+
+        with self.assertRaises(cw.ShutdownRequested):
+            asyncio.run(http.request("GET", "http://example.com"))
+        session.request.assert_not_called()
+
+    def test_shutdown_via_kwarg(self):
+        """shutdown_event can be passed as kwarg."""
+        session = MagicMock()
+        session.request = AsyncMock()
+
+        http = cw.RetryableHTTP(session, {"max_retries": 3, "backoff_base_seconds": 0, "backoff_max_seconds": 0})
+        event = asyncio.Event()
+        event.set()
+
+        with self.assertRaises(cw.ShutdownRequested):
+            asyncio.run(http.request("GET", "http://example.com", shutdown_event=event))
+
+    def test_shutdown_during_backoff_aborts(self):
+        """If shutdown_event fires during backoff sleep, raises ShutdownRequested."""
+        session = MagicMock()
+        resp_fail = AsyncMock()
+        resp_fail.status = 503
+        resp_fail.text = AsyncMock(return_value="Service Unavailable")
+        resp_fail.release = MagicMock()
+        session.request = AsyncMock(return_value=resp_fail)
+
+        http = cw.RetryableHTTP(session, {
+            "max_retries": 5,
+            "backoff_base_seconds": 100,  # very long sleep
+            "backoff_max_seconds": 100,
+            "retry_on_status": [503],
+        })
+
+        async def _run():
+            event = asyncio.Event()
+            http.set_shutdown_event(event)
+            # Set shutdown after a tiny delay
+
+            async def _set_later():
+                await asyncio.sleep(0.05)
+                event.set()
+            asyncio.create_task(_set_later())
+            await http.request("GET", "http://example.com")
+
+        with self.assertRaises(cw.ShutdownRequested):
+            asyncio.run(_run())
+
+    def test_no_backoff_after_last_attempt(self):
+        """After the last attempt, no backoff sleep should happen."""
+        session = MagicMock()
+        resp_fail = AsyncMock()
+        resp_fail.status = 500
+        resp_fail.text = AsyncMock(return_value="error")
+        resp_fail.release = MagicMock()
+        session.request = AsyncMock(return_value=resp_fail)
+
+        http = cw.RetryableHTTP(session, {
+            "max_retries": 2,
+            "backoff_base_seconds": 0,
+            "backoff_max_seconds": 0,
+            "retry_on_status": [500],
+        })
+
+        import time as _time
+        t0 = _time.monotonic()
+        with self.assertRaises(ConnectionError):
+            asyncio.run(http.request("GET", "http://example.com"))
+        elapsed = _time.monotonic() - t0
+        # Should be very fast – no 60s sleep after last attempt
+        self.assertLess(elapsed, 2.0)
+        self.assertEqual(session.request.call_count, 2)
+
+    def test_set_shutdown_event_method(self):
+        session = MagicMock()
+        http = cw.RetryableHTTP(session, {"max_retries": 1})
+        self.assertIsNone(http._shutdown_event)
+        event = asyncio.Event()
+        http.set_shutdown_event(event)
+        self.assertIs(http._shutdown_event, event)
+
+
+# ===================================================================
+# Shutdown handler
+# ===================================================================
+
+class TestShutdownHandler(unittest.TestCase):
+
+    def _make_app(self, **kwargs):
+        """Build a minimal app dict mimic for _shutdown_handler."""
+        from aiohttp.web import Application
+        app = Application()
+        app["metrics"] = kwargs.get("metrics")
+        app["shutdown_event"] = kwargs.get("shutdown_event", asyncio.Event())
+        app["shutdown_cfg"] = kwargs.get("shutdown_cfg", {})
+        return app
+
+    def test_shutdown_sets_event_and_returns_ok(self):
+        async def _run():
+            shutdown_event = asyncio.Event()
+            metrics = cw.MetricsCollector("sg", "db")
+            # No active tasks → drains immediately
+
+            request = MagicMock()
+            request.app = {
+                "shutdown_event": shutdown_event,
+                "metrics": metrics,
+                "shutdown_cfg": {"drain_timeout_seconds": 1},
+            }
+
+            resp = await cw._shutdown_handler(request)
+            body = json.loads(resp.body)
+
+            self.assertTrue(shutdown_event.is_set())
+            self.assertTrue(body["ok"])
+            self.assertTrue(body["drained"])
+            self.assertIn("shutdown complete", body["message"])
+
+        asyncio.run(_run())
+
+    def test_shutdown_drain_timeout(self):
+        async def _run():
+            shutdown_event = asyncio.Event()
+            metrics = cw.MetricsCollector("sg", "db")
+            metrics.active_tasks = 5  # simulate stuck tasks
+
+            request = MagicMock()
+            request.app = {
+                "shutdown_event": shutdown_event,
+                "metrics": metrics,
+                "shutdown_cfg": {"drain_timeout_seconds": 0.1, "dlq_inflight_on_shutdown": True},
+            }
+
+            resp = await cw._shutdown_handler(request)
+            body = json.loads(resp.body)
+
+            self.assertTrue(body["ok"])
+            self.assertFalse(body["drained"])
+            self.assertEqual(body["tasks_remaining"], 5)
+            self.assertIn("dead-letter queue", body["message"])
+
+        asyncio.run(_run())
+
+    def test_shutdown_no_dlq_policy_message(self):
+        async def _run():
+            shutdown_event = asyncio.Event()
+            metrics = cw.MetricsCollector("sg", "db")
+            metrics.active_tasks = 2
+
+            request = MagicMock()
+            request.app = {
+                "shutdown_event": shutdown_event,
+                "metrics": metrics,
+                "shutdown_cfg": {"drain_timeout_seconds": 0.1, "dlq_inflight_on_shutdown": False},
+            }
+
+            resp = await cw._shutdown_handler(request)
+            body = json.loads(resp.body)
+
+            self.assertFalse(body["drained"])
+            self.assertIn("re-fetched on next startup", body["message"])
+
+        asyncio.run(_run())
+
+    def test_shutdown_no_event_returns_500(self):
+        async def _run():
+            request = MagicMock()
+            request.app = {}
+
+            resp = await cw._shutdown_handler(request)
+            self.assertEqual(resp.status, 500)
+
+        asyncio.run(_run())
+
+    def test_shutdown_does_not_close_cbl(self):
+        """The handler should NOT close CBL — main()'s finally does that."""
+        async def _run():
+            shutdown_event = asyncio.Event()
+            metrics = cw.MetricsCollector("sg", "db")
+
+            request = MagicMock()
+            request.app = {
+                "shutdown_event": shutdown_event,
+                "metrics": metrics,
+                "shutdown_cfg": {},
+            }
+
+            with patch("main.close_db") as mock_close:
+                await cw._shutdown_handler(request)
+                mock_close.assert_not_called()
+
+        asyncio.run(_run())
+
+
+# ===================================================================
+# DeadLetterQueue – purge, list_pending, get_entry_doc
+# ===================================================================
+
+class TestDeadLetterQueuePurge(unittest.TestCase):
+
+    def test_purge_cbl_calls_delete(self):
+        """purge() calls store.delete_dlq_entry when CBL is available."""
+        async def _run():
+            dlq = cw.DeadLetterQueue("")
+            dlq._use_cbl = True
+            mock_store = MagicMock()
+            dlq._store = mock_store
+
+            await dlq.purge("dlq:doc1:12345")
+            mock_store.delete_dlq_entry.assert_called_once_with("dlq:doc1:12345")
+
+        asyncio.run(_run())
+
+    def test_purge_file_noop(self):
+        """purge() is a no-op for file-based DLQ (just logs)."""
+        async def _run():
+            dlq = cw.DeadLetterQueue("test.jsonl")
+            # Should not raise
+            await dlq.purge("dlq:doc1:12345")
+
+        asyncio.run(_run())
+
+
+class TestDeadLetterQueueListPending(unittest.TestCase):
+
+    def test_list_pending_cbl(self):
+        dlq = cw.DeadLetterQueue("")
+        dlq._use_cbl = True
+        mock_store = MagicMock()
+        mock_store.list_dlq.return_value = [
+            {"id": "dlq:1", "retried": False},
+            {"id": "dlq:2", "retried": True},
+            {"id": "dlq:3", "retried": False},
+        ]
+        dlq._store = mock_store
+
+        pending = dlq.list_pending()
+        self.assertEqual(len(pending), 2)
+        self.assertEqual(pending[0]["id"], "dlq:1")
+        self.assertEqual(pending[1]["id"], "dlq:3")
+
+    def test_list_pending_file(self):
+        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False, mode="w") as f:
+            f.write(json.dumps({"doc_id": "doc1", "seq": "1"}) + "\n")
+            f.write(json.dumps({"doc_id": "doc2", "seq": "2"}) + "\n")
+            path = f.name
+        try:
+            dlq = cw.DeadLetterQueue(path)
+            pending = dlq.list_pending()
+            self.assertEqual(len(pending), 2)
+        finally:
+            os.unlink(path)
+
+    def test_list_pending_empty(self):
+        dlq = cw.DeadLetterQueue("")
+        pending = dlq.list_pending()
+        self.assertEqual(pending, [])
+
+    def test_get_entry_doc_cbl(self):
+        dlq = cw.DeadLetterQueue("")
+        dlq._use_cbl = True
+        mock_store = MagicMock()
+        mock_store.get_dlq_entry.return_value = {
+            "id": "dlq:doc1:123",
+            "doc_data": {"_id": "doc1", "val": 42},
+        }
+        dlq._store = mock_store
+
+        entry = dlq.get_entry_doc("dlq:doc1:123")
+        self.assertEqual(entry["doc_data"]["_id"], "doc1")
+        mock_store.get_dlq_entry.assert_called_once_with("dlq:doc1:123")
+
+    def test_get_entry_doc_file_returns_none(self):
+        dlq = cw.DeadLetterQueue("test.jsonl")
+        self.assertIsNone(dlq.get_entry_doc("dlq:doc1:123"))
+
+
+# ===================================================================
+# DLQ replay
+# ===================================================================
+
+class TestReplayDeadLetterQueue(unittest.TestCase):
+
+    def test_replay_no_pending(self):
+        """When DLQ is empty, returns zeros."""
+        async def _run():
+            dlq = MagicMock()
+            dlq.list_pending.return_value = []
+            output = MagicMock()
+            event = asyncio.Event()
+
+            result = await cw._replay_dead_letter_queue(dlq, output, None, event)
+            self.assertEqual(result, {"total": 0, "succeeded": 0, "failed": 0})
+
+        asyncio.run(_run())
+
+    def test_replay_success_purges(self):
+        """Successful replay purges the DLQ entry."""
+        async def _run():
+            dlq = MagicMock()
+            dlq.list_pending.return_value = [
+                {"id": "dlq:doc1:100", "doc_id_original": "doc1", "method": "PUT"},
+            ]
+            dlq.get_entry_doc.return_value = {
+                "id": "dlq:doc1:100",
+                "doc_data": {"_id": "doc1", "val": 1},
+            }
+            dlq.purge = AsyncMock()
+
+            output = MagicMock()
+            output.send = AsyncMock(return_value={"ok": True, "status": 200})
+            event = asyncio.Event()
+
+            result = await cw._replay_dead_letter_queue(dlq, output, None, event)
+
+            self.assertEqual(result["succeeded"], 1)
+            self.assertEqual(result["failed"], 0)
+            output.send.assert_called_once_with({"_id": "doc1", "val": 1}, "PUT")
+            dlq.purge.assert_called_once_with("dlq:doc1:100")
+
+        asyncio.run(_run())
+
+    def test_replay_failure_keeps_entry(self):
+        """Failed replay does NOT purge – entry stays for next startup."""
+        async def _run():
+            dlq = MagicMock()
+            dlq.list_pending.return_value = [
+                {"id": "dlq:doc1:100", "doc_id_original": "doc1", "method": "PUT"},
+            ]
+            dlq.get_entry_doc.return_value = {
+                "id": "dlq:doc1:100",
+                "doc_data": {"_id": "doc1"},
+            }
+            dlq.purge = AsyncMock()
+
+            output = MagicMock()
+            output.send = AsyncMock(return_value={"ok": False, "status": 500})
+            event = asyncio.Event()
+
+            result = await cw._replay_dead_letter_queue(dlq, output, None, event)
+
+            self.assertEqual(result["succeeded"], 0)
+            self.assertEqual(result["failed"], 1)
+            dlq.purge.assert_not_called()
+
+        asyncio.run(_run())
+
+    def test_replay_exception_keeps_entry(self):
+        """Exception during replay does NOT purge."""
+        async def _run():
+            dlq = MagicMock()
+            dlq.list_pending.return_value = [
+                {"id": "dlq:doc1:100", "doc_id_original": "doc1", "method": "PUT"},
+            ]
+            dlq.get_entry_doc.return_value = {
+                "id": "dlq:doc1:100",
+                "doc_data": {"_id": "doc1"},
+            }
+            dlq.purge = AsyncMock()
+
+            output = MagicMock()
+            output.send = AsyncMock(side_effect=ConnectionError("boom"))
+            event = asyncio.Event()
+
+            result = await cw._replay_dead_letter_queue(dlq, output, None, event)
+
+            self.assertEqual(result["failed"], 1)
+            dlq.purge.assert_not_called()
+
+        asyncio.run(_run())
+
+    def test_replay_stops_on_shutdown(self):
+        """If shutdown_event is set, replay stops early."""
+        async def _run():
+            dlq = MagicMock()
+            dlq.list_pending.return_value = [
+                {"id": "dlq:doc1:100", "doc_id_original": "doc1", "method": "PUT"},
+                {"id": "dlq:doc2:200", "doc_id_original": "doc2", "method": "PUT"},
+            ]
+            dlq.get_entry_doc.return_value = {"id": "dlq:doc1:100", "doc_data": {"_id": "doc1"}}
+            dlq.purge = AsyncMock()
+
+            output = MagicMock()
+            output.send = AsyncMock(return_value={"ok": True})
+            event = asyncio.Event()
+            event.set()  # already shutting down
+
+            result = await cw._replay_dead_letter_queue(dlq, output, None, event)
+
+            self.assertEqual(result["total"], 2)
+            output.send.assert_not_called()  # never got to send anything
+
+        asyncio.run(_run())
+
+    def test_replay_missing_entry_counts_as_failed(self):
+        """If get_entry_doc returns None, counts as failed."""
+        async def _run():
+            dlq = MagicMock()
+            dlq.list_pending.return_value = [
+                {"id": "dlq:doc1:100", "doc_id_original": "doc1", "method": "PUT"},
+            ]
+            dlq.get_entry_doc.return_value = None
+            dlq.purge = AsyncMock()
+
+            output = MagicMock()
+            output.send = AsyncMock()
+            event = asyncio.Event()
+
+            result = await cw._replay_dead_letter_queue(dlq, output, None, event)
+
+            self.assertEqual(result["failed"], 1)
+            output.send.assert_not_called()
+
+        asyncio.run(_run())
+
+    def test_replay_multiple_mixed_results(self):
+        """Multiple entries: some succeed, some fail."""
+        async def _run():
+            dlq = MagicMock()
+            dlq.list_pending.return_value = [
+                {"id": "dlq:doc1:100", "doc_id_original": "doc1", "method": "PUT"},
+                {"id": "dlq:doc2:200", "doc_id_original": "doc2", "method": "DELETE"},
+                {"id": "dlq:doc3:300", "doc_id_original": "doc3", "method": "PUT"},
+            ]
+            dlq.get_entry_doc.side_effect = [
+                {"id": "dlq:doc1:100", "doc_data": {"_id": "doc1"}},
+                {"id": "dlq:doc2:200", "doc_data": {"_id": "doc2"}},
+                {"id": "dlq:doc3:300", "doc_data": {"_id": "doc3"}},
+            ]
+            dlq.purge = AsyncMock()
+
+            output = MagicMock()
+            output.send = AsyncMock(side_effect=[
+                {"ok": True, "status": 200},
+                {"ok": False, "status": 503},
+                {"ok": True, "status": 201},
+            ])
+            event = asyncio.Event()
+
+            result = await cw._replay_dead_letter_queue(dlq, output, None, event)
+
+            self.assertEqual(result["total"], 3)
+            self.assertEqual(result["succeeded"], 2)
+            self.assertEqual(result["failed"], 1)
+            self.assertEqual(dlq.purge.call_count, 2)
+            # Verify correct methods were passed
+            calls = output.send.call_args_list
+            self.assertEqual(calls[1][0][1], "DELETE")  # doc2 used DELETE
+
+        asyncio.run(_run())
+
+
+# ===================================================================
+# active_tasks accounting (try/finally)
+# ===================================================================
+
+class TestActiveTasksAccounting(unittest.TestCase):
+
+    def test_active_tasks_decrements_on_success(self):
+        """active_tasks should decrement via inc(-1) after successful process_one."""
+        metrics = cw.MetricsCollector("sg", "db")
+        self.assertEqual(metrics.active_tasks, 0)
+        metrics.inc("active_tasks", 1)
+        self.assertEqual(metrics.active_tasks, 1)
+        metrics.inc("active_tasks", -1)
+        self.assertEqual(metrics.active_tasks, 0)
+
+    def test_active_tasks_can_go_negative_safely(self):
+        """inc(-1) when already 0 goes negative (no crash)."""
+        metrics = cw.MetricsCollector("sg", "db")
+        metrics.inc("active_tasks", -1)
+        self.assertEqual(metrics.active_tasks, -1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -39,7 +39,7 @@
   <div id="sidebar-root"></div>
 
   <div class="sidebar-main">
-  <main class="container mx-auto p-6 space-y-6">
+  <main class="w-full mx-auto p-6 space-y-6">
 
     <!-- Status Bar -->
     <div class="card bg-base-100 shadow">
@@ -304,7 +304,7 @@
   <dialog id="statusModal" class="modal">
     <div class="modal-box max-w-lg">
       <form method="dialog">
-        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">×</button>
       </form>
       <div class="flex items-center gap-3 mb-4">
         <span id="modalDot" class="dot dot-yellow"></span>
@@ -604,10 +604,10 @@ var metricsReachable = false;
 var statusDiag = { feed: null, process: null, output: null, cbl: null };
 var lastMetrics = null;
 
-function diagOk(text)   { return { icon: '✅', text: text, level: 'ok' }; }
-function diagWarn(text)  { return { icon: '⚠️', text: text, level: 'warn' }; }
-function diagErr(text)   { return { icon: '❌', text: text, level: 'error' }; }
-function diagInfo(text)  { return { icon: 'ℹ️', text: text, level: 'info' }; }
+function diagOk(text)   { return { icon: '', text: text, level: 'ok' }; }
+function diagWarn(text)  { return { icon: '', text: text, level: 'warn' }; }
+function diagErr(text)   { return { icon: '', text: text, level: 'error' }; }
+function diagInfo(text)  { return { icon: '', text: text, level: 'info' }; }
 
 function computeStatus(m, cfg) {
   lastMetrics = m;

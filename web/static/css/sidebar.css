@@ -27,7 +27,8 @@
   transition: margin-left var(--sidebar-transition);
   min-height: 100vh;
 }
-.sidebar.collapsed ~ .sidebar-main {
+.sidebar.collapsed ~ .sidebar-main,
+.sidebar-main.collapsed {
   margin-left: var(--sidebar-collapsed-width);
 }
 

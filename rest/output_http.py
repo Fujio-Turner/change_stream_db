@@ -564,6 +564,38 @@ class DeadLetterQueue:
                   operation="INSERT", doc_id=result.get("doc_id"),
                   seq=str(seq), storage="file")
 
+    async def purge(self, dlq_id: str) -> None:
+        """Remove a DLQ entry after successful reprocessing."""
+        if self._use_cbl and self._store:
+            self._store.delete_dlq_entry(dlq_id)
+            log_event(logger, "info", "DLQ", "entry purged after successful reprocessing",
+                      operation="DELETE", doc_id=dlq_id, storage="cbl")
+            return
+        # File-based DLQ does not support individual purge
+        log_event(logger, "debug", "DLQ", "file-based DLQ does not support purge",
+                  doc_id=dlq_id, storage="file")
+
+    def list_pending(self) -> list[dict]:
+        """Return all pending (not yet retried) DLQ entries."""
+        if self._use_cbl and self._store:
+            return [e for e in self._store.list_dlq() if not e.get("retried")]
+        if self._path and self._path.exists():
+            entries = []
+            for line in self._path.read_text().strip().split("\n"):
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+            return entries
+        return []
+
+    def get_entry_doc(self, dlq_id: str) -> dict | None:
+        """Return the full DLQ entry including doc_data for reprocessing."""
+        if self._use_cbl and self._store:
+            return self._store.get_dlq_entry(dlq_id)
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Minimal auth helpers (so this module can work standalone)

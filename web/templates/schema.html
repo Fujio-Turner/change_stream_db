@@ -63,10 +63,10 @@
             <li><a class="text-base-content/50">Loading...</a></li>
           </ul>
         </div>
-        <button class="btn btn-info btn-sm" onclick="document.getElementById('dbImportModal').showModal()">🗄️ Import from Database</button>
-        <button class="btn btn-warning btn-sm" onclick="document.getElementById('ddlModal').showModal()">📄 Upload DDL</button>
-        <button class="btn btn-primary btn-sm" onclick="validateMapping()">🧪 Validate Mapping</button>
-        <button class="btn btn-sm" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;" onclick="openAIAssist()">🤖 AI Assist Me</button>
+        <button class="btn btn-info btn-sm" onclick="document.getElementById('dbImportModal').showModal()">Import from Database</button>
+        <button class="btn btn-warning btn-sm" onclick="document.getElementById('ddlModal').showModal()">Upload DDL</button>
+        <button class="btn btn-primary btn-sm" onclick="validateMapping()">Validate Mapping</button>
+        <button class="btn btn-sm" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;" onclick="openAIAssist()">AI Assist Me</button>
         <span id="statusMsg" class="text-sm ml-auto"></span>
       </div>
     </div>
@@ -208,7 +208,7 @@ CREATE TABLE order_items (
     <dialog id="aiAssistModal" class="modal">
       <div class="modal-box w-11/12 max-w-5xl max-h-[90vh] flex flex-col">
         <form method="dialog">
-          <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+          <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">×</button>
         </form>
         <h3 class="font-bold text-lg mb-2">AI Assist — Schema Mapping Generator</h3>
         <p class="text-sm opacity-60 mb-4">Copy the context JSON below and paste it into your AI assistant (ChatGPT, Claude, etc.). Then paste the AI's response back to import it.</p>
@@ -1451,7 +1451,7 @@ function updateCoverage() {
       '<progress class="progress ' + tgtColor + ' w-full h-2" value="' + targetFilled + '" max="' + targetTotal + '"></progress>';
     if (targetEmpty.length) {
       thtml += '<div class="flex flex-wrap gap-1 mt-1">' +
-        targetEmpty.map(function(c) { return '<span class="badge badge-error badge-xs font-mono">' + esc(c) + ' ⚠</span>'; }).join('') +
+        targetEmpty.map(function(c) { return '<span class="badge badge-error badge-xs font-mono">' + esc(c) + '</span>'; }).join('') +
         '</div>';
     }
     thtml += '</div></div>';
@@ -1746,7 +1746,7 @@ function renderTreeDiagram() {
     var children = jsonFields.map(function(f) {
       var mapped = !!f.path;
       return {
-        name: f.key + (f.path ? '  ←  ' + f.path : '  ⚠ unmapped'),
+        name: f.key + (f.path ? '  ←  ' + f.path : '  unmapped'),
         symbolSize: 12,
         itemStyle: { color: mapped ? '#22c55e' : '#ef4444', borderColor: mapped ? '#16a34a' : '#dc2626' },
         label: { fontWeight: mapped ? 'bold' : 'normal', color: mapped ? '#22c55e' : '#ef4444', fontSize: 14 }
@@ -1810,7 +1810,7 @@ function renderTreeDiagram() {
       var cp = typeof cv === 'object' ? (cv.path || '') : (cv || '');
       var hasTx = typeof cv === 'object' && cv.transform;
       var mapped = !!cp;
-      var displayName = colName + (cp ? '  ←  ' + cp : '  ⚠ unmapped') + (hasTx ? '  ƒ' : '');
+      var displayName = colName + (cp ? '  ←  ' + cp : '  unmapped') + (hasTx ? '  ƒ' : '');
       return {
         name: displayName,
         symbolSize: 12,
@@ -1991,7 +1991,7 @@ async function loadFileList(autoLoadFirst) {
       }
       var isCurrent = currentFile === name;
       return '<tr class="' + (isCurrent ? 'bg-primary/10' : '') + ' hover">' +
-        '<td>' + (isCurrent ? '<span class="badge badge-primary badge-xs">●</span>' : '') + '</td>' +
+        '<td>' + (isCurrent ? '<span class="badge badge-primary badge-xs">•</span>' : '') + '</td>' +
         '<td><a class="link link-hover font-mono text-sm cursor-pointer" onclick="openFile(\'' + esc(name) + '\')">' + esc(name) + '</a></td>' +
         '<td class="text-sm opacity-70">' + esc(filterText) + '</td>' +
         '<td class="text-sm opacity-70">' + esc(dateStr) + '</td>' +
@@ -2190,8 +2190,8 @@ function showRestartRequiredToast() {
   el.id = id;
   el.className = 'alert alert-warning shadow-lg';
   el.style.cssText = 'border-left:4px solid #f59e0b;cursor:pointer';
-  el.innerHTML = '<span>⚠️ Changes saved but won\'t take effect until you <b>Restart</b> the worker.</span>' +
-    '<button class="btn btn-xs btn-ghost" onclick="this.parentElement.remove()">✕</button>';
+  el.innerHTML = '<span>Changes saved but won\'t take effect until you <b>Restart</b> the worker.</span>' +
+    '<button class="btn btn-xs btn-ghost" onclick="this.parentElement.remove()">×</button>';
   el.querySelector('span').addEventListener('click', function () {
     var btn = document.getElementById('restartBtn');
     if (btn) btn.click();

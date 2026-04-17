@@ -104,6 +104,10 @@
     "host": "0.0.0.0",
     "port": 9090
   },
+  "shutdown": {
+    "drain_timeout_seconds": 60,
+    "dlq_inflight_on_shutdown": false
+  },
   "couchbase_lite": {
     "db_dir": "/app/data",
     "db_name": "changes_worker_db",

@@ -26,7 +26,7 @@
   <div id="sidebar-root"></div>
 
   <div class="sidebar-main">
-  <main class="container mx-auto p-6 max-w-5xl">
+  <main class="w-full mx-auto p-6 max-w-5xl">
 
     <!-- Step Indicators -->
     <ul class="steps steps-horizontal w-full mb-6">
@@ -122,8 +122,29 @@
 
           <!-- Sample doc preview -->
           <div id="srcSampleWrap" class="mt-4 hidden">
-            <label class="label label-text text-xs font-semibold">Sample Document</label>
-            <textarea id="srcSampleDoc" class="textarea textarea-bordered w-full font-mono text-sm" rows="10" readonly></textarea>
+            <div class="flex items-center gap-2 mb-1">
+              <div class="tabs tabs-boxed tabs-sm">
+                <a class="tab tab-active" id="srcTabSample" onclick="switchSrcDocTab('sample')">Sample Doc</a>
+                <a class="tab" id="srcTabSchema" onclick="switchSrcDocTab('schema')">JSON Schema</a>
+              </div>
+              <span class="text-xs opacity-50">or paste a JSON Schema to generate samples</span>
+            </div>
+            <!-- Sample JSON panel -->
+            <div id="srcPanelSample">
+              <textarea id="srcSampleDoc" class="textarea textarea-bordered w-full font-mono text-sm" rows="10" readonly></textarea>
+            </div>
+            <!-- JSON Schema panel -->
+            <div id="srcPanelSchema" class="hidden">
+              <div id="srcSchemaFlavorPicker" class="hidden mb-2">
+                <label class="label label-text text-xs">Doc Type / Flavor</label>
+                <select id="srcSchemaFlavorSelect" class="select select-bordered select-sm w-full" onchange="onWizSchemaFlavorSelect()">
+                  <option value="">-- select a doc type --</option>
+                </select>
+              </div>
+              <textarea id="srcSchemaEditor" class="textarea textarea-bordered w-full font-mono text-sm" rows="10"
+                        placeholder='Paste a JSON Schema (json-schema.org format) or a flavor array...'
+                        oninput="onWizSchemaChange()"></textarea>
+            </div>
           </div>
         </div>
       </div>
@@ -209,7 +230,7 @@
             </div>
 
             <div class="flex items-center gap-3 mt-4">
-              <button class="btn btn-primary btn-sm" id="btnTestOutput" onclick="testOutput()">🔌 Test Output</button>
+              <button class="btn btn-primary btn-sm" id="btnTestOutput" onclick="testOutput()">Test Output</button>
               <span id="outHttpStatus" class="text-sm"></span>
             </div>
           </div>
@@ -282,8 +303,80 @@
       <div class="card bg-base-100 shadow-sm rounded-2xl">
         <div class="card-body">
           <h2 class="text-xl font-bold mb-1">Step 3: Map Source → Output</h2>
-          <p class="text-sm opacity-60 mb-4">Map your source document fields to the output format. Drag fields from the left panel onto the target mappings.</p>
+          <p class="text-sm opacity-60 mb-4">Choose how you want to build your field mappings.</p>
 
+          <!-- Mode chooser: AI Assist Me vs DIY -->
+          <div id="wizModeChooser" class="flex flex-col gap-4 mb-4">
+            <div class="flex gap-4">
+              <button class="btn btn-lg flex-1 gap-3" id="btnAIAssist" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;" onclick="wizChooseMode('ai')">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
+                <div class="text-left">
+                  <div class="font-bold">AI Assist Me</div>
+                  <div class="text-xs opacity-80 font-normal">Copy context to your AI, paste the response back</div>
+                </div>
+              </button>
+              <button class="btn btn-lg flex-1 gap-3 btn-outline" onclick="wizChooseMode('diy')">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                <div class="text-left">
+                  <div class="font-bold">DIY</div>
+                  <div class="text-xs opacity-80 font-normal">Manually map fields by dragging and dropping</div>
+                </div>
+              </button>
+            </div>
+            <div id="wizAIRequirements" class="hidden">
+              <div class="alert alert-warning shadow-sm text-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                <span>AI Assist requires a sample document. Go back to <strong>Step 1</strong> and fetch a sample or paste a JSON Schema to generate one.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- AI Assist panel -->
+          <div id="wizAIPanel" class="hidden mb-4">
+            <div class="card bg-base-200 rounded-xl">
+              <div class="card-body p-4">
+                <div class="flex items-center justify-between mb-3">
+                  <h4 class="text-sm font-semibold">AI Assist — Schema Mapping Generator</h4>
+                  <button class="btn btn-ghost btn-xs" onclick="wizChooseMode(null)">← Back to choices</button>
+                </div>
+                <p class="text-sm opacity-60 mb-3">Copy the context JSON below and paste it into your AI assistant (ChatGPT, Claude, etc.). Then switch to the Import tab and paste the AI's response back.</p>
+
+                <div class="tabs tabs-boxed mb-3">
+                  <a class="tab tab-active" id="wizAiTabExport" onclick="wizSwitchAITab('export')">1. Export Context</a>
+                  <a class="tab" id="wizAiTabImport" onclick="wizSwitchAITab('import')">2. Import AI Response</a>
+                </div>
+
+                <!-- Export -->
+                <div id="wizAiPanelExport">
+                  <div class="flex gap-2 mb-2">
+                    <button class="btn btn-sm btn-primary" onclick="wizCopyAIContext()">Copy to Clipboard</button>
+                    <button class="btn btn-sm btn-secondary" onclick="wizDownloadAIContext()">Download JSON</button>
+                  </div>
+                  <textarea id="wizAiContextOutput" class="textarea textarea-bordered w-full font-mono text-xs" style="min-height: 300px;" readonly></textarea>
+                </div>
+
+                <!-- Import -->
+                <div id="wizAiPanelImport" class="hidden">
+                  <p class="text-sm opacity-60 mb-2">Paste the AI-generated mapping JSON below, or upload a file:</p>
+                  <div class="flex gap-2 mb-2">
+                    <label class="btn btn-sm btn-secondary">
+                      Upload JSON File
+                      <input type="file" accept=".json,application/json" class="hidden" onchange="wizUploadAIResponse(event)" />
+                    </label>
+                  </div>
+                  <textarea id="wizAiResponseInput" class="textarea textarea-bordered w-full font-mono text-xs" style="min-height: 250px;"
+                            placeholder='Paste the AI-generated mapping JSON here...'></textarea>
+                  <div id="wizAiImportStatus" class="text-sm mt-2"></div>
+                  <div class="flex gap-2 mt-3">
+                    <button class="btn btn-success btn-sm" onclick="wizImportAIResponse()">Import Mapping</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- DIY manual mapping panel -->
+          <div id="wizDIYPanel" class="hidden">
           <div class="flex gap-4" style="min-height: 450px;">
             <!-- LEFT: Source Doc + Fields -->
             <div class="w-[45%] flex flex-col gap-3">
@@ -351,6 +444,8 @@
             </div>
           </div>
 
+          </div><!-- /wizDIYPanel -->
+
           <!-- Generated Config -->
           <div class="collapse collapse-arrow bg-base-100 shadow-sm rounded-2xl mt-4">
             <input type="checkbox" />
@@ -415,6 +510,14 @@ function nextStep() {
 }
 
 function prevStep() {
+  // If on step 3 in a sub-mode (AI or DIY), go back to the chooser first
+  if (currentStep === 3) {
+    var chooser = document.getElementById('wizModeChooser');
+    if (chooser.classList.contains('hidden')) {
+      wizChooseMode(null);
+      return;
+    }
+  }
   if (currentStep > 1) goToStep(currentStep - 1);
 }
 
@@ -526,6 +629,125 @@ async function fetchSample() {
 function showSampleDoc(doc) {
   document.getElementById('srcSampleWrap').classList.remove('hidden');
   document.getElementById('srcSampleDoc').value = JSON.stringify(doc, null, 2);
+  switchSrcDocTab('sample');
+}
+
+// ── Step 1: Sample Doc / JSON Schema tabs ────────────────────
+var wizSchemaFlavors = [];
+
+function switchSrcDocTab(tab) {
+  document.getElementById('srcTabSample').classList.toggle('tab-active', tab === 'sample');
+  document.getElementById('srcTabSchema').classList.toggle('tab-active', tab === 'schema');
+  document.getElementById('srcPanelSample').classList.toggle('hidden', tab !== 'sample');
+  document.getElementById('srcPanelSchema').classList.toggle('hidden', tab !== 'schema');
+  if (tab === 'schema') {
+    document.getElementById('srcSampleWrap').classList.remove('hidden');
+  }
+}
+
+function onWizSchemaChange() {
+  var text = document.getElementById('srcSchemaEditor').value.trim();
+  if (!text) { wizHideSchemaFlavorPicker(); return; }
+  try {
+    var parsed = JSON.parse(text);
+    var flavors = wizExtractSchemaFlavors(parsed);
+    if (flavors && flavors.length) {
+      wizSchemaFlavors = flavors;
+      wizShowSchemaFlavorPicker(flavors);
+      return;
+    }
+    wizHideSchemaFlavorPicker();
+    wizSchemaFlavors = [];
+    // Single schema — generate sample and use it
+    var sample = wizGenerateSampleFromSchema(parsed);
+    if (sample) {
+      wizardSampleDoc = sample;
+      document.getElementById('srcSampleDoc').value = JSON.stringify(sample, null, 2);
+      wizSourceFieldsList = extractPaths(sample);
+    }
+  } catch (e) { wizHideSchemaFlavorPicker(); }
+}
+
+function wizExtractSchemaFlavors(parsed) {
+  var arr = null;
+  if (Array.isArray(parsed) && parsed.length && Array.isArray(parsed[0])) {
+    arr = parsed[0];
+  } else if (Array.isArray(parsed) && parsed.length && parsed[0] && typeof parsed[0] === 'object' && 'Flavor' in parsed[0]) {
+    arr = parsed;
+  }
+  if (!arr) return null;
+  return arr.filter(function(entry) {
+    return entry && typeof entry === 'object' && entry.type === 'object' && entry.properties;
+  });
+}
+
+function wizShowSchemaFlavorPicker(flavors) {
+  var picker = document.getElementById('srcSchemaFlavorPicker');
+  var sel = document.getElementById('srcSchemaFlavorSelect');
+  sel.innerHTML = '<option value="">-- select a doc type (' + flavors.length + ' found) --</option>';
+  for (var i = 0; i < flavors.length; i++) {
+    var opt = document.createElement('option');
+    opt.value = i;
+    var label = flavors[i].Flavor || Object.keys(flavors[i].properties || {}).slice(0, 4).join(', ');
+    var count = flavors[i]['#docs'] || 0;
+    opt.textContent = (label || '(no flavor)') + '  (' + count + ' docs)';
+    sel.appendChild(opt);
+  }
+  picker.classList.remove('hidden');
+}
+
+function wizHideSchemaFlavorPicker() {
+  document.getElementById('srcSchemaFlavorPicker').classList.add('hidden');
+}
+
+function onWizSchemaFlavorSelect() {
+  var sel = document.getElementById('srcSchemaFlavorSelect');
+  var idx = sel.value;
+  if (idx === '' || !wizSchemaFlavors.length) return;
+  var entry = wizSchemaFlavors[parseInt(idx)];
+  if (!entry) return;
+
+  var sample = wizBuildSampleFromFlavor(entry);
+  if (sample) {
+    wizardSampleDoc = sample;
+    document.getElementById('srcSampleDoc').value = JSON.stringify(sample, null, 2);
+    wizSourceFieldsList = extractPaths(sample);
+    renderWizSourceFields(wizSourceFieldsList);
+    switchSrcDocTab('sample');
+  }
+}
+
+function wizBuildSampleFromFlavor(entry) {
+  if (entry.samples && entry.samples.length) {
+    var s = entry.samples[0];
+    if (s && typeof s === 'object') return s;
+  }
+  return wizGenerateSampleFromSchema(entry);
+}
+
+function wizGenerateSampleFromSchema(schema) {
+  if (!schema || !schema.properties) return null;
+  var obj = {};
+  Object.keys(schema.properties).forEach(function(k) {
+    var prop = schema.properties[k];
+    var t = prop.type || 'string';
+    if (prop.samples && prop.samples.length) {
+      obj[k] = prop.samples[0];
+    } else if (t === 'string') {
+      obj[k] = prop.example || prop.default || '';
+    } else if (t === 'number' || t === 'integer') {
+      obj[k] = prop.example || prop.default || 0;
+    } else if (t === 'boolean') {
+      obj[k] = prop.example !== undefined ? prop.example : (prop.default !== undefined ? prop.default : false);
+    } else if (t === 'array') {
+      obj[k] = prop.example || [];
+    } else if (t === 'object' && prop.properties) {
+      obj[k] = wizGenerateSampleFromSchema(prop) || {};
+    } else {
+      obj[k] = null;
+    }
+  });
+  return obj;
 }
 
 // ── Step 2: Output Tab Switching ─────────────────────────────
@@ -611,6 +833,7 @@ function onOutDbTypeChange() {
   if (DEFAULT_PORTS[t]) document.getElementById('outDbPort').value = DEFAULT_PORTS[t];
   if (t === 'postgres') document.getElementById('outDbSchema').value = 'public';
   else if (t === 'mssql') document.getElementById('outDbSchema').value = 'dbo';
+  else if (t === 'oracle') document.getElementById('outDbSchema').value = '';
   else document.getElementById('outDbSchema').value = '';
 }
 
@@ -720,6 +943,9 @@ function renderWizDbTableList(tbls) {
 
 // ── Step 3: Populate on entry ────────────────────────────────
 function populateStep3() {
+  // Reset to chooser view on each entry
+  wizChooseMode(null);
+
   // Show sample doc
   if (wizardSampleDoc) {
     document.getElementById('wizSampleEditor').value = JSON.stringify(wizardSampleDoc, null, 2);
@@ -1227,6 +1453,290 @@ async function saveWizardMapping() {
     status.textContent = e.message;
     status.className = 'text-sm text-error';
   }
+}
+
+// ── Step 3: Mode Chooser (AI vs DIY) ─────────────────────────
+function wizUpdateAIButton() {
+  var btn = document.getElementById('btnAIAssist');
+  var warn = document.getElementById('wizAIRequirements');
+  if (!wizardSampleDoc) {
+    btn.classList.add('btn-disabled');
+    warn.classList.remove('hidden');
+  } else {
+    btn.classList.remove('btn-disabled');
+    warn.classList.add('hidden');
+  }
+}
+
+function wizChooseMode(mode) {
+  var chooser = document.getElementById('wizModeChooser');
+  var aiPanel = document.getElementById('wizAIPanel');
+  var diyPanel = document.getElementById('wizDIYPanel');
+
+  if (mode === 'ai') {
+    if (!wizardSampleDoc) return; // guard: need sample doc
+    chooser.classList.add('hidden');
+    aiPanel.classList.remove('hidden');
+    diyPanel.classList.add('hidden');
+    // Build and show context
+    var context = wizBuildAIContext();
+    document.getElementById('wizAiContextOutput').value = JSON.stringify(context, null, 2);
+    wizSwitchAITab('export');
+    document.getElementById('wizAiResponseInput').value = '';
+    document.getElementById('wizAiImportStatus').textContent = '';
+  } else if (mode === 'diy') {
+    chooser.classList.add('hidden');
+    aiPanel.classList.add('hidden');
+    diyPanel.classList.remove('hidden');
+  } else {
+    // Back to chooser
+    chooser.classList.remove('hidden');
+    aiPanel.classList.add('hidden');
+    diyPanel.classList.add('hidden');
+    wizUpdateAIButton();
+  }
+}
+
+function wizSwitchAITab(tab) {
+  document.getElementById('wizAiTabExport').classList.toggle('tab-active', tab === 'export');
+  document.getElementById('wizAiTabImport').classList.toggle('tab-active', tab === 'import');
+  document.getElementById('wizAiPanelExport').classList.toggle('hidden', tab !== 'export');
+  document.getElementById('wizAiPanelImport').classList.toggle('hidden', tab !== 'import');
+}
+
+function wizBuildAIContext() {
+  // 1. Sample document
+  var sampleDoc = wizardSampleDoc || null;
+
+  // 2. Current target tables (if introspected from DB in step 2)
+  var targetTables = [];
+  for (var i = 0; i < wizTables.length; i++) {
+    var t = wizTables[i];
+    var cols = {};
+    for (var colName in t.columns) {
+      if (!t.columns.hasOwnProperty(colName)) continue;
+      cols[colName] = { current_mapping: t.columns[colName] || '(unmapped)' };
+    }
+    targetTables.push({
+      table_name: t.name,
+      primary_key: t.primary_key || '',
+      parent_table: t.parent || null,
+      foreign_key: (t.foreign_key && t.foreign_key.column) ? t.foreign_key : null,
+      source_array: t.source_array || null,
+      on_delete: t.on_delete || 'delete',
+      columns: cols
+    });
+  }
+
+  // 3. Source fields
+  var sourceFieldsList = wizSourceFieldsList.map(function(f) {
+    return { path: f.path, type: f.type, sample_value: f.sample };
+  });
+
+  // 4. Transforms grouped by category
+  var transformsByCategory = {
+    'String': TRANSFORMS.slice(1, 20),
+    'Numeric': TRANSFORMS.slice(20, 29),
+    'Date / Time': TRANSFORMS.slice(29, 38),
+    'Array / Object': TRANSFORMS.slice(38, 42),
+    'Encoding / Hash': TRANSFORMS.slice(42, 50),
+    'Conditional': TRANSFORMS.slice(50)
+  };
+  for (var cat in transformsByCategory) {
+    transformsByCategory[cat] = transformsByCategory[cat].filter(function(t) { return t; });
+  }
+
+  // 5. Source match
+  var matchField = document.getElementById('wizMatchField').value.trim();
+  var matchValue = document.getElementById('wizMatchValue').value.trim();
+
+  // 6. Output mode
+  var outputMode = wizOutputMode === 'db' ? 'tables' : 'json';
+
+  var context = {
+    _instructions: [
+      'You are generating a Changes Worker schema mapping JSON.',
+      'Return ONLY valid JSON — no markdown, no code fences.',
+      'Include an "_explanation" field (array of strings) explaining your reasoning.',
+      '',
+      '## How mappings work',
+      '',
+      'A mapping tells the Changes Worker how to transform a Couchbase/Sync Gateway document into SQL rows or a JSON object.',
+      '',
+      '### Tables mode (output_mode = "tables")',
+      '',
+      'The top-level object has:',
+      '  - "source": { "match": { "field": "<doc_field>", "value": "<value>" } }',
+      '  - "tables": [ ... ] — an ordered array of table definitions.',
+      '',
+      'Each table object has these EXACT fields:',
+      '  - "name" (string, REQUIRED): The SQL table name.',
+      '  - "primary_key" (string, REQUIRED): The primary key column.',
+      '  - "columns" (object, REQUIRED): Maps SQL column names to JSONPath expressions or transform objects.',
+      '  - "on_delete" (string): Usually "delete".',
+      '  - "parent" (string): For child tables — the parent table name.',
+      '  - "foreign_key" (object): For child tables — { "column": "<fk_col>", "references": "<parent_pk>" }.',
+      '  - "source_array" (string): For child tables — JSONPath to the source array.',
+      '  - "replace_strategy" (string): For child tables — usually "delete_insert".',
+      '',
+      '### Column value formats',
+      '  - Simple JSONPath: "$.field_name"',
+      '  - Transform object: { "path": "$.field_name", "transform": "uppercase()" }',
+      '',
+      '### JSONPath rules',
+      '  - Parent table columns: paths relative to root ("$._id", "$.status").',
+      '  - Child table columns: paths relative to each array element ("$.product_id", "$.qty").',
+      '  - Child FK referencing parent: still uses root path ("$._id").',
+      '',
+      '### Simple arrays',
+      '  Option A: Store as JSON string: { "path": "$.tags", "transform": "json_stringify()" }',
+      '  Option B: Child table with "source_array" and column "$" for the element value.',
+      '',
+      '### JSON mode (output_mode = "json")',
+      '  Use "output_format": "json" and "mapping": { "targetKey": "$.source.path" }.',
+      '',
+      '### Transforms',
+      '  Use from available_transforms. Only when type/format conversion is needed.'
+    ].join('\n'),
+    output_mode: outputMode,
+    source_match: (matchField && matchValue) ? { field: matchField, value: matchValue } : null,
+    sample_document: sampleDoc || '(no sample document — fetch one in Step 1)',
+    source_fields: sourceFieldsList.length ? sourceFieldsList : '(no sample loaded)',
+    target_tables: targetTables.length ? targetTables : '(no target tables — add manually or import from DB in Step 2)',
+    available_transforms: transformsByCategory,
+    response_format: {
+      _note: 'Return JSON matching this structure exactly. Always include _explanation.',
+      tables_mode_example: {
+        _explanation: ['Reasoning for each mapping decision...'],
+        source: { match: { field: 'type', value: 'order' } },
+        tables: [
+          { name: 'orders', primary_key: 'doc_id', columns: { doc_id: '$._id', status: '$.status' }, on_delete: 'delete' },
+          { name: 'order_items', primary_key: '', parent: 'orders', foreign_key: { column: 'order_doc_id', references: 'doc_id' }, source_array: '$.items', replace_strategy: 'delete_insert', columns: { order_doc_id: '$._id', product_id: '$.product_id' }, on_delete: 'delete' }
+        ]
+      },
+      json_mode_example: {
+        _explanation: ['Reasoning...'],
+        source: { match: { field: 'type', value: 'example' } },
+        output_format: 'json',
+        mapping: { targetKey: '$.source.path' }
+      }
+    }
+  };
+
+  return context;
+}
+
+function wizCopyAIContext() {
+  var el = document.getElementById('wizAiContextOutput');
+  navigator.clipboard.writeText(el.value).then(function() {
+    // Brief visual feedback
+    var btn = event.target;
+    var orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(function() { btn.textContent = orig; }, 1500);
+  }).catch(function() {
+    el.select();
+    document.execCommand('copy');
+  });
+}
+
+function wizDownloadAIContext() {
+  var content = document.getElementById('wizAiContextOutput').value;
+  var blob = new Blob([content], { type: 'application/json' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ai_mapping_context.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function wizUploadAIResponse(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    document.getElementById('wizAiResponseInput').value = e.target.result;
+    document.getElementById('wizAiImportStatus').textContent = 'Loaded ' + file.name;
+    document.getElementById('wizAiImportStatus').className = 'text-sm mt-2 text-success';
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+function wizImportAIResponse() {
+  var text = document.getElementById('wizAiResponseInput').value.trim();
+  var statusEl = document.getElementById('wizAiImportStatus');
+  if (!text) {
+    statusEl.textContent = 'Paste or upload a response first';
+    statusEl.className = 'text-sm mt-2 text-error';
+    return;
+  }
+
+  var mapping;
+  try { mapping = JSON.parse(text); } catch (e) {
+    statusEl.textContent = 'Invalid JSON: ' + e.message;
+    statusEl.className = 'text-sm mt-2 text-error';
+    return;
+  }
+
+  // Populate source match
+  if (mapping.source && mapping.source.match) {
+    document.getElementById('wizMatchField').value = mapping.source.match.field || '';
+    document.getElementById('wizMatchValue').value = mapping.source.match.value || '';
+  }
+
+  var mode = mapping.output_format || (mapping.mapping ? 'json' : 'tables');
+
+  if (mode === 'json' || mode !== 'tables') {
+    // Populate JSON field rows
+    var container = document.getElementById('wizJsonFieldRows');
+    // Keep header row, clear the rest
+    var headerRow = container.querySelector('.flex.gap-1.mb-1');
+    container.innerHTML = '';
+    if (headerRow) container.appendChild(headerRow);
+    var m = mapping.mapping || {};
+    Object.keys(m).forEach(function(k) {
+      var v = m[k];
+      if (typeof v === 'object' && v !== null) {
+        container.insertAdjacentHTML('beforeend', wizJsonFieldRow(k, v.path || '', v.transform || ''));
+      } else {
+        container.insertAdjacentHTML('beforeend', wizJsonFieldRow(k, v, ''));
+      }
+    });
+  } else {
+    // Populate table mappings
+    wizTables = (mapping.tables || []).map(function(t) {
+      return {
+        name: t.name || '',
+        primary_key: t.primary_key || '',
+        parent: t.parent || t.parent_table || '',
+        foreign_key: t.foreign_key || { column: '', references: '' },
+        source_array: t.source_array || '',
+        replace_strategy: t.replace_strategy || '',
+        on_delete: t.on_delete || 'delete',
+        columns: Object.assign({}, t.columns || {})
+      };
+    });
+    wizActiveTableIdx = 0;
+    wizRenderTableTabs();
+    wizRenderTableEditor();
+  }
+
+  updateConfigPreview();
+
+  // Show explanation if provided
+  if (mapping._explanation && mapping._explanation.length) {
+    statusEl.className = 'text-sm mt-2 text-success';
+    statusEl.innerHTML = '<strong>Imported!</strong> AI reasoning:<ul class="list-disc list-inside mt-1 text-xs opacity-80">' +
+      mapping._explanation.map(function(line) { return '<li>' + esc(line) + '</li>'; }).join('') +
+      '</ul>';
+  } else {
+    statusEl.textContent = 'Mapping imported successfully';
+    statusEl.className = 'text-sm mt-2 text-success';
+  }
+
+  // Switch to DIY view to show the populated mappings
+  wizChooseMode('diy');
 }
 
 // ── Init ─────────────────────────────────────────────────────

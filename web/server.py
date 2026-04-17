@@ -485,8 +485,8 @@ def _detect_db_drivers():
     except ImportError:
         pass
     try:
-        import cx_Oracle  # noqa: F401
-        _DB_DRIVERS["oracle"] = {"name": "Oracle", "driver": "cx_Oracle"}
+        import oracledb  # noqa: F401
+        _DB_DRIVERS["oracle"] = {"name": "Oracle", "driver": "oracledb"}
     except ImportError:
         pass
     return _DB_DRIVERS
@@ -523,6 +523,18 @@ async def db_introspect(request):
         if db_type == "postgres":
             from db.db_postgres import introspect_tables
             tables = await introspect_tables(body)
+            return json_response({"tables": tables})
+        elif db_type == "mysql":
+            from db.db_mysql import introspect_tables as mysql_introspect
+            tables = await mysql_introspect(body)
+            return json_response({"tables": tables})
+        elif db_type == "mssql":
+            from db.db_mssql import introspect_tables as mssql_introspect
+            tables = await mssql_introspect(body)
+            return json_response({"tables": tables})
+        elif db_type == "oracle":
+            from db.db_oracle import introspect_tables as ora_introspect
+            tables = await ora_introspect(body)
             return json_response({"tables": tables})
         else:
             return error_response(f"Introspection not yet implemented for {db_type}", 501)
@@ -561,6 +573,71 @@ async def db_test_connection(request):
                 ssl=ssl_ctx,
             )
             ver = await conn.fetchval("SELECT version()")
+            await conn.close()
+            return json_response({"ok": True, "version": ver})
+        elif db_type == "mysql":
+            import aiomysql as _aiomysql
+            ssl_ctx = None
+            if body.get("ssl"):
+                import ssl as _ssl
+                ssl_ctx = _ssl.create_default_context()
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = _ssl.CERT_NONE
+            conn = await _aiomysql.connect(
+                host=body.get("host", "localhost"),
+                port=body.get("port", 3306),
+                db=body.get("database", ""),
+                user=body.get("user", "root"),
+                password=body.get("password", ""),
+                ssl=ssl_ctx,
+            )
+            cur = await conn.cursor()
+            await cur.execute("SELECT version()")
+            row = await cur.fetchone()
+            ver = row[0] if row else "MySQL (version unknown)"
+            await cur.close()
+            conn.close()
+            return json_response({"ok": True, "version": ver})
+        elif db_type == "mssql":
+            import aioodbc as _aioodbc
+            driver = body.get("odbc_driver", "ODBC Driver 18 for SQL Server")
+            host = body.get("host", "localhost")
+            port = body.get("port", 1433)
+            dsn_parts = [
+                f"DRIVER={{{driver}}}",
+                f"SERVER={host},{port}",
+                f"DATABASE={body.get('database', '')}",
+                f"UID={body.get('user', 'sa')}",
+                f"PWD={body.get('password', '')}",
+            ]
+            if body.get("trust_server_certificate", True):
+                dsn_parts.append("TrustServerCertificate=yes")
+            conn = await _aioodbc.connect(dsn=";".join(dsn_parts))
+            cur = await conn.cursor()
+            await cur.execute("SELECT @@VERSION")
+            row = await cur.fetchone()
+            ver = row[0] if row else "SQL Server (version unknown)"
+            await cur.close()
+            await conn.close()
+            return json_response({"ok": True, "version": ver})
+        elif db_type == "oracle":
+            import oracledb as _oracledb
+            dsn = body.get("dsn", "")
+            if not dsn:
+                host = body.get("host", "localhost")
+                port = body.get("port", 1521)
+                database = body.get("database", "")
+                dsn = f"{host}:{port}/{database}"
+            conn = await _oracledb.connect_async(
+                user=body.get("user", ""),
+                password=body.get("password", ""),
+                dsn=dsn,
+            )
+            cur = conn.cursor()
+            await cur.execute("SELECT banner FROM v$version WHERE ROWNUM = 1")
+            row = await cur.fetchone()
+            ver = row[0] if row else "Oracle (version unknown)"
+            await cur.close()
             await conn.close()
             return json_response({"ok": True, "version": ver})
         else:
