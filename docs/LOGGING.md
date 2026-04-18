@@ -111,7 +111,7 @@ Every `log_event()` call requires a **log_key**.  These are the valid keys:
 | `CHANGES`      | `_changes` feed input (polling, parsing, batching)  |
 | `PROCESSING`   | Filtering, routing, batch orchestration             |
 | `MAPPING`      | Schema mapping (doc → SQL ops)                      |
-| `OUTPUT`       | stdout / HTTP / DB output forwarding                |
+| `OUTPUT`       | stdout / HTTP / DB / cloud output forwarding        |
 | `HTTP`         | HTTP request/response details (non-output)          |
 | `CHECKPOINT`   | Checkpoint load / save                              |
 | `RETRY`        | Retry / backoff decisions                           |

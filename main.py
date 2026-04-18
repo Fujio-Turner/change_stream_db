@@ -839,6 +839,17 @@ class MetricsCollector:
         except Exception:
             pass  # db_base may not be loaded if no DB output is configured
 
+        # ── Per-provider / per-job cloud metrics ──────────────────────────
+        try:
+            from cloud.cloud_base import CloudMetrics
+
+            cloud_lines = CloudMetrics.render_all()
+            if cloud_lines:
+                lines.append("")
+                lines.append(cloud_lines)
+        except Exception:
+            pass  # cloud_base may not be loaded if no cloud output is configured
+
         lines.append("")
         return "\n".join(lines)
 
@@ -1729,6 +1740,7 @@ async def poll_changes(
 
         output_mode = out_cfg.get("mode", "stdout")
         db_output = None  # track DB forwarder for cleanup
+        cloud_output = None  # track cloud forwarder for cleanup
 
         if output_mode == "db":
             db_engine = out_cfg.get("db", {}).get("engine", "postgres")
@@ -1754,6 +1766,15 @@ async def poll_changes(
             db_output = output
             log_event(
                 logger, "info", "OUTPUT", f"database output ready (engine={db_engine})"
+            )
+        elif output_mode in ("s3", "gcs", "azure"):
+            from cloud import create_cloud_output
+
+            output = create_cloud_output(out_cfg, dry_run, metrics=metrics)
+            await output.connect()
+            cloud_output = output
+            log_event(
+                logger, "info", "OUTPUT", f"cloud output ready (provider={output_mode})"
             )
         else:
             output = OutputForwarder(
@@ -2044,6 +2065,8 @@ async def poll_changes(
             await output.stop_heartbeat() if hasattr(output, "stop_heartbeat") else None
             if db_output is not None:
                 await db_output.close()
+            if cloud_output is not None:
+                await cloud_output.close()
 
 
 # ---------------------------------------------------------------------------

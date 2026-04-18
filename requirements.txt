@@ -12,6 +12,11 @@ psutil>=5.9,<7
 # System metrics
 psutil>=5.9                # CPU, memory, disk, network, threads
 
+# Cloud blob storage drivers (install the one you need):
+# boto3                    # for S3 output (AWS, MinIO, S3-compatible)
+# google-cloud-storage     # for GCS output
+# azure-storage-blob       # for Azure Blob Storage output
+
 # RDBMS output drivers (install the one you need):
 asyncpg                    # for PostgreSQL output
 # aiomysql                 # for MySQL output (pip install aiomysql)
