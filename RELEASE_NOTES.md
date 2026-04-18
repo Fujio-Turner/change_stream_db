@@ -2,6 +2,82 @@
 
 ---
 
+## v1.5.0 — 2026-04-18
+
+### New Features
+
+- **AWS S3 cloud output** — New `cloud/` package for forwarding documents to S3-compatible blob storage. Supports AWS S3, MinIO, LocalStack, and any S3-compatible endpoint via `endpoint_url`. Features include SSE-S3/SSE-KMS server-side encryption, storage class selection (STANDARD, IA, GLACIER), custom metadata headers, configurable key templating (`{prefix}/{doc_id}.json`), batching (max docs/bytes/seconds), and exponential backoff retry. Cloud-specific Prometheus metrics via `CloudMetrics`.
+
+- **`main.py` refactor** — ~1,300 lines of `_changes` feed HTTP logic extracted from `main.py` into `rest/changes_http.py`. Includes `ShutdownRequested`, `RetryableHTTP`, `fetch_docs`, batch processing, continuous/websocket stream consumers, and DLQ replay. `main.py` is now significantly leaner.
+
+- **DB connection pool safety** — All 4 database engines (PostgreSQL, MySQL, MS SQL, Oracle) now use `_pool_lock` (asyncio.Lock) to serialize reconnects, atomic `_close_pool()` teardown, `ConnectionError` guards when pool is `None`, and `conn.rollback()` on SQL execution failure. Prevents race conditions during reconnects.
+
+- **Schema mapping diagnostics** — `map_document()` now returns a `(ops, MappingDiagnostics)` tuple. `MappingDiagnostics` tracks missing fields and type mismatches during document mapping. ISO date/datetime auto-coercion helpers detect and convert date strings automatically. SQL type validation via `_SQL_TYPE_EXPECT` dictionary.
+
+- **Auto-Map API** (`POST /api/auto-map`) — Score-based heuristic matching of JSON source fields to SQL column names without any ML library. Uses token normalization, synonym dictionary (~30 domain-specific synonyms), semantic groups (id, date, name, email, price, qty, status), false-friend penalties, and `difflib.SequenceMatcher` for fuzzy name similarity.
+
+- **AI assist consolidation** — Duplicated AI instructions and helpers from `schema.html` and `wizard.html` extracted into shared `web/static/js/ai-assist.js`. Includes `AI_INSTRUCTIONS` (full LLM prompt), `AI_RESPONSE_FORMAT`, `aiAnalyzeFields()`, `aiBuildContext()`, `aiCategorizeTransforms()`, and UI helpers (`aiSwitchTab`, `aiCopy`, `aiDownload`, `aiUploadFile`). Eliminates ~100+ lines of duplication.
+
+- **Setup Wizard improvements** — The wizard now uses the shared AI-assist module and includes improved field mapping with AI context export for LLM-powered schema mapping generation.
+
+### Changes
+
+- **`ic()` traces added** — IceCream debug traces added across `cbl_store.py`, all 4 DB engines, `schema/mapper.py`, and `rest/output_http.py` for comprehensive TRACE-level diagnostics.
+
+- **Structured logging throughout** — All `logger.info/debug/warning` calls in DB engines and REST modules converted to structured `log_event()` calls with proper log keys.
+
+- **Config UI redesigned** — `config.html` restructured from section groups to tab-based layout (Source, Output, Checkpoint, Logging tabs). Inline `?` help tooltips added. New S3 output configuration section.
+
+- **DaisyUI v5 CSS compatibility** — `oklch(var(--color-*))` → `var(--color-*)` and `oklch(var(--color-primary) / 0.12)` → `color-mix(in oklab, ...)` in sidebar CSS. Nav icons switched from `<img>` to mask-based `<span>` for color inheritance.
+
+- **Feed health diagnostics** — Dashboard correctly identifies `websocket`/`continuous` feed types as streaming. Idle-timeout reconnects shown as informational, not warnings.
+
+- **Version bump** — All footers and version references updated from v1.4.0 to v1.5.0.
+
+### Configuration
+
+New `config.json` section for S3 output:
+
+```json
+"s3": {
+  "bucket": "",
+  "region": "us-east-1",
+  "key_prefix": "",
+  "key_template": "{prefix}/{doc_id}.json",
+  "content_type": "application/json",
+  "storage_class": "STANDARD",
+  "server_side_encryption": "",
+  "endpoint_url": "",
+  "on_delete": "delete_object",
+  "batch": {
+    "enabled": false,
+    "max_docs": 100,
+    "max_bytes": 5242880,
+    "max_seconds": 30
+  },
+  "max_retries": 5,
+  "backoff_base_seconds": 1,
+  "backoff_max_seconds": 60
+}
+```
+
+### Documentation
+
+- **`docs/CLOUD_BLOB_PLAN.md`** — Full design document for cloud blob storage output: architecture, module layout, key templating, batching, retry/backoff, metrics, config schema.
+- **`docs/LOGGING.md`** — Developer logging guide: `ic()` (TRACE) vs `log_event()` (structured production), all 10 log keys, safe import pattern, output format examples.
+
+### New Files
+
+- `cloud/__init__.py` — Cloud output factory
+- `cloud/cloud_base.py` — Abstract base forwarder + `CloudMetrics` (Prometheus counters)
+- `cloud/cloud_s3.py` — AWS S3 implementation (boto3, SSE, storage classes, MinIO/LocalStack)
+- `rest/changes_http.py` — Extracted `_changes` feed HTTP client logic
+- `web/static/js/ai-assist.js` — Shared AI-assist module
+- `docs/CLOUD_BLOB_PLAN.md` — Cloud blob storage design document
+- `docs/LOGGING.md` — Developer logging guide
+
+---
+
 ## v1.4.0 — 2026-04-16
 
 ### New Features
