@@ -127,6 +127,8 @@ class MetricsCollector:
         self.output_success_total: int = 0
         self.output_skipped_total: int = 0
         self.dead_letter_total: int = 0
+        self.dlq_write_failures_total: int = 0
+        self.dlq_pending_count: int = 0
 
         # Batch processing
         self.batches_total: int = 0
@@ -420,6 +422,16 @@ class MetricsCollector:
             "changes_worker_dead_letter_total",
             "Total documents written to the dead letter queue.",
             self.dead_letter_total,
+        )
+        _counter(
+            "changes_worker_dlq_write_failures_total",
+            "Total DLQ write failures (data potentially lost).",
+            self.dlq_write_failures_total,
+        )
+        _gauge(
+            "changes_worker_dlq_pending_count",
+            "Current number of pending entries in the dead letter queue.",
+            self.dlq_pending_count,
         )
 
         _gauge(
@@ -1828,7 +1840,10 @@ async def poll_changes(
             if hasattr(output, "_http") and output._http is not None:
                 output._http.set_shutdown_event(shutdown_event)
 
-        dlq = DeadLetterQueue(out_cfg.get("dead_letter_path", ""))
+        dlq = DeadLetterQueue(
+            out_cfg.get("dead_letter_path", ""),
+            dlq_cfg=out_cfg.get("dlq"),
+        )
         every_n_docs = cfg.get("checkpoint", {}).get("every_n_docs", 0)
 
         # If output is HTTP, verify the endpoint is reachable before starting
@@ -1864,9 +1879,14 @@ async def poll_changes(
                 output,
                 metrics,
                 shutdown_event,
+                current_target_url=out_cfg.get("target_url", ""),
             )
             if dlq_summary["total"] > 0:
                 log_event(logger, "info", "DLQ", "DLQ replay summary: %s" % dlq_summary)
+            # Update DLQ pending count gauge after replay
+            if metrics:
+                pending = dlq.list_pending()
+                metrics.set("dlq_pending_count", len(pending))
 
         throttle = feed_cfg.get("throttle_feed", 0)
 

@@ -194,6 +194,24 @@ def _coll_purge_doc(db, collection_name: str, doc_id: str) -> None:
     lib.CBLCollection_PurgeDocumentByID(coll, stringParam(doc_id), _cbl_gError)
 
 
+def _set_doc_expiration(db, doc_id: str, ttl_seconds: int) -> bool:
+    """Set document expiration (TTL) using the CBL C API.
+
+    Args:
+        db: CBL database handle.
+        doc_id: Document ID.
+        ttl_seconds: Seconds from now until the document expires and is auto-purged.
+                     Pass 0 to clear expiration.
+    """
+    if ttl_seconds <= 0:
+        return True
+    expiration_ms = int((time.time() + ttl_seconds) * 1000)
+    ok = lib.CBLDatabase_SetDocumentExpiration(
+        db._ref, stringParam(doc_id), expiration_ms, _cbl_gError
+    )
+    return bool(ok)
+
+
 class CBLStore:
     """High-level API for all CBL storage operations."""
 
@@ -551,7 +569,8 @@ class CBLStore:
     # ── Dead Letter Queue ─────────────────────────────────────
 
     def add_dlq_entry(
-        self, doc_id: str, seq: str, method: str, status: int, error: str, doc: dict
+        self, doc_id: str, seq: str, method: str, status: int, error: str, doc: dict,
+        target_url: str = "", ttl_seconds: int = 0,
     ) -> None:
         ic("add_dlq_entry: entry", doc_id)
         ts = int(time.time())
@@ -566,8 +585,12 @@ class CBLStore:
         dlq_doc["error"] = error
         dlq_doc["time"] = ts
         dlq_doc["retried"] = False
+        dlq_doc["replay_attempts"] = 0
+        dlq_doc["target_url"] = target_url
         dlq_doc["doc_data"] = json.dumps(doc)
         _coll_save_doc(self.db, COLL_DLQ, dlq_doc)
+        if ttl_seconds > 0:
+            _set_doc_expiration(self.db, dlq_id, ttl_seconds)
         elapsed = (time.monotonic() - t0) * 1000
 
         # Update manifest
@@ -605,6 +628,8 @@ class CBLStore:
                         "error": props.get("error", ""),
                         "time": props.get("time", 0),
                         "retried": props.get("retried", False),
+                        "replay_attempts": props.get("replay_attempts", 0),
+                        "target_url": props.get("target_url", ""),
                     }
                 )
         log_event(
@@ -651,6 +676,8 @@ class CBLStore:
             "error": props.get("error", ""),
             "time": props.get("time", 0),
             "retried": props.get("retried", False),
+            "replay_attempts": props.get("replay_attempts", 0),
+            "target_url": props.get("target_url", ""),
             "doc_data": json.loads(doc_data),
         }
 
@@ -669,6 +696,16 @@ class CBLStore:
             doc_id=dlq_id,
             doc_type="dlq",
         )
+
+    def increment_dlq_replay_attempts(self, dlq_id: str) -> int:
+        """Increment the replay_attempts counter on a DLQ entry. Returns new count."""
+        doc = _coll_get_mutable_doc(self.db, COLL_DLQ, dlq_id)
+        if not doc:
+            return 0
+        attempts = doc.properties.get("replay_attempts", 0) + 1
+        doc["replay_attempts"] = attempts
+        _coll_save_doc(self.db, COLL_DLQ, doc)
+        return attempts
 
     def delete_dlq_entry(self, dlq_id: str) -> None:
         ic("delete_dlq_entry: entry", dlq_id)
@@ -701,6 +738,8 @@ class CBLStore:
                 _coll_purge_doc(self.db, COLL_DLQ, dlq_id)
                 count += 1
         self._save_manifest(COLL_DLQ, "manifest:dlq", [])
+        if count > 0:
+            self.update_dlq_meta("last_drained_at")
         log_event(
             logger,
             "info",
@@ -713,6 +752,89 @@ class CBLStore:
 
     def dlq_count(self) -> int:
         return len(self._get_manifest(COLL_DLQ, "manifest:dlq"))
+
+    def purge_expired_dlq(self, max_age_seconds: int) -> int:
+        """Purge DLQ entries older than max_age_seconds. Returns count purged."""
+        if max_age_seconds <= 0:
+            return 0
+        cutoff = int(time.time()) - max_age_seconds
+        ids = self._get_manifest(COLL_DLQ, "manifest:dlq")
+        purged = 0
+        remaining = []
+        for dlq_id in ids:
+            doc = _coll_get_doc(self.db, COLL_DLQ, dlq_id)
+            if doc:
+                entry_time = doc.properties.get("time", 0)
+                if entry_time > 0 and entry_time < cutoff:
+                    _coll_purge_doc(self.db, COLL_DLQ, dlq_id)
+                    purged += 1
+                else:
+                    remaining.append(dlq_id)
+            # If doc doesn't exist, don't keep in manifest
+        if purged > 0:
+            self._save_manifest(COLL_DLQ, "manifest:dlq", remaining)
+            log_event(
+                logger,
+                "info",
+                "DLQ",
+                "purged %d expired entries (older than %ds)" % (purged, max_age_seconds),
+                operation="DELETE",
+                doc_type="dlq",
+                doc_count=purged,
+            )
+        return purged
+
+    def get_dlq_meta(self) -> dict:
+        """Return DLQ metadata (last_inserted_at, last_drained_at as epoch)."""
+        doc = _coll_get_doc(self.db, COLL_DLQ, "dlq:meta")
+        if not doc:
+            return {
+                "last_inserted_at": None,
+                "last_drained_at": None,
+                "last_inserted_job": None,
+                "last_drained_job": None,
+            }
+        props = doc.properties
+        return {
+            "last_inserted_at": props.get("last_inserted_at", None),
+            "last_drained_at": props.get("last_drained_at", None),
+            "last_inserted_job": props.get("last_inserted_job", None),
+            "last_drained_job": props.get("last_drained_job", None),
+        }
+
+    def update_dlq_meta(self, field: str, job_id: str = "") -> None:
+        """Record a batch-level DLQ timestamp.
+
+        Call once per batch — not per document — to avoid excessive writes.
+
+        Args:
+            field: ``"last_inserted_at"`` or ``"last_drained_at"``.
+            job_id: checkpoint client_id or other job identifier.
+        """
+        now = int(time.time())
+        doc = _coll_get_mutable_doc(self.db, COLL_DLQ, "dlq:meta")
+        if doc:
+            doc[field] = now
+            if job_id:
+                doc[field.replace("_at", "_job")] = job_id
+        else:
+            doc = MutableDocument("dlq:meta")
+            doc["type"] = "dlq_meta"
+            doc[field] = now
+            if job_id:
+                doc[field.replace("_at", "_job")] = job_id
+        _coll_save_doc(self.db, COLL_DLQ, doc)
+        log_event(
+            logger,
+            "debug",
+            "DLQ",
+            "meta updated",
+            operation="UPDATE",
+            doc_type="dlq_meta",
+            field=field,
+            epoch=now,
+            job_id=job_id or None,
+        )
 
     # ── Maintenance ───────────────────────────────────────────
     # Mirrors Couchbase Lite MaintenanceType:

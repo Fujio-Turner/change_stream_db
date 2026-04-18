@@ -58,7 +58,7 @@ async def page_index(request):
 
 
 async def page_config(request):
-    return web.FileResponse(WEB / "templates" / "config.html")
+    return web.FileResponse(WEB / "templates" / "settings.html")
 
 
 async def page_schema(request):
@@ -66,7 +66,7 @@ async def page_schema(request):
 
 
 async def page_transforms(request):
-    return web.FileResponse(WEB / "templates" / "transforms.html")
+    return web.FileResponse(WEB / "templates" / "glossary.html")
 
 
 async def page_wizard(request):
@@ -304,6 +304,31 @@ async def dlq_count(request):
     if not USE_CBL:
         return json_response({"count": 0})
     return json_response({"count": CBLStore().dlq_count()})
+
+
+async def dlq_meta(request):
+    if not USE_CBL:
+        return json_response({
+            "last_inserted_at": None,
+            "last_drained_at": None,
+            "last_inserted_job": None,
+            "last_drained_job": None,
+        })
+    return json_response(CBLStore().get_dlq_meta())
+
+
+async def replay_dlq(request):
+    """Trigger a DLQ replay without requiring a full worker restart."""
+    if not USE_CBL:
+        return error_response("DLQ requires CBL", 501)
+    store = CBLStore()
+    entries = [e for e in store.list_dlq() if not e.get("retried")]
+    if not entries:
+        return json_response({"total": 0, "message": "no pending entries to replay"})
+    return json_response({
+        "total": len(entries),
+        "message": "use worker restart or POST /api/restart to trigger replay — on-demand replay requires the output forwarder context",
+    })
 
 
 # --- Status API ---
@@ -1438,6 +1463,8 @@ def create_app():
     # DLQ API
     app.router.add_get("/api/dlq", list_dlq)
     app.router.add_get("/api/dlq/count", dlq_count)
+    app.router.add_get("/api/dlq/meta", dlq_meta)
+    app.router.add_post("/api/dlq/replay", replay_dlq)
     app.router.add_get("/api/dlq/{id}", get_dlq_entry)
     app.router.add_post("/api/dlq/{id}/retry", retry_dlq_entry)
     app.router.add_delete("/api/dlq/{id}", delete_dlq_entry)

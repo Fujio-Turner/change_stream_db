@@ -26,6 +26,7 @@
   margin-left: var(--sidebar-width);
   transition: margin-left var(--sidebar-transition);
   min-height: 100vh;
+  max-width: calc(1536px + var(--sidebar-width));
 }
 .sidebar.collapsed ~ .sidebar-main,
 .sidebar-main.collapsed {
@@ -189,6 +190,7 @@
 }
 .sidebar.collapsed .sidebar-theme-label { opacity: 0; width: 0; overflow: hidden; }
 .sidebar.collapsed .sidebar-controls .tooltip { display: none; }
+.sidebar.collapsed #controlsHelpTrigger { display: none; }
 .sidebar-version {
   margin-top: 6px; font-size: 10px; opacity: 0.35;
   white-space: nowrap; overflow: hidden;

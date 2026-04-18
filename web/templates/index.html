@@ -33,6 +33,47 @@
     .border-source  { border-left: 3px solid var(--color-success); }
     .border-process { border-left: 3px solid var(--color-info); }
     .border-output  { border-left: 3px solid var(--color-warning); }
+
+    /* Architecture diagram */
+    .arch-wrap { position: relative; width: 100%; min-height: 420px; overflow: visible; }
+    .arch-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+    .arch-nodes { position: relative; display: flex; align-items: stretch; width: 100%; height: 420px; }
+    .arch-col { display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 2; }
+    .arch-col-src  { flex: 0 0 22%; }
+    .arch-col-work { flex: 0 0 30%; gap: 50px; }
+    .arch-col-out  { flex: 1; gap: 6px; }
+    .arch-node { border-radius: 16px; padding: 14px 20px; text-align: center; color: #fff; font-size: 0.875rem; line-height: 1.35; min-width: 150px; transition: box-shadow 0.2s, transform 0.2s; cursor: pointer; position: relative; }
+    .arch-node:hover { transform: scale(1.05); z-index: 10; }
+    .arch-node-src  { background: #505050; border: 3px solid var(--color-success); box-shadow: 0 0 18px rgba(80,80,80,0.4); }
+    .arch-node-src:hover  { box-shadow: 0 0 28px rgba(80,80,80,0.7); }
+    .arch-node-work { background: #6c56a4; border: 3px solid var(--color-info); box-shadow: 0 0 18px rgba(108,86,164,0.4); }
+    .arch-node-work:hover { box-shadow: 0 0 28px rgba(108,86,164,0.7); }
+    .arch-node-http { background: #4caf50; border: 3px solid var(--color-warning); box-shadow: 0 0 14px rgba(76,175,80,0.3); }
+    .arch-node-http:hover { box-shadow: 0 0 24px rgba(76,175,80,0.6); }
+    .arch-node-db   { background: #2196f3; border: 3px solid var(--color-warning); box-shadow: 0 0 14px rgba(33,150,243,0.3); }
+    .arch-node-db:hover   { box-shadow: 0 0 24px rgba(33,150,243,0.6); }
+    .arch-node-s3   { background: #ff9800; border: 3px solid var(--color-warning); box-shadow: 0 0 14px rgba(255,152,0,0.3); }
+    .arch-node-s3:hover   { box-shadow: 0 0 24px rgba(255,152,0,0.6); }
+    .arch-node-std  { background: #f4511e; border: 3px solid var(--color-warning); box-shadow: 0 0 14px rgba(244,81,30,0.3); }
+    .arch-node-std:hover  { box-shadow: 0 0 24px rgba(244,81,30,0.6); }
+    .arch-node-dlq  { background: #d32f2f; border: 3px solid var(--color-info); box-shadow: 0 0 14px rgba(211,47,47,0.3); }
+    .arch-node-dlq:hover  { box-shadow: 0 0 24px rgba(211,47,47,0.6); }
+    .arch-node.dimmed { opacity: 0.3; filter: saturate(0.4); }
+    .arch-node .arch-title { font-weight: 700; font-size: 0.95rem; margin-bottom: 2px; }
+    .arch-node .arch-sub { font-size: 0.8rem; opacity: 0.7; }
+    .arch-node .arch-stat { font-size: 0.82rem; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .arch-rate { font-size: 11px; font-weight: 700; font-family: monospace; }
+    /* Hover tooltip for arch nodes */
+    .arch-tip { display: none; position: absolute; left: 50%; bottom: calc(100% + 10px); transform: translateX(-50%); background: rgba(15,23,42,0.96); color: #e2e8f0; border: 1px solid #475569; border-radius: 10px; padding: 10px 14px; font-size: 0.72rem; line-height: 1.5; white-space: nowrap; z-index: 50; pointer-events: none; box-shadow: 0 4px 24px rgba(0,0,0,0.7); text-align: left; }
+    .arch-tip::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 6px solid transparent; border-top-color: #475569; }
+    .arch-tip-bottom { bottom: auto; top: calc(100% + 10px); }
+    .arch-tip-bottom::after { top: auto; bottom: 100%; border-top-color: transparent; border-bottom-color: #475569; }
+    .arch-tip-right { left: calc(100% + 12px); bottom: auto; top: 50%; transform: translateY(-50%); }
+    .arch-tip-right::after { left: -6px; top: 50%; transform: translateY(-50%); border: 6px solid transparent; border-right-color: #475569; border-top-color: transparent; }
+    .arch-node:hover .arch-tip { display: block; }
+    /* Arch detail modal */
+    .arch-modal-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .arch-modal-charts > div { height: 180px; }
   </style>
 </head>
 <body class="min-h-screen bg-base-200">
@@ -62,6 +103,74 @@
             <span class="text-sm font-medium">Output</span>
           </div>
           <div class="ml-auto text-sm opacity-60" id="uptimeLabel">Uptime: --</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Architecture Graph -->
+    <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-4">
+        <div class="flex items-center gap-2 mb-1">
+          <h3 class="text-sm font-semibold">Architecture</h3>
+          <div class="tooltip tooltip-right" data-tip="Live pipeline topology. Node badges update with real-time metrics.">
+            <span class="badge badge-ghost badge-sm cursor-help">?</span>
+          </div>
+        </div>
+        <div class="arch-wrap" id="archWrap">
+          <svg class="arch-svg" id="archSvg"></svg>
+          <div class="arch-nodes">
+            <!-- Source -->
+            <div class="arch-col arch-col-src">
+              <div class="arch-node arch-node-src" id="archSrc" onclick="showArchDetail('src')">
+                <div class="arch-title">Sync Gateway</div>
+                <div class="arch-sub">_changes feed</div>
+                <div class="arch-stat" id="archSrcStat">Received: --</div>
+                <div class="arch-tip" id="archTipSrc">Loading…</div>
+              </div>
+            </div>
+            <!-- Worker + DLQ -->
+            <div class="arch-col arch-col-work">
+              <div class="arch-node arch-node-work" id="archWork" onclick="showArchDetail('work')">
+                <div class="arch-title">changes_worker</div>
+                <div class="arch-sub">checkpoint · retry · mapping</div>
+                <div class="arch-stat" id="archWorkStat">Processed: -- | Filtered: --</div>
+                <div class="arch-tip" id="archTipWork">Loading…</div>
+              </div>
+              <div class="arch-node arch-node-dlq" id="archDlq" onclick="showArchDetail('dlq')">
+                <div class="arch-title">DLQ</div>
+                <div class="arch-sub">Dead Letter Queue</div>
+                <div class="arch-stat" id="archDlqStat">0 docs</div>
+                <div class="arch-tip arch-tip-bottom" id="archTipDlq">Loading…</div>
+              </div>
+            </div>
+            <!-- Outputs -->
+            <div class="arch-col arch-col-out">
+              <div class="arch-node arch-node-http" id="archOutHttp" data-mode="http" onclick="showArchDetail('http')">
+                <div class="arch-title">HTTP Endpoint</div>
+                <div class="arch-sub">PUT / POST / DELETE</div>
+                <div class="arch-stat" id="archOutHttpStat">--</div>
+                <div class="arch-tip arch-tip-right" id="archTipHttp">Loading…</div>
+              </div>
+              <div class="arch-node arch-node-db" id="archOutDb" data-mode="db" onclick="showArchDetail('db')">
+                <div class="arch-title">RDBMS</div>
+                <div class="arch-sub">Postgres / MySQL / MSSQL</div>
+                <div class="arch-stat" id="archOutDbStat">--</div>
+                <div class="arch-tip arch-tip-right" id="archTipDb">Loading…</div>
+              </div>
+              <div class="arch-node arch-node-s3" id="archOutS3" data-mode="s3" onclick="showArchDetail('s3')">
+                <div class="arch-title">AWS S3</div>
+                <div class="arch-sub">S3 / MinIO</div>
+                <div class="arch-stat" id="archOutS3Stat">--</div>
+                <div class="arch-tip arch-tip-right" id="archTipS3">Loading…</div>
+              </div>
+              <div class="arch-node arch-node-std" id="archOutStd" data-mode="stdout" onclick="showArchDetail('stdout')">
+                <div class="arch-title">stdout</div>
+                <div class="arch-sub">JSON / XML / msgpack</div>
+                <div class="arch-stat" id="archOutStdStat">--</div>
+                <div class="arch-tip arch-tip-right" id="archTipStd">Loading…</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -319,6 +428,27 @@
     <form method="dialog" class="modal-backdrop"><button>close</button></form>
   </dialog>
 
+  <!-- Architecture Node Detail Modal -->
+  <dialog id="archModal" class="modal">
+    <div class="modal-box max-w-3xl">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">×</button>
+      </form>
+      <div class="flex items-center gap-3 mb-4">
+        <span id="archModalDot" style="width:16px;height:16px;border-radius:50%;display:inline-block;flex-shrink:0;"></span>
+        <h3 id="archModalTitle" class="text-lg font-bold"></h3>
+      </div>
+      <div id="archModalStats" class="overflow-x-auto mb-4">
+        <table class="table table-sm table-zebra"><tbody id="archModalStatsBody"></tbody></table>
+      </div>
+      <div class="arch-modal-charts">
+        <div id="archModalChart1"></div>
+        <div id="archModalChart2"></div>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
+
 <script>
 // ── Debug flag: add ?debug=true to URL to enable console logging ─
 var DEBUG = new URLSearchParams(window.location.search).get('debug') === 'true';
@@ -491,6 +621,7 @@ function rebuildCharts() {
   cProcessAvg = makeChart(document.getElementById('chartProcessAvg'));
   cOutputAvg  = makeChart(document.getElementById('chartOutputAvg'));
   renderCharts();
+  drawArchArrows();
 }
 
 function lineOpt(title, series) {
@@ -549,6 +680,396 @@ function lineOptMs(title, series) {
   };
 }
 
+// ── Architecture Diagram (HTML + SVG arrows) ─────────────────
+var archPrev = {};
+var archPrevTs = 0;
+var archRates = { feed: 0, out: 0 };
+var archNodeColors = { http: '#4caf50', db: '#2196f3', s3: '#ff9800', stdout: '#f4511e' };
+var lastArchM = null; // stash for modal
+
+// Arrow color logic: green=healthy, yellow=slow/warning, red=active but erroring, grey=inactive
+var ARROW_GREEN  = '#36d399';
+var ARROW_YELLOW = '#fbbd23';
+var ARROW_RED    = '#f87272';
+var ARROW_GREY   = '#475569';
+
+function arrowColor(active, epUp, errRatio) {
+  if (!active) return ARROW_GREY;
+  if (epUp === 0) return ARROW_RED;         // configured but endpoint down
+  if (errRatio > 0.1) return ARROW_YELLOW;  // >10% errors = warning
+  return ARROW_GREEN;                        // healthy
+}
+
+function drawArchArrows() {
+  var svg = document.getElementById('archSvg');
+  if (!svg) return;
+  var wrap = document.getElementById('archWrap');
+  var wr = wrap.getBoundingClientRect();
+  var src  = document.getElementById('archSrc');
+  var work = document.getElementById('archWork');
+  var outs = [
+    document.getElementById('archOutHttp'),
+    document.getElementById('archOutDb'),
+    document.getElementById('archOutS3'),
+    document.getElementById('archOutStd')
+  ];
+  var dlqEl = document.getElementById('archDlq');
+  var m = lastArchM || {};
+  function cx(el) { var r = el.getBoundingClientRect(); return r.left + r.width / 2 - wr.left; }
+  function cy(el) { var r = el.getBoundingClientRect(); return r.top + r.height / 2 - wr.top; }
+  function by(el) { return el.getBoundingClientRect().bottom - wr.top; }
+  function ty(el) { return el.getBoundingClientRect().top - wr.top; }
+  function rx(el) { return el.getBoundingClientRect().right - wr.left; }
+  function lx(el) { return el.getBoundingClientRect().left - wr.left; }
+  var outMode = (cachedCfg && cachedCfg.output) ? cachedCfg.output.mode : '';
+
+  // Compute health for feed arrow
+  var pollCycles = m['changes_worker_poll_cycles_total'] || 0;
+  var pollErrors = m['changes_worker_poll_errors_total'] || 0;
+  var feedErrRatio = pollCycles > 0 ? pollErrors / pollCycles : 0;
+  var uptime = m['changes_worker_uptime_seconds'] || 0;
+  var feedColor = uptime > 0 ? (feedErrRatio > 0.1 ? ARROW_YELLOW : ARROW_GREEN) : ARROW_GREY;
+
+  // Compute health for output arrow
+  var outOk  = m['changes_worker_output_success_total'] || 0;
+  var outErr = m['changes_worker_output_errors_total'] || 0;
+  var epUp   = m['changes_worker_output_endpoint_up'];
+  var outTotal = outOk + outErr;
+  var outErrRatio = outTotal > 0 ? outErr / outTotal : 0;
+  var activeOutColor = arrowColor(true, epUp, outErrRatio);
+
+  // Markers for each color
+  var colors = [ARROW_GREEN, ARROW_YELLOW, ARROW_RED, ARROW_GREY];
+  var colorNames = ['green','yellow','red','grey'];
+  var html = '<defs>';
+  for (var ci = 0; ci < colors.length; ci++) {
+    html += '<marker id="ah_'+colorNames[ci]+'" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M0,0 L10,3 L0,6" fill="'+colors[ci]+'" opacity="0.85"/></marker>';
+    html += '<marker id="ah_'+colorNames[ci]+'_rev" viewBox="0 0 10 6" refX="0" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M10,0 L0,3 L10,6" fill="'+colors[ci]+'" opacity="0.85"/></marker>';
+  }
+  html += '</defs>';
+
+  function colorKey(c) {
+    for (var k = 0; k < colors.length; k++) { if (c === colors[k]) return colorNames[k]; }
+    return 'grey';
+  }
+
+  // ─── Source → Worker (single arrow, one-way data flow) ───
+  var sx = rx(src), sy = cy(src), wx = lx(work), wy = cy(work);
+  var fk = colorKey(feedColor);
+  html += '<line x1="'+sx+'" y1="'+sy+'" x2="'+wx+'" y2="'+wy+'" stroke="'+feedColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+fk+')"/>';
+  html += rateBadge((sx+wx)/2, (sy+wy)/2, archRates.feed, feedColor);
+
+  // ─── Worker → each output (single arrow, one-way) ───
+  for (var i = 0; i < outs.length; i++) {
+    var mode = outs[i].getAttribute('data-mode');
+    var active = mode === outMode;
+    var ox = lx(outs[i]), oy = cy(outs[i]);
+    var wxR = rx(work), wyC = cy(work);
+    if (active) {
+      var ok = colorKey(activeOutColor);
+      html += '<line x1="'+wxR+'" y1="'+wyC+'" x2="'+ox+'" y2="'+oy+'" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')"/>';
+      html += rateBadge((wxR+ox)/2, (wyC+oy)/2, archRates.out, activeOutColor);
+    } else {
+      html += '<line x1="'+wxR+'" y1="'+wyC+'" x2="'+ox+'" y2="'+oy+'" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
+    }
+  }
+
+  // ─── Worker ↔ DLQ (dual arrows — bidirectional: docs in, retry out) ───
+  if (dlqEl) {
+    var wCx = cx(work), wBy = by(work), dTy = ty(dlqEl), dCx = cx(dlqEl);
+    var dlqCount = m['changes_worker_dead_letter_total'] || 0;
+    var dlqColor = dlqCount > 0 ? ARROW_RED : ARROW_GREEN;
+    var dk = colorKey(dlqColor);
+    var dlqGap = 10;
+    // Arrow down: Worker → DLQ (left side)
+    html += '<line x1="'+(wCx-dlqGap)+'" y1="'+wBy+'" x2="'+(dCx-dlqGap)+'" y2="'+dTy+'" stroke="'+dlqColor+'" stroke-width="2" stroke-opacity="0.6" marker-end="url(#ah_'+dk+')"/>';
+    // Arrow up: DLQ → Worker (right side, retry path)
+    html += '<line x1="'+(dCx+dlqGap)+'" y1="'+dTy+'" x2="'+(wCx+dlqGap)+'" y2="'+wBy+'" stroke="'+dlqColor+'" stroke-width="1.5" stroke-opacity="0.35" marker-end="url(#ah_'+dk+'_rev)"/>';
+  }
+
+  svg.innerHTML = html;
+}
+
+function fmtRate(r) {
+  if (r <= 0) return '0/s';
+  if (r >= 1e6) return (r / 1e6).toFixed(2) + 'M/s';
+  if (r >= 1e3) return (r / 1e3).toFixed(2) + 'K/s';
+  if (r >= 1)   return r.toFixed(1) + '/s';
+  return r.toFixed(1) + '/s';
+}
+
+function rateBadge(x, y, rate, color) {
+  var label = fmtRate(rate);
+  var w = Math.max(67, label.length * 10.5 + 25);
+  var h = 34;
+  return '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="17" fill="'+color+'" opacity="0.55"/>'
+       + '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="17" fill="none" stroke="'+color+'" stroke-width="2" opacity="0.7"/>'
+       + '<text x="'+x+'" y="'+(y+5)+'" text-anchor="middle" font-size="15" font-weight="700" font-family="monospace" fill="#111">'+label+'</text>';
+}
+
+function updateArchData(m) {
+  lastArchM = m;
+  var now = Date.now();
+  var dt = archPrevTs ? (now - archPrevTs) / 1000 : 0;
+  archPrevTs = now;
+
+  var received  = m ? (m['changes_worker_changes_received_total'] || 0) : 0;
+  var processed = m ? (m['changes_worker_changes_processed_total'] || 0) : 0;
+  var filtered  = m ? (m['changes_worker_changes_filtered_total'] || 0) : 0;
+  var outOk     = m ? (m['changes_worker_output_success_total'] || 0) : 0;
+  var outErr    = m ? (m['changes_worker_output_errors_total'] || 0) : 0;
+  var outSkip   = m ? (m['changes_worker_output_skipped_total'] || 0) : 0;
+  var dlq       = m ? (m['changes_worker_dead_letter_total'] || 0) : 0;
+  var bytesIn   = m ? (m['changes_worker_bytes_received_total'] || 0) : 0;
+  var bytesOut  = m ? (m['changes_worker_bytes_output_total'] || 0) : 0;
+  var pollCycles= m ? (m['changes_worker_poll_cycles_total'] || 0) : 0;
+  var pollErrors= m ? (m['changes_worker_poll_errors_total'] || 0) : 0;
+  var retries   = m ? (m['changes_worker_retries_total'] || 0) : 0;
+  var chkSaves  = m ? (m['changes_worker_checkpoint_saves_total'] || 0) : 0;
+  var uptime    = m ? (m['changes_worker_uptime_seconds'] || 0) : 0;
+  var outMode   = (cachedCfg && cachedCfg.output) ? cachedCfg.output.mode : '';
+
+  // Compute rates
+  if (dt > 0 && archPrev._received != null) {
+    archRates.feed = Math.max(0, received - archPrev._received) / dt;
+    archRates.out  = Math.max(0, outOk - archPrev._outOk) / dt;
+  }
+  archPrev._received = received;
+  archPrev._outOk    = outOk;
+
+  // Node stat labels
+  setText('archSrcStat', 'Received: ' + fmt(received) + ' · ' + fmtBytes(bytesIn));
+  setText('archWorkStat', 'Processed: ' + fmt(processed) + ' | Filtered: ' + fmt(filtered) + ' | DLQ: ' + fmt(dlq));
+
+  // Output nodes — active vs dimmed
+  var outEls = document.querySelectorAll('[data-mode]');
+  for (var i = 0; i < outEls.length; i++) {
+    if (outEls[i].getAttribute('data-mode') === outMode) {
+      outEls[i].classList.remove('dimmed');
+    } else {
+      outEls[i].classList.add('dimmed');
+    }
+  }
+  setText('archOutHttpStat', outMode === 'http' ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
+  setText('archOutDbStat',   outMode === 'db'   ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
+  setText('archOutS3Stat',   outMode === 's3'   ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
+  setText('archOutStdStat',  outMode === 'stdout' ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
+
+  // DLQ node
+  setText('archDlqStat', fmt(dlq) + ' doc' + (dlq !== 1 ? 's' : ''));
+
+  // Hover tooltips — concise summary info
+  var feedRate = archRates.feed > 0 ? (archRates.feed < 1 ? archRates.feed.toFixed(1) : fmt(archRates.feed)) + ' docs/s' : 'idle';
+  var outRate  = archRates.out > 0  ? (archRates.out < 1  ? archRates.out.toFixed(1)  : fmt(archRates.out))  + ' docs/s' : 'idle';
+  document.getElementById('archTipSrc').innerHTML =
+    'Rate: <b>' + feedRate + '</b><br>' +
+    'Received: <b>' + fmt(received) + '</b> (' + fmtBytes(bytesIn) + ')<br>' +
+    'Poll Cycles: <b>' + fmt(pollCycles) + '</b> · Errors: <b>' + fmt(pollErrors) + '</b><br>' +
+    'Uptime: <b>' + fmtUptime(uptime) + '</b>';
+  document.getElementById('archTipWork').innerHTML =
+    'Processed: <b>' + fmt(processed) + '</b><br>' +
+    'Filtered: <b>' + fmt(filtered) + '</b><br>' +
+    'Dead Letters: <b>' + fmt(dlq) + '</b><br>' +
+    'Checkpoint Saves: <b>' + fmt(chkSaves) + '</b><br>' +
+    'Retries: <b>' + fmt(retries) + '</b>';
+  var outTip = 'Rate: <b>' + outRate + '</b><br>' +
+    'Success: <b>' + fmt(outOk) + '</b> · Errors: <b>' + fmt(outErr) + '</b><br>' +
+    'Skipped: <b>' + fmt(outSkip) + '</b><br>' +
+    'Bytes Sent: <b>' + fmtBytes(bytesOut) + '</b>';
+  document.getElementById('archTipHttp').innerHTML = outMode === 'http' ? outTip : 'Not active';
+  document.getElementById('archTipDb').innerHTML   = outMode === 'db'   ? outTip : 'Not active';
+  document.getElementById('archTipS3').innerHTML   = outMode === 's3'   ? outTip : 'Not active';
+  document.getElementById('archTipStd').innerHTML  = outMode === 'stdout' ? outTip : 'Not active';
+  document.getElementById('archTipDlq').innerHTML =
+    'Dead Letters: <b>' + fmt(dlq) + '</b><br>' +
+    'Last Insert: <b>' + fmtEpoch(cachedDlqMeta.last_inserted_at) + '</b><br>' +
+    'Last Drain: <b>' + fmtEpoch(cachedDlqMeta.last_drained_at) + '</b><br>' +
+    'Review at <b>/api/dlq</b>';
+
+  drawArchArrows();
+}
+
+// ── Architecture Detail Modal (onclick) ──────────────────────
+var archModalChart1 = null, archModalChart2 = null;
+
+function showArchDetail(which) {
+  var m = lastArchM || {};
+  var c = chartColors();
+  var modal = document.getElementById('archModal');
+  var title = '', color = '', rows = [], chart1Opt = null, chart2Opt = null;
+
+  var received  = m['changes_worker_changes_received_total'] || 0;
+  var processed = m['changes_worker_changes_processed_total'] || 0;
+  var filtered  = m['changes_worker_changes_filtered_total'] || 0;
+  var outOk     = m['changes_worker_output_success_total'] || 0;
+  var outErr    = m['changes_worker_output_errors_total'] || 0;
+  var outSkip   = m['changes_worker_output_skipped_total'] || 0;
+  var dlq       = m['changes_worker_dead_letter_total'] || 0;
+  var bytesIn   = m['changes_worker_bytes_received_total'] || 0;
+  var bytesOut  = m['changes_worker_bytes_output_total'] || 0;
+  var pollCycles= m['changes_worker_poll_cycles_total'] || 0;
+  var pollErrors= m['changes_worker_poll_errors_total'] || 0;
+  var retries   = m['changes_worker_retries_total'] || 0;
+  var uptime    = m['changes_worker_uptime_seconds'] || 0;
+  var lastBatch = m['changes_worker_last_batch_size'] || 0;
+  var chkSaves  = m['changes_worker_checkpoint_saves_total'] || 0;
+  var feedDel   = m['changes_worker_feed_deletes_seen_total'] || 0;
+  var feedRem   = m['changes_worker_feed_removes_seen_total'] || 0;
+
+  if (which === 'src') {
+    title = 'Sync Gateway — Changes Feed';
+    color = '#26a69a';
+    rows = [
+      ['Changes Received', fmt(received)],
+      ['Bytes Downloaded', fmtBytes(bytesIn)],
+      ['Poll Cycles', fmt(pollCycles)],
+      ['Poll Errors', fmt(pollErrors)],
+      ['Error Ratio', pollCycles > 0 ? ((pollErrors/pollCycles)*100).toFixed(1) + '%' : '0%'],
+      ['Retries', fmt(retries)],
+      ['Last Batch Size', fmt(lastBatch)],
+      ['Deletes Seen', fmt(feedDel)],
+      ['Removes Seen', fmt(feedRem)],
+      ['Uptime', fmtUptime(uptime)]
+    ];
+    // Chart 1: line — feed history
+    chart1Opt = lineOpt('Feed Over Time', [
+      lineSeries('Received', chartHistory.changesReceived, '#26a69a'),
+      lineSeries('Poll Errors', chartHistory.pollErrors, c.red)
+    ]);
+    // Chart 2: pie — deletes vs removes vs normal
+    var normal = Math.max(0, received - feedDel - feedRem);
+    chart2Opt = pieOpt('Changes Breakdown', [
+      { name: 'Normal', value: normal, itemStyle: { color: '#26a69a' } },
+      { name: 'Deletes', value: feedDel, itemStyle: { color: c.red } },
+      { name: 'Removes', value: feedRem, itemStyle: { color: c.yellow } }
+    ]);
+  } else if (which === 'dlq') {
+    title = 'Dead Letter Queue';
+    color = '#d32f2f';
+    rows = [
+      ['Dead Letters', fmt(dlq)],
+      ['Last Inserted', fmtEpoch(cachedDlqMeta.last_inserted_at)],
+      ['Insert Job', cachedDlqMeta.last_inserted_job || '--'],
+      ['Last Drained', fmtEpoch(cachedDlqMeta.last_drained_at)],
+      ['Drain Job', cachedDlqMeta.last_drained_job || '--'],
+      ['Output Errors', fmt(outErr)],
+      ['Output Success', fmt(outOk)],
+      ['Retries', fmt(retries)],
+      ['Uptime', fmtUptime(uptime)]
+    ];
+    // Chart 1: pie — success vs errors vs DLQ
+    chart1Opt = pieOpt('Output Outcomes', [
+      { name: 'Success', value: outOk, itemStyle: { color: '#36d399' } },
+      { name: 'Errors', value: outErr, itemStyle: { color: '#f87272' } },
+      { name: 'Dead Letters', value: dlq, itemStyle: { color: '#d32f2f' } }
+    ]);
+    // Chart 2: line — dead letter history
+    chart2Opt = lineOpt('Dead Letters Over Time', [
+      lineSeries('Dead Letters', chartHistory.deadLetters, '#d32f2f'),
+      lineSeries('Errors', chartHistory.outErrors, c.red)
+    ]);
+  } else if (which === 'work') {
+    title = 'changes_worker — Processing';
+    color = '#6c56a4';
+    rows = [
+      ['Docs Processed', fmt(processed)],
+      ['Docs Filtered', fmt(filtered)],
+      ['Dead Letters', fmt(dlq)],
+      ['Checkpoint Saves', fmt(chkSaves)],
+      ['Retries', fmt(retries)],
+      ['Uptime', fmtUptime(uptime)]
+    ];
+    // Chart 1: bar — processed vs filtered vs DLQ
+    chart1Opt = barOpt('Document Fate', ['Processed','Filtered','Dead Letter'], [
+      { name: 'Count', type: 'bar', data: [processed, filtered, dlq],
+        itemStyle: { color: function(p) { return ['#6c56a4','#fbbd23','#f87272'][p.dataIndex]; } },
+        barWidth: '50%', label: { show: true, position: 'top', color: c.text, fontSize: 10 } }
+    ]);
+    // Chart 2: line — processing history
+    chart2Opt = lineOpt('Processing Over Time', [
+      lineSeries('Processed', chartHistory.processed, '#6c56a4'),
+      lineSeries('Filtered', chartHistory.filtered, c.yellow)
+    ]);
+  } else {
+    // Output nodes
+    var outMode = (cachedCfg && cachedCfg.output) ? cachedCfg.output.mode : '';
+    var names = { http: 'HTTP Endpoint', db: 'RDBMS', s3: 'AWS S3', stdout: 'stdout' };
+    title = (names[which] || which) + ' — Output';
+    color = archNodeColors[which] || '#475569';
+    var isActive = which === outMode;
+    rows = [
+      ['Status', isActive ? '✅ Active' : '💤 Inactive'],
+      ['Requests Total', fmt(outOk + outErr + outSkip)],
+      ['Success', fmt(outOk)],
+      ['Errors', fmt(outErr)],
+      ['Skipped', fmt(outSkip)],
+      ['Dead Letters', fmt(dlq)],
+      ['Bytes Sent', fmtBytes(bytesOut)]
+    ];
+    // Chart 1: pie — success vs errors vs skipped
+    chart1Opt = pieOpt('Request Outcomes', [
+      { name: 'Success', value: outOk, itemStyle: { color: '#36d399' } },
+      { name: 'Errors', value: outErr, itemStyle: { color: '#f87272' } },
+      { name: 'Skipped', value: outSkip, itemStyle: { color: '#fbbd23' } }
+    ]);
+    // Chart 2: line — output history
+    chart2Opt = lineOpt('Output Over Time', [
+      lineSeries('Success', chartHistory.outSuccess, '#36d399'),
+      lineSeries('Errors', chartHistory.outErrors, c.red),
+      lineSeries('Dead Letters', chartHistory.deadLetters, c.yellow)
+    ]);
+  }
+
+  document.getElementById('archModalTitle').textContent = title;
+  document.getElementById('archModalDot').style.background = color;
+  document.getElementById('archModalDot').style.boxShadow = '0 0 10px ' + color;
+  var tbody = '';
+  for (var r = 0; r < rows.length; r++) {
+    tbody += '<tr><td class="font-medium text-sm">' + rows[r][0] + '</td><td class="text-right text-sm">' + rows[r][1] + '</td></tr>';
+  }
+  document.getElementById('archModalStatsBody').innerHTML = tbody;
+
+  // Render charts in modal
+  modal.showModal();
+  setTimeout(function() {
+    if (archModalChart1) archModalChart1.dispose();
+    if (archModalChart2) archModalChart2.dispose();
+    archModalChart1 = echarts.init(document.getElementById('archModalChart1'));
+    archModalChart2 = echarts.init(document.getElementById('archModalChart2'));
+    if (chart1Opt) archModalChart1.setOption(chart1Opt, true);
+    if (chart2Opt) archModalChart2.setOption(chart2Opt, true);
+  }, 80);
+}
+
+function pieOpt(title, data) {
+  var c = chartColors();
+  return {
+    backgroundColor: 'transparent',
+    textStyle: { color: c.text },
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+    legend: { bottom: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 10, itemHeight: 8 },
+    series: [{
+      type: 'pie', radius: ['35%','60%'], center: ['50%','45%'],
+      label: { color: c.text, fontSize: 10 },
+      data: data,
+      emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.3)' } }
+    }]
+  };
+}
+
+function barOpt(title, cats, series) {
+  var c = chartColors();
+  return {
+    backgroundColor: 'transparent',
+    textStyle: { color: c.text, fontSize: 10 },
+    tooltip: { trigger: 'axis' },
+    grid: { top: 16, left: 40, right: 12, bottom: 10 },
+    xAxis: { type: 'category', data: cats, axisLabel: { color: c.text, fontSize: 10 }, axisLine: { lineStyle: { color: c.split } } },
+    yAxis: { type: 'value', axisLabel: { color: c.text, fontSize: 9 }, splitLine: { lineStyle: { color: c.split } }, axisLine: { show: false } },
+    series: series
+  };
+}
+
 function renderCharts() {
   var c = chartColors();
   if (cFeed) {
@@ -595,6 +1116,7 @@ window.addEventListener('resize', function() {
   if (cFeedAvg) cFeedAvg.resize();
   if (cProcessAvg) cProcessAvg.resize();
   if (cOutputAvg) cOutputAvg.resize();
+  drawArchArrows();
 });
 
 // ── Status Dots (computed from metrics, not a separate endpoint) ─
@@ -996,6 +1518,7 @@ function loadMetrics() {
       // History for charts
       pushHistory(m);
       renderCharts();
+      updateArchData(m);
 
       // LEFT
       setText('mPollCycles',     fmt(m['changes_worker_poll_cycles_total']));
@@ -1039,6 +1562,32 @@ function loadMetrics() {
     });
 }
 
+// ── DLQ Meta (last_inserted_at / last_drained_at) ────────────
+var cachedDlqMeta = { last_inserted_at: null, last_drained_at: null, last_inserted_job: null, last_drained_job: null };
+
+function fmtEpoch(epoch) {
+  if (!epoch) return 'never';
+  try {
+    var d = new Date(epoch * 1000);
+    if (isNaN(d.getTime())) return 'never';
+    var now = Date.now();
+    var diff = (now - d.getTime()) / 1000;
+    var ago = '';
+    if (diff < 60) ago = Math.floor(diff) + 's ago';
+    else if (diff < 3600) ago = Math.floor(diff / 60) + 'm ago';
+    else if (diff < 86400) ago = Math.floor(diff / 3600) + 'h ago';
+    else ago = Math.floor(diff / 86400) + 'd ago';
+    return d.toLocaleString() + ' (' + ago + ')';
+  } catch(e) { return 'never'; }
+}
+
+function loadDlqMeta() {
+  fetch('/api/dlq/meta')
+    .then(function(res) { return res.ok ? res.json() : null; })
+    .then(function(data) { if (data) cachedDlqMeta = data; })
+    .catch(function() {});
+}
+
 function setUnknown() {
   dbg('setUnknown: no metrics data — dots -> yellow (not monitored)');
   setDot('dotFeed', 'yellow');
@@ -1069,7 +1618,9 @@ document.addEventListener('DOMContentLoaded', function() {
   loadCBLStatus();
   loadConfig();
   loadMetrics();
+  loadDlqMeta();
   setInterval(loadMetrics, 5000);
+  setInterval(loadDlqMeta, 15000);
   setInterval(loadCBLStatus, 30000);
 });
 </script>

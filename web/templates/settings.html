@@ -27,7 +27,7 @@
 
   <div class="sidebar-main">
   <!-- Main content -->
-  <main class="w-full mx-auto p-6 max-w-4xl">
+  <main class="w-full mx-auto p-6">
     <h1 class="text-2xl font-bold mb-4">Settings: Configuration Editor</h1>
 
     <div class="flex items-center gap-1 text-sm mb-2 justify-end">
@@ -1066,6 +1066,32 @@
             </div>
             <input type="text" id="output_dead_letter_path" class="input input-bordered w-full" placeholder="failed_docs.jsonl" />
           </label>
+          <div class="divider text-xs opacity-60">Retention &amp; Replay Limits</div>
+          <div class="grid grid-cols-2 gap-3">
+            <label class="form-control w-full">
+              <div class="label">
+                <span class="label-text flex items-center gap-2">
+                  Retention (seconds)
+                  <div class="tooltip tooltip-right" data-tip="How long DLQ entries are kept before automatic purge. Uses CBL document expiration (TTL) so entries are auto-purged even if the worker is not running. Set to 0 to keep entries forever. Default: 86400 (24 hours).">
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                  </div>
+                </span>
+              </div>
+              <input type="number" id="output_dlq_retention_seconds" class="input input-bordered w-full" min="0" placeholder="86400" oninput="updateDlqRetentionHuman()" />
+              <div class="label"><span class="label-text-alt text-xs opacity-60" id="dlq_retention_human">= 24 hours</span></div>
+            </label>
+            <label class="form-control w-full">
+              <div class="label">
+                <span class="label-text flex items-center gap-2">
+                  Max Replay Attempts
+                  <div class="tooltip tooltip-right" data-tip="Maximum number of times a DLQ entry is retried during startup replay before being skipped. Prevents 'poison pill' messages from blocking replay indefinitely. Skipped entries remain in the DLQ until manually deleted or expired by TTL. Set to 0 for unlimited retries. Default: 10.">
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                  </div>
+                </span>
+              </div>
+              <input type="number" id="output_dlq_max_replay_attempts" class="input input-bordered w-full" min="0" placeholder="10" />
+            </label>
+          </div>
           <div class="divider text-xs opacity-60">Shutdown Behaviour</div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
@@ -1092,16 +1118,35 @@
         <div class="collapse-content flex flex-col gap-3">
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
-              <span class="label-text">Enabled</span>
+              <span class="label-text flex items-center gap-2">
+                Enabled
+                <div class="tooltip tooltip-right" data-tip="When enabled, the worker saves its position in the _changes feed to Sync Gateway as a _local document. On restart, processing resumes from where it left off instead of re-reading the entire feed. Disable only for stateless or one-shot runs.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
               <input type="checkbox" id="checkpoint_enabled" class="toggle toggle-success" />
             </label>
           </div>
           <label class="form-control w-full">
-            <div class="label"><span class="label-text">Client ID</span></div>
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Client ID
+                <div class="tooltip tooltip-right" data-tip="Unique identifier for this worker's checkpoint document stored in Sync Gateway (_local/{client_id}). If you run multiple independent workers against the same database, each must have a different Client ID so they track their positions separately. Also appears in DLQ metadata as the job identity.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
             <input type="text" id="checkpoint_client_id" class="input input-bordered w-full" />
           </label>
           <label class="form-control w-full">
-            <div class="label"><span class="label-text">Every N Docs</span></div>
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Every N Docs
+                <div class="tooltip tooltip-right" data-tip="Save a checkpoint after every N documents within a batch. When set, the batch is split into sub-batches of this size, and the checkpoint advances after each sub-batch completes. Useful for very large batches where you want incremental progress. Set to 0 (default) to checkpoint only at the end of each full batch.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
             <input type="number" id="checkpoint_every_n_docs" class="input input-bordered w-full" min="0" />
           </label>
         </div>
@@ -1349,6 +1394,17 @@
     document.getElementById('shutdown_dlq_warning').style.display = on ? '' : 'none';
   }
 
+  function updateDlqRetentionHuman() {
+    var secs = parseInt(document.getElementById('output_dlq_retention_seconds').value) || 0;
+    var el = document.getElementById('dlq_retention_human');
+    if (secs <= 0) { el.textContent = '= forever (no expiration)'; return; }
+    if (secs < 60) { el.textContent = '= ' + secs + ' second' + (secs !== 1 ? 's' : ''); return; }
+    if (secs < 3600) { var m = Math.round(secs / 60); el.textContent = '= ' + m + ' minute' + (m !== 1 ? 's' : ''); return; }
+    if (secs < 86400) { var h = Math.round(secs / 3600 * 10) / 10; el.textContent = '= ' + h + ' hour' + (h !== 1 ? 's' : ''); return; }
+    var d = Math.round(secs / 86400 * 10) / 10;
+    el.textContent = '= ' + d + ' day' + (d !== 1 ? 's' : '');
+  }
+
   // DB mapping mode field visibility
   function toggleDbMappingFields() {
     var mode = document.getElementById('output_db_mapping_mode').value;
@@ -1420,6 +1476,12 @@
     document.getElementById('output_follow_redirects').checked = cfg.output?.follow_redirects || false;
     document.getElementById('output_halt_on_failure').checked = cfg.output?.halt_on_failure ?? true;
     document.getElementById('output_dead_letter_path').value = cfg.output?.dead_letter_path || '';
+
+    // DLQ retention & replay
+    var dlqCfg = cfg.output?.dlq || {};
+    document.getElementById('output_dlq_retention_seconds').value = dlqCfg.retention_seconds ?? 86400;
+    document.getElementById('output_dlq_max_replay_attempts').value = dlqCfg.max_replay_attempts ?? 10;
+    updateDlqRetentionHuman();
 
     // Health check
     var hc = cfg.output?.health_check || {};
@@ -1617,7 +1679,11 @@
         var o = {
           mode: mode,
           halt_on_failure: document.getElementById('output_halt_on_failure').checked,
-          dead_letter_path: document.getElementById('output_dead_letter_path').value
+          dead_letter_path: document.getElementById('output_dead_letter_path').value,
+          dlq: {
+            retention_seconds: parseInt(document.getElementById('output_dlq_retention_seconds').value) || 0,
+            max_replay_attempts: parseInt(document.getElementById('output_dlq_max_replay_attempts').value) || 0
+          }
         };
         if (mode === 'http') {
           o.target_url = document.getElementById('output_target_url').value;

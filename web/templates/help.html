@@ -20,7 +20,7 @@
   <div id="sidebar-root"></div>
 
   <div class="sidebar-main">
-  <main class="w-full mx-auto p-6 space-y-6 max-w-5xl">
+  <main class="w-full mx-auto p-6 space-y-6">
 
     <!-- Header -->
     <div class="card bg-base-100 shadow rounded-2xl">
@@ -283,35 +283,271 @@
         <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
           <span class="badge badge-accent">Metrics</span> Key Prometheus Metrics
         </h2>
-        <p class="opacity-70 mb-3">Exposed at <code>/_metrics</code> on the worker port (default 9090). Proxied via <code>/api/metrics</code> on the admin UI.</p>
+        <p class="opacity-70 mb-3">Exposed at <code>/_metrics</code> on the worker port (default 9090). Proxied via <code>/api/metrics</code> on the admin UI. All metrics carry <code>{src, database}</code> labels.</p>
+
+        <!-- Core / Uptime -->
+        <h3 class="font-semibold mt-4 mb-2">Core</h3>
         <div class="overflow-x-auto">
           <table class="table table-sm">
             <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
             <tbody>
-              <tr><td class="font-mono text-xs">changes_worker_uptime_seconds</td><td>gauge</td><td>Time since worker started</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_poll_cycles_total</td><td>counter</td><td>Completed _changes poll cycles</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_poll_errors_total</td><td>counter</td><td>Failed _changes requests</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_changes_received_total</td><td>counter</td><td>Total change notifications received</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_changes_processed_total</td><td>counter</td><td>Changes forwarded to output stage</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_changes_filtered_total</td><td>counter</td><td>Changes skipped by filters (deletes + removes)</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_output_requests_total</td><td>counter</td><td>HTTP requests sent to output target</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_output_success_total</td><td>counter</td><td>Successful output deliveries</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_output_errors_total</td><td>counter</td><td>Failed output deliveries</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_dead_letter_total</td><td>counter</td><td>Documents written to DLQ</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_output_endpoint_up</td><td>gauge</td><td>Output endpoint reachable (1=up, 0=down)</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_checkpoint_seq</td><td>gauge</td><td>Current checkpoint sequence value</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_bytes_received_total</td><td>counter</td><td>Bytes downloaded from changes feed + doc fetches</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_bytes_output_total</td><td>counter</td><td>Bytes sent to output endpoint</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_output_response_time_seconds</td><td>summary</td><td>Output response time (p50, p90, p99)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_uptime_seconds</td><td>gauge</td><td>Time in seconds since the worker started</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_active_tasks</td><td>gauge</td><td>Number of currently active document processing tasks</td></tr>
             </tbody>
           </table>
         </div>
+
+        <!-- Changes Feed -->
+        <h3 class="font-semibold mt-4 mb-2">Changes Feed</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_poll_cycles_total</td><td>counter</td><td>Total _changes poll cycles completed</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_poll_errors_total</td><td>counter</td><td>Total _changes poll errors</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_last_poll_timestamp_seconds</td><td>gauge</td><td>Unix timestamp of the last successful _changes poll</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_last_batch_size</td><td>gauge</td><td>Number of changes in the last batch received</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_changes_received_total</td><td>counter</td><td>Total changes received from the _changes feed</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_changes_processed_total</td><td>counter</td><td>Total changes processed and forwarded</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_changes_filtered_total</td><td>counter</td><td>Total changes filtered out (deletes + removes)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_changes_deleted_total</td><td>counter</td><td>Total deleted changes filtered out</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_changes_removed_total</td><td>counter</td><td>Total removed changes filtered out</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_feed_deletes_seen_total</td><td>counter</td><td>Total changes with deleted=true seen in the feed</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_feed_removes_seen_total</td><td>counter</td><td>Total changes with removed=true seen in the feed</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_changes_request_time_seconds</td><td>summary</td><td>Time to complete a _changes HTTP request (p50, p90, p99)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Document Fetching -->
+        <h3 class="font-semibold mt-4 mb-2">Document Fetching</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_docs_fetched_total</td><td>counter</td><td>Total documents fetched via bulk_get or individual GET</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_doc_fetch_requests_total</td><td>counter</td><td>Total doc fetch requests (bulk_get or individual batch)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_doc_fetch_errors_total</td><td>counter</td><td>Total doc fetch errors</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_doc_fetch_time_seconds</td><td>summary</td><td>Time to fetch documents (p50, p90, p99)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Bytes -->
+        <h3 class="font-semibold mt-4 mb-2">Bytes Transferred</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_bytes_received_total</td><td>counter</td><td>Total bytes received from _changes feed, bulk_get, and individual doc GETs</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_bytes_output_total</td><td>counter</td><td>Total bytes sent to the output endpoint</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Output -->
+        <h3 class="font-semibold mt-4 mb-2">Output</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_output_requests_total</td><td>counter</td><td>Total output requests sent to the downstream endpoint</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_output_errors_total</td><td>counter</td><td>Total output request errors</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_output_success_total</td><td>counter</td><td>Total output requests that succeeded</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_output_skipped_total</td><td>counter</td><td>Total documents skipped at output (no mapper match or empty ops)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_output_requests_by_method_total</td><td>counter</td><td>Output requests broken down by HTTP method (PUT, DELETE)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_output_errors_by_method_total</td><td>counter</td><td>Output errors broken down by HTTP method (PUT, DELETE)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_output_endpoint_up</td><td>gauge</td><td>Whether the output endpoint is reachable (1=up, 0=down)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_output_response_time_seconds</td><td>summary</td><td>Output HTTP response time (p50, p90, p99)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Batches -->
+        <h3 class="font-semibold mt-4 mb-2">Batches</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_batches_total</td><td>counter</td><td>Total batches processed</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_batches_failed_total</td><td>counter</td><td>Total batches that failed (output down)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_batch_processing_time_seconds</td><td>summary</td><td>Time to process a batch of changes (p50, p90, p99)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Schema Mapper -->
+        <h3 class="font-semibold mt-4 mb-2">Schema Mapper</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_mapper_matched_total</td><td>counter</td><td>Total documents matched by a schema mapper</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_mapper_skipped_total</td><td>counter</td><td>Total documents skipped (no mapper match)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_mapper_errors_total</td><td>counter</td><td>Total mapper errors</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_mapper_ops_total</td><td>counter</td><td>Total SQL operations generated by mappers</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Dead Letter Queue -->
+        <h3 class="font-semibold mt-4 mb-2">Dead Letter Queue</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_dead_letter_total</td><td>counter</td><td>Total documents written to the dead letter queue</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_dlq_write_failures_total</td><td>counter</td><td>Total DLQ write failures (data potentially lost)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_dlq_pending_count</td><td>gauge</td><td>Current number of pending entries in the dead letter queue</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Checkpoint -->
+        <h3 class="font-semibold mt-4 mb-2">Checkpoint</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_checkpoint_saves_total</td><td>counter</td><td>Total checkpoint save operations</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_checkpoint_save_errors_total</td><td>counter</td><td>Total checkpoint save errors (fell back to local file)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_checkpoint_loads_total</td><td>counter</td><td>Total checkpoint load operations</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_checkpoint_load_errors_total</td><td>counter</td><td>Total checkpoint load errors</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_checkpoint_seq</td><td>gauge</td><td>Current checkpoint sequence value</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Retries & Resilience -->
+        <h3 class="font-semibold mt-4 mb-2">Retries &amp; Resilience</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_retries_total</td><td>counter</td><td>Total HTTP retry attempts across all requests</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_retry_exhausted_total</td><td>counter</td><td>Total times all retries were exhausted</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_stream_reconnects_total</td><td>counter</td><td>Total stream reconnections</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_stream_messages_total</td><td>counter</td><td>Total stream messages received</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_stream_parse_errors_total</td><td>counter</td><td>Total stream message parse errors</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_health_probes_total</td><td>counter</td><td>Total health check probes sent</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_health_probe_failures_total</td><td>counter</td><td>Total health check probe failures</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_health_probe_time_seconds</td><td>summary</td><td>Time for a health check probe (p50, p90, p99)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Database (RDBMS) -->
+        <h3 class="font-semibold mt-4 mb-2">Database (RDBMS)</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_db_retries_total</td><td>counter</td><td>Total DB transaction retry attempts</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_db_retry_exhausted_total</td><td>counter</td><td>Total times all DB retries were exhausted</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_db_transient_errors_total</td><td>counter</td><td>Total transient DB errors (connection, deadlock, serialization)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_db_permanent_errors_total</td><td>counter</td><td>Total permanent DB errors (constraint, type mismatch)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_db_pool_reconnects_total</td><td>counter</td><td>Total DB connection pool reconnections</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Cloud Storage -->
+        <h3 class="font-semibold mt-4 mb-2">Cloud Storage</h3>
+        <p class="opacity-70 mb-2">Cloud metrics carry <code>{provider, job_id}</code> labels instead of <code>{src, database}</code>.</p>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_cloud_uploads_total</td><td>counter</td><td>Total object uploads (PUT)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_cloud_deletes_total</td><td>counter</td><td>Total object deletions</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_cloud_errors_total</td><td>counter</td><td>Total cloud write errors</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_cloud_retries_total</td><td>counter</td><td>Total retries on transient cloud errors</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_cloud_bytes_uploaded_total</td><td>counter</td><td>Total bytes sent to cloud storage</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_cloud_output_response_time_seconds</td><td>summary</td><td>Cloud upload response time (p50, p90, p99)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Process / System Resources -->
+        <h3 class="font-semibold mt-4 mb-2">Process Resources</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_process_cpu_percent</td><td>gauge</td><td>Process CPU usage as a percentage of one core</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_process_cpu_user_seconds_total</td><td>counter</td><td>User-space CPU seconds consumed</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_process_cpu_system_seconds_total</td><td>counter</td><td>Kernel-space CPU seconds consumed</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_process_memory_rss_bytes</td><td>gauge</td><td>Resident Set Size in bytes</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_process_memory_vms_bytes</td><td>gauge</td><td>Virtual Memory Size in bytes</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_process_memory_percent</td><td>gauge</td><td>Percentage of system RAM used</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_process_threads</td><td>gauge</td><td>Number of OS threads</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_process_open_fds</td><td>gauge</td><td>Number of open file descriptors</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Python Runtime -->
+        <h3 class="font-semibold mt-4 mb-2">Python Runtime</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_python_threads_active</td><td>gauge</td><td>Number of active Python threads</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_python_gc_gen{0,1,2}_count</td><td>gauge</td><td>Objects tracked by GC generation 0/1/2</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_python_gc_gen{0,1,2}_collections_total</td><td>counter</td><td>GC collection runs for generation 0/1/2</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- System Resources -->
+        <h3 class="font-semibold mt-4 mb-2">System Resources</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_system_cpu_count</td><td>gauge</td><td>Number of logical CPU cores on the host</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_cpu_percent</td><td>gauge</td><td>Host-wide CPU usage percentage</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_memory_total_bytes</td><td>gauge</td><td>Total physical memory</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_memory_available_bytes</td><td>gauge</td><td>Available physical memory</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_memory_used_bytes</td><td>gauge</td><td>Used physical memory</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_memory_percent</td><td>gauge</td><td>Host memory usage percentage</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_swap_total_bytes</td><td>gauge</td><td>Total swap space</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_swap_used_bytes</td><td>gauge</td><td>Used swap space</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_disk_total_bytes</td><td>gauge</td><td>Total disk space</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_disk_used_bytes</td><td>gauge</td><td>Used disk space</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_disk_free_bytes</td><td>gauge</td><td>Free disk space</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_disk_percent</td><td>gauge</td><td>Disk usage percentage</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_network_bytes_sent_total</td><td>counter</td><td>Total bytes sent over all network interfaces</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_network_bytes_recv_total</td><td>counter</td><td>Total bytes received over all network interfaces</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_network_packets_sent_total</td><td>counter</td><td>Total packets sent</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_network_packets_recv_total</td><td>counter</td><td>Total packets received</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_network_errin_total</td><td>counter</td><td>Total incoming network errors</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_system_network_errout_total</td><td>counter</td><td>Total outgoing network errors</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Storage Sizes -->
+        <h3 class="font-semibold mt-4 mb-2">Storage Sizes</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_log_dir_size_bytes</td><td>gauge</td><td>Total size of the log directory in bytes</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_cbl_db_size_bytes</td><td>gauge</td><td>Total size of the Couchbase Lite database in bytes</td></tr>
+            </tbody>
+          </table>
+        </div>
+
         <div class="mockup-code mt-4">
           <pre><code># Example PromQL alert: DLQ is receiving docs
 rate(changes_worker_dead_letter_total[5m]) > 0
 
 # Example: error ratio on output
-rate(changes_worker_output_errors_total[5m]) / rate(changes_worker_output_requests_total[5m]) > 0.1</code></pre>
+rate(changes_worker_output_errors_total[5m]) / rate(changes_worker_output_requests_total[5m]) > 0.1
+
+# Example: cloud upload errors
+rate(changes_worker_cloud_errors_total[5m]) > 0</code></pre>
         </div>
       </div>
     </div>

@@ -655,6 +655,7 @@ async def _process_changes_batch(
     max_concurrent: int,
     shutdown_cfg: dict | None = None,
     initial_sync: bool = False,
+    job_id: str = "",
 ) -> tuple[str, bool]:
     """
     Process a batch of _changes results: filter, fetch docs, forward to output,
@@ -844,7 +845,7 @@ async def _process_changes_batch(
                         batch_fail += 1
                         if dlq.enabled and metrics:
                             metrics.inc("dead_letter_total")
-                        await dlq.write(result["_doc"], result, change.get("seq", ""))
+                        await dlq.write(result["_doc"], result, change.get("seq", ""), target_url=output.target_url, metrics=metrics)
                 except (OutputEndpointDown, ShutdownRequested) as exc:
                     output_failed = True
                     is_shutdown = isinstance(exc, ShutdownRequested)
@@ -876,6 +877,8 @@ async def _process_changes_batch(
                                     "error": "shutdown_inflight",
                                 },
                                 rem.get("seq", ""),
+                                target_url=output.target_url,
+                                metrics=metrics,
                             )
                         if metrics:
                             metrics.inc("dead_letter_total", len(remaining))
@@ -905,7 +908,7 @@ async def _process_changes_batch(
                         batch_fail += 1
                         if dlq.enabled and metrics:
                             metrics.inc("dead_letter_total")
-                        await dlq.write(result["_doc"], result, change.get("seq", ""))
+                        await dlq.write(result["_doc"], result, change.get("seq", ""), target_url=output.target_url, metrics=metrics)
             else:
                 tasks = [asyncio.create_task(process_one(c)) for c in filtered]
                 done, _ = await asyncio.wait(tasks)
@@ -920,7 +923,8 @@ async def _process_changes_batch(
                         if dlq.enabled and metrics:
                             metrics.inc("dead_letter_total")
                         await dlq.write(
-                            result["_doc"], result, result["_change"].get("seq", "")
+                            result["_doc"], result, result["_change"].get("seq", ""),
+                            target_url=output.target_url, metrics=metrics,
                         )
         except (OutputEndpointDown, ShutdownRequested) as exc:
             output_failed = True
@@ -961,6 +965,8 @@ async def _process_changes_batch(
                             "error": "shutdown_inflight",
                         },
                         ch.get("seq", ""),
+                        target_url=output.target_url,
+                        metrics=metrics,
                     )
                     dlq_count += 1
                 if metrics:
@@ -991,6 +997,13 @@ async def _process_changes_batch(
                 else "",
             ),
         )
+
+    # Flush DLQ meta once per batch (not per doc) to minimise CBL writes
+    if batch_fail > 0 and dlq.enabled:
+        _job = job_id or getattr(checkpoint, "_client_id", "")
+        dlq.flush_insert_meta(_job)
+        if metrics:
+            metrics.set("dlq_pending_count", len(dlq.list_pending()))
 
     output.log_stats()
 
@@ -1577,18 +1590,32 @@ async def _replay_dead_letter_queue(
     output: OutputForwarder,
     metrics: MetricsCollector | None,
     shutdown_event: asyncio.Event,
+    current_target_url: str = "",
 ) -> dict:
     """Replay pending DLQ entries before processing new _changes.
 
     Sends each DLQ doc to the output endpoint. On success, purges the entry
     from CBL so it doesn't accumulate. On failure, leaves it for next startup.
+    Entries that exceed max_replay_attempts are skipped (archived).
+    Entries whose target_url differs from the current config are flagged.
 
     Returns a summary dict with counts.
     """
+    # Purge expired entries before replaying
+    expired = dlq.purge_expired()
+    if expired > 0:
+        log_event(
+            logger,
+            "info",
+            "DLQ",
+            "purged %d expired DLQ entries (retention=%ds)"
+            % (expired, dlq.retention_seconds),
+        )
+
     pending = dlq.list_pending()
     if not pending:
         log_event(logger, "info", "DLQ", "no pending dead-letter entries to replay")
-        return {"total": 0, "succeeded": 0, "failed": 0}
+        return {"total": 0, "succeeded": 0, "failed": 0, "skipped": 0, "expired": expired}
 
     log_event(
         logger,
@@ -1599,6 +1626,8 @@ async def _replay_dead_letter_queue(
 
     succeeded = 0
     failed = 0
+    skipped = 0
+    max_attempts = dlq.max_replay_attempts
     for entry in pending:
         if shutdown_event.is_set():
             log_event(logger, "warn", "DLQ", "shutdown during DLQ replay – stopping")
@@ -1607,6 +1636,35 @@ async def _replay_dead_letter_queue(
         dlq_id = entry.get("id", "")
         doc_id = entry.get("doc_id_original", entry.get("doc_id", ""))
         method = entry.get("method", "PUT")
+        entry_target = entry.get("target_url", "")
+        replay_attempts = entry.get("replay_attempts", 0)
+
+        # Skip entries that have exceeded max replay attempts
+        if max_attempts > 0 and replay_attempts >= max_attempts:
+            skipped += 1
+            log_event(
+                logger,
+                "warn",
+                "DLQ",
+                "skipping DLQ entry – max replay attempts (%d) reached" % max_attempts,
+                doc_id=doc_id,
+                dlq_id=dlq_id,
+                replay_attempts=replay_attempts,
+            )
+            continue
+
+        # Warn if the entry was created for a different output target
+        if entry_target and current_target_url and entry_target != current_target_url:
+            log_event(
+                logger,
+                "warn",
+                "DLQ",
+                "DLQ entry target_url differs from current config",
+                doc_id=doc_id,
+                dlq_id=dlq_id,
+                entry_target=entry_target,
+                current_target=current_target_url,
+            )
 
         # Get the full doc data
         full_entry = dlq.get_entry_doc(dlq_id)
@@ -1630,6 +1688,7 @@ async def _replay_dead_letter_queue(
             doc_id=doc_id,
             dlq_id=dlq_id,
             method=method,
+            replay_attempt=replay_attempts + 1,
         )
 
         try:
@@ -1646,6 +1705,7 @@ async def _replay_dead_letter_queue(
                     dlq_id=dlq_id,
                 )
             else:
+                dlq.increment_replay_attempts(dlq_id)
                 failed += 1
                 log_event(
                     logger,
@@ -1655,8 +1715,10 @@ async def _replay_dead_letter_queue(
                     doc_id=doc_id,
                     dlq_id=dlq_id,
                     status=result.get("status"),
+                    replay_attempts=replay_attempts + 1,
                 )
         except Exception as exc:
+            dlq.increment_replay_attempts(dlq_id)
             failed += 1
             log_event(
                 logger,
@@ -1665,15 +1727,26 @@ async def _replay_dead_letter_queue(
                 "DLQ entry replay error: %s" % exc,
                 doc_id=doc_id,
                 dlq_id=dlq_id,
+                replay_attempts=replay_attempts + 1,
             )
 
-    summary = {"total": len(pending), "succeeded": succeeded, "failed": failed}
+    # Flush drain timestamp once after the entire replay batch
+    if succeeded > 0:
+        dlq.flush_drain_meta()
+
+    summary = {
+        "total": len(pending),
+        "succeeded": succeeded,
+        "failed": failed,
+        "skipped": skipped,
+        "expired": expired,
+    }
     log_event(
         logger,
         "info",
         "DLQ",
-        "DLQ replay complete: %d/%d succeeded, %d failed"
-        % (succeeded, len(pending), failed),
+        "DLQ replay complete: %d/%d succeeded, %d failed, %d skipped, %d expired"
+        % (succeeded, len(pending), failed, skipped, expired),
     )
     return summary
 

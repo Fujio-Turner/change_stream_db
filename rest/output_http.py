@@ -290,6 +290,10 @@ class OutputForwarder:
 
     # -- Public API ------------------------------------------------------------
 
+    @property
+    def target_url(self) -> str:
+        return self._target_url
+
     def _method_key(self, method: str) -> str:
         """Map HTTP method to metrics key prefix: 'put' or 'delete'."""
         return "delete" if method == "DELETE" else "put"
@@ -979,7 +983,7 @@ class DeadLetterQueue:
     Otherwise falls back to append-only JSONL file.
     """
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, dlq_cfg: dict | None = None):
         from cbl_store import USE_CBL as _use_cbl
 
         self._use_cbl = _use_cbl
@@ -990,12 +994,18 @@ class DeadLetterQueue:
             self._store = CBLStore()
         self._path = Path(path) if path and not self._use_cbl else None
         self._lock = asyncio.Lock()
+        cfg = dlq_cfg or {}
+        self._retention_seconds = cfg.get("retention_seconds", 86400)
+        self._max_replay_attempts = cfg.get("max_replay_attempts", 10)
 
     @property
     def enabled(self) -> bool:
         return self._use_cbl or self._path is not None
 
-    async def write(self, doc: dict, result: dict, seq: str | int) -> None:
+    async def write(
+        self, doc: dict, result: dict, seq: str | int, target_url: str = "",
+        metrics=None,
+    ) -> None:
         ic("DLQ.write", result.get("doc_id"), seq, "cbl" if self._use_cbl else "file")
         if self._use_cbl and self._store:
             self._store.add_dlq_entry(
@@ -1005,6 +1015,8 @@ class DeadLetterQueue:
                 status=result.get("status", 0),
                 error=result.get("error", ""),
                 doc=doc,
+                target_url=target_url,
+                ttl_seconds=self._retention_seconds,
             )
             log_event(
                 logger,
@@ -1015,6 +1027,8 @@ class DeadLetterQueue:
                 doc_id=result.get("doc_id"),
                 seq=str(seq),
                 storage="cbl",
+                ttl_seconds=self._retention_seconds,
+                target_url=target_url,
             )
             return
         # Original file fallback
@@ -1027,6 +1041,8 @@ class DeadLetterQueue:
             "status": result.get("status", 0),
             "error": result.get("error", ""),
             "time": int(time.time()),
+            "target_url": target_url,
+            "replay_attempts": 0,
             "doc": doc,
         }
         try:
@@ -1039,13 +1055,15 @@ class DeadLetterQueue:
                 logger,
                 "error",
                 "DLQ",
-                "failed to write DLQ entry to file",
+                "failed to write DLQ entry to file — DATA MAY BE LOST",
                 doc_id=result.get("doc_id"),
                 seq=str(seq),
                 storage="file",
                 error_detail=f"{type(exc).__name__}: {exc}",
             )
-            return
+            if metrics:
+                metrics.inc("dlq_write_failures_total")
+            raise
         log_event(
             logger,
             "warn",
@@ -1082,18 +1100,30 @@ class DeadLetterQueue:
             storage="file",
         )
 
+    def flush_insert_meta(self, job_id: str = "") -> None:
+        """Record last_inserted_at once after a batch of DLQ writes."""
+        if self._use_cbl and self._store:
+            self._store.update_dlq_meta("last_inserted_at", job_id)
+
+    def flush_drain_meta(self, job_id: str = "") -> None:
+        """Record last_drained_at once after a batch of DLQ drains."""
+        if self._use_cbl and self._store:
+            self._store.update_dlq_meta("last_drained_at", job_id)
+
     def list_pending(self) -> list[dict]:
         """Return all pending (not yet retried) DLQ entries."""
         if self._use_cbl and self._store:
             return [e for e in self._store.list_dlq() if not e.get("retried")]
         if self._path and self._path.exists():
             entries = []
-            for line in self._path.read_text().strip().split("\n"):
-                if line:
-                    try:
-                        entries.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        pass
+            with open(self._path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            entries.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            pass
             return entries
         return []
 
@@ -1102,6 +1132,26 @@ class DeadLetterQueue:
         if self._use_cbl and self._store:
             return self._store.get_dlq_entry(dlq_id)
         return None
+
+    def purge_expired(self) -> int:
+        """Remove DLQ entries older than retention_seconds. Returns count purged."""
+        if self._use_cbl and self._store and self._retention_seconds > 0:
+            return self._store.purge_expired_dlq(self._retention_seconds)
+        return 0
+
+    def increment_replay_attempts(self, dlq_id: str) -> int:
+        """Increment replay_attempts on a CBL DLQ entry. Returns new count."""
+        if self._use_cbl and self._store:
+            return self._store.increment_dlq_replay_attempts(dlq_id)
+        return 0
+
+    @property
+    def max_replay_attempts(self) -> int:
+        return self._max_replay_attempts
+
+    @property
+    def retention_seconds(self) -> int:
+        return self._retention_seconds
 
 
 # ---------------------------------------------------------------------------

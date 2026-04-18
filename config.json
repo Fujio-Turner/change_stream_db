@@ -108,6 +108,10 @@
     "log_response_times": true,
     "output_format": "json",
     "dead_letter_path": "failed_docs.jsonl",
+    "dlq": {
+      "retention_seconds": 86400,
+      "max_replay_attempts": 10
+    },
     "request_options": {
       "params": {},
       "headers": {}
