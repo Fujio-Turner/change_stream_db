@@ -235,6 +235,19 @@ scrape_configs:
 
 All metrics are labeled with `src` (gateway type) and `database` (keyspace name) for multi-instance dashboards. The endpoint exposes counters, gauges, and a response time summary — everything you need for Grafana dashboards and alerting.
 
+#### Auth Metrics (Inbound & Outbound)
+
+The worker tracks authentication on both sides of the pipeline — **inbound** (gateway / source) and **outbound** (output endpoint) — so you can tell at a glance whether a failure is "a me problem" or "a you problem":
+
+| Metric (all prefixed `changes_worker_`) | Type | Direction |
+|---|---|---|
+| `inbound_auth_total` / `inbound_auth_success_total` / `inbound_auth_failure_total` | counter | ← Source (gateway) |
+| `inbound_auth_time_seconds` (p50, p90, p99) | summary | ← Source (gateway) |
+| `outbound_auth_total` / `outbound_auth_success_total` / `outbound_auth_failure_total` | counter | → Output (downstream) |
+| `outbound_auth_time_seconds` (p50, p90, p99) | summary | → Output (downstream) |
+
+Auth failures are classified as HTTP 401 (Unauthorized) or 403 (Forbidden) responses. All other successful HTTP responses count as auth successes.
+
 #### System & Runtime Metrics
 
 In addition to pipeline metrics, the `/_metrics` endpoint exposes live system and Python runtime metrics (via [psutil](https://github.com/giampaolo/psutil)):

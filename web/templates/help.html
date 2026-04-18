@@ -392,6 +392,25 @@
           </table>
         </div>
 
+        <!-- Auth (Inbound & Outbound) -->
+        <h3 class="font-semibold mt-4 mb-2">Auth (Inbound &amp; Outbound)</h3>
+        <p class="opacity-70 mb-2">Track authentication on both sides of the pipeline: <strong>inbound</strong> (gateway / source) and <strong>outbound</strong> (output endpoint). Tells you if a failure is "a me problem" or "a you problem".</p>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_inbound_auth_total</td><td>counter</td><td>Total inbound (gateway) auth attempts</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_inbound_auth_success_total</td><td>counter</td><td>Total inbound auth successes</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_inbound_auth_failure_total</td><td>counter</td><td>Total inbound auth failures (401/403)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_inbound_auth_time_seconds</td><td>summary</td><td>Inbound auth request time (p50, p90, p99)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_outbound_auth_total</td><td>counter</td><td>Total outbound (output endpoint) auth attempts</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_outbound_auth_success_total</td><td>counter</td><td>Total outbound auth successes</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_outbound_auth_failure_total</td><td>counter</td><td>Total outbound auth failures (401/403)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_outbound_auth_time_seconds</td><td>summary</td><td>Outbound auth request time (p50, p90, p99)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
         <!-- Dead Letter Queue -->
         <h3 class="font-semibold mt-4 mb-2">Dead Letter Queue</h3>
         <div class="overflow-x-auto">
@@ -546,6 +565,10 @@
           <pre data-prefix="▸"><code>rate(changes_worker_dead_letter_total[5m]) > 0</code></pre>
           <pre data-prefix="#"><code>Example: error ratio on output</code></pre>
           <pre data-prefix="▸"><code>rate(changes_worker_output_errors_total[5m]) / rate(changes_worker_output_requests_total[5m]) > 0.1</code></pre>
+          <pre data-prefix="#"><code>Example: inbound auth failures (can't auth to gateway)</code></pre>
+          <pre data-prefix="▸"><code>rate(changes_worker_inbound_auth_failure_total[5m]) > 0</code></pre>
+          <pre data-prefix="#"><code>Example: outbound auth failures (downstream rejects our creds)</code></pre>
+          <pre data-prefix="▸"><code>rate(changes_worker_outbound_auth_failure_total[5m]) > 0</code></pre>
           <pre data-prefix="#"><code>Example: cloud upload errors</code></pre>
           <pre data-prefix="▸"><code>rate(changes_worker_cloud_errors_total[5m]) > 0</code></pre>
         </div>

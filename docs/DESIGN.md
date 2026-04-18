@@ -453,6 +453,38 @@ The `dead_letter_total` Prometheus metric tracks how many docs have been written
 rate(changes_worker_dead_letter_total[5m]) > 0
 ```
 
+### Auth Metrics (Inbound & Outbound)
+
+The `/_metrics` endpoint tracks authentication on **both sides** of the pipeline so you can immediately tell whether an auth problem is "a me problem" (inbound / gateway) or "a you problem" (outbound / downstream endpoint) — or both.
+
+| Metric (prefixed `changes_worker_`) | Type | Direction | What it tells you |
+|---|---|---|---|
+| `inbound_auth_total` | counter | ← Source | Total auth attempts against the gateway (_changes, _bulk_get, checkpoint) |
+| `inbound_auth_success_total` | counter | ← Source | Successful inbound auth (non-401/403) |
+| `inbound_auth_failure_total` | counter | ← Source | Inbound auth failures (401/403 from the gateway) |
+| `inbound_auth_time_seconds` | summary | ← Source | Request time for inbound calls (p50, p90, p99) — includes auth handshake |
+| `outbound_auth_total` | counter | → Output | Total auth attempts against the output endpoint |
+| `outbound_auth_success_total` | counter | → Output | Successful outbound auth (non-401/403) |
+| `outbound_auth_failure_total` | counter | → Output | Outbound auth failures (401/403 from the downstream endpoint) |
+| `outbound_auth_time_seconds` | summary | → Output | Request time for outbound calls (p50, p90, p99) — includes auth handshake |
+
+**Example PromQL alerts:**
+
+```promql
+# Inbound auth failures – can't authenticate to the gateway (bad credentials, expired token)
+rate(changes_worker_inbound_auth_failure_total[5m]) > 0
+
+# Outbound auth failures – downstream is rejecting our credentials
+rate(changes_worker_outbound_auth_failure_total[5m]) > 0
+
+# Auth failure ratio on either side
+rate(changes_worker_inbound_auth_failure_total[5m])
+  / rate(changes_worker_inbound_auth_total[5m]) > 0.01
+
+rate(changes_worker_outbound_auth_failure_total[5m])
+  / rate(changes_worker_outbound_auth_total[5m]) > 0.01
+```
+
 ### System & Runtime Metrics
 
 Beyond pipeline counters, the `/_metrics` endpoint exposes live system metrics collected on each scrape via [psutil](https://github.com/giampaolo/psutil). These are useful for capacity planning, leak detection, and container right-sizing.
@@ -484,6 +516,62 @@ delta(changes_worker_process_open_fds[1h]) > 50
 
 # Log directory growing beyond 1 GB
 changes_worker_log_dir_size_bytes > 1073741824
+```
+
+### Flood Detection & Backpressure Metrics
+
+When the `_changes` feed delivers a very large number of mutations in a short period (e.g., 100K–1M changes in < 30 seconds), the worker can experience memory pressure and processing lag. The following metrics help detect and monitor flood scenarios:
+
+| Metric (prefixed `changes_worker_`) | Type | What it tells you |
+|---|---|---|
+| `changes_pending` | gauge | Gap between `changes_received_total` and `changes_processed_total`. A steadily growing value means the worker is falling behind. |
+| `largest_batch_received` | gauge | Biggest single batch of changes seen since startup. Useful for capacity planning. |
+| `flood_batches_total` | counter | Number of batches that exceeded the flood threshold (default 10,000). Any non-zero value means the feed has spiked. |
+
+When a batch exceeds the flood threshold, the worker emits a `FLOOD` warning log:
+
+```
+WARN  FLOOD  flood detected: 150000 changes in single batch (threshold=10000)
+```
+
+**Example Grafana alerts for flood scenarios:**
+
+```promql
+# Changes piling up faster than the worker can process
+changes_worker_changes_pending > 50000
+
+# Any flood event in the last 5 minutes
+increase(changes_worker_flood_batches_total[5m]) > 0
+
+# RSS spiking during a flood
+changes_worker_process_memory_rss_bytes > 1024 * 1024 * 1024
+  and increase(changes_worker_changes_received_total[1m]) > 10000
+```
+
+**How the worker survives a flood:**
+
+1. **Checkpoint safety:** The checkpoint only advances after a batch is fully processed. If the worker crashes or OOMs mid-batch, it restarts from `since=<last_saved_seq>` — no data is lost.
+2. **Throttle (`throttle_feed`):** Set this to a reasonable limit (e.g., 5000–10000) to cap each `_changes` request. The worker loops immediately for the next bite, so throughput stays high but memory per batch is bounded.
+3. **Continuous mode:** Already flood-resilient — changes are processed one-at-a-time from the stream. TCP backpressure naturally slows the server. Memory stays flat.
+4. **`every_n_docs` + `sequential`:** For longpoll mode, sub-batch checkpointing limits replay on crash (e.g., `every_n_docs: 1000` means at most 1000 docs replayed).
+
+**Recommended flood-safe configuration:**
+
+```jsonc
+{
+  "changes_feed": {
+    "feed_type": "continuous",        // or use longpoll + throttle_feed
+    "throttle_feed": 5000,            // cap batch size (longpoll only)
+    "continuous_catchup_limit": 5000  // cap catch-up batches
+  },
+  "processing": {
+    "sequential": true,               // predictable memory usage
+    "max_concurrent": 20              // ignored when sequential=true
+  },
+  "checkpoint": {
+    "every_n_docs": 1000              // sub-batch checkpoint (sequential only)
+  }
+}
 ```
 
 ---

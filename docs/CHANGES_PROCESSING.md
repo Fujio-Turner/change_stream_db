@@ -392,6 +392,88 @@ run), while keeping the detail available in DEBUG for troubleshooting.
 
 ---
 
+## Flood Detection & Backpressure
+
+### The Problem
+
+When the `_changes` feed delivers a very large number of mutations in a
+short period (e.g., 100K–1M changes in < 30 seconds), the worker faces
+two risks:
+
+1. **Memory pressure (longpoll mode):** The entire `_changes` JSON
+   response is loaded into memory via `resp.read()` → `json.loads()`.
+   A 500K-row response could consume hundreds of megabytes to gigabytes
+   of RAM, risking an OOM kill.
+
+2. **Processing lag:** Even with `max_concurrent: 20`, processing 100K
+   docs at 50ms each takes ~4 minutes.  During that time the checkpoint
+   has not advanced, so a crash means replaying the entire batch.
+
+### Built-in Protections
+
+| Protection | How it helps |
+|---|---|
+| **`throttle_feed`** (default 5,000) | Caps each `_changes` request to N rows.  The worker loops immediately for the next bite, so throughput stays high but memory per batch is bounded. |
+| **`continuous_catchup_limit`** (default 5,000) | Same cap for the catch-up phase of continuous/websocket mode. |
+| **Continuous mode streaming** | In Phase 2, changes are processed one-at-a-time from the HTTP stream.  TCP backpressure naturally slows the server.  Memory stays flat regardless of flood size. |
+| **`every_n_docs` + `sequential`** | Sub-batch checkpointing limits replay on crash (e.g., `every_n_docs: 1000` means at most 1,000 docs replayed). |
+| **Checkpoint hold** | The checkpoint only advances after a batch is fully processed.  If the worker crashes or OOMs, it restarts from `since=<last_saved_seq>` — no data is lost. |
+
+### Flood Metrics
+
+The worker exposes three metrics on `/_metrics` for monitoring flood
+scenarios:
+
+| Metric (prefixed `changes_worker_`) | Type | What it tells you |
+|---|---|---|
+| `changes_pending` | gauge | Gap between `changes_received_total` and `changes_processed_total`.  A steadily growing value means the worker is falling behind. |
+| `largest_batch_received` | gauge | Biggest single batch of changes seen since startup.  Useful for capacity planning. |
+| `flood_batches_total` | counter | Number of batches that exceeded the `flood_threshold` (default 10,000).  Any non-zero value means the feed has spiked. |
+
+When a batch exceeds the flood threshold, the worker also emits a `FLOOD`
+warning log:
+
+```
+WARN  FLOOD  flood detected: 150000 changes in single batch (threshold=10000)
+```
+
+### Recommended Configuration
+
+For environments that may experience large spikes:
+
+```json
+{
+  "changes_feed": {
+    "feed_type": "continuous",
+    "throttle_feed": 5000,
+    "continuous_catchup_limit": 5000,
+    "flood_threshold": 10000
+  },
+  "processing": {
+    "sequential": true
+  },
+  "checkpoint": {
+    "every_n_docs": 1000
+  }
+}
+```
+
+### Grafana Alerts
+
+```promql
+# Changes piling up faster than the worker can process
+changes_worker_changes_pending > 50000
+
+# Any flood event in the last 5 minutes
+increase(changes_worker_flood_batches_total[5m]) > 0
+
+# RSS spiking during a flood
+changes_worker_process_memory_rss_bytes > 1024 * 1024 * 1024
+  and increase(changes_worker_changes_received_total[1m]) > 10000
+```
+
+---
+
 ## Config Reference
 
 The following `config.json` fields control `_changes` processing:
@@ -404,13 +486,14 @@ The following `config.json` fields control `_changes` processing:
     "include_docs": false,
     "since": "0",
     "limit": 0,
-    "continuous_catchup_limit": 10000,
+    "continuous_catchup_limit": 5000,
     "optimize_initial_sync": false,
     "poll_interval_seconds": 10,
     "heartbeat_ms": 30000,
     "timeout_ms": 60000,
     "http_timeout_seconds": 300,
-    "throttle_feed": 0,
+    "throttle_feed": 5000,
+    "flood_threshold": 10000,
     "channels": []
   },
   "processing": {
@@ -435,6 +518,7 @@ The following `config.json` fields control `_changes` processing:
 | `http_timeout_seconds` | Timeout for the single large request (default 300s / 5 min, covers ~1.5M entries) |
 | `get_batch_number` | Batch size for `_bulk_get` requests (default 100) |
 | `active_only` | Forced to `true` during initial sync (Couchbase); ignored for CouchDB |
+| `flood_threshold` | Batch size above which a FLOOD warning is logged and `flood_batches_total` metric is incremented (default 10,000) |
 | `include_docs` | Forced to `false` during initial sync |
 | `feed_type` | Overridden to `normal` during initial sync |
 

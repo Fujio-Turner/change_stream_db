@@ -405,6 +405,15 @@ class OutputForwarder:
             status = resp.status
             resp.release()
 
+            # Track outbound auth metrics
+            if self._metrics:
+                self._metrics.inc("outbound_auth_total")
+                self._metrics.record_outbound_auth_time(elapsed_ms / 1000)
+                if status in (401, 403):
+                    self._metrics.inc("outbound_auth_failure_total")
+                else:
+                    self._metrics.inc("outbound_auth_success_total")
+
             ic("send: response", doc_id, status, round(elapsed_ms, 1))
             await self._record_time(elapsed_ms)
             if self._metrics:
@@ -435,6 +444,12 @@ class OutputForwarder:
             ic("send: client HTTP error", doc_id, exc.status, exc.body[:200])
             await self._record_time(elapsed_ms)
             if self._metrics:
+                self._metrics.inc("outbound_auth_total")
+                self._metrics.record_outbound_auth_time(elapsed_ms / 1000)
+                if exc.status in (401, 403):
+                    self._metrics.inc("outbound_auth_failure_total")
+                else:
+                    self._metrics.inc("outbound_auth_success_total")
                 self._metrics.inc("output_errors_total")
                 self._metrics.inc(f"output_{mk}_errors_total")
                 self._metrics.inc("bytes_output_total", body_len)

@@ -68,7 +68,17 @@ class RetryableHTTP:
                 )
 
             try:
+                t_auth = time.monotonic()
                 resp = await self._session.request(method, url, **kwargs)
+                auth_elapsed = time.monotonic() - t_auth
+                # Track auth metrics for inbound (gateway) requests
+                if self._metrics:
+                    self._metrics.inc("inbound_auth_total")
+                    self._metrics.record_inbound_auth_time(auth_elapsed)
+                    if resp.status in (401, 403):
+                        self._metrics.inc("inbound_auth_failure_total")
+                    else:
+                        self._metrics.inc("inbound_auth_success_total")
                 if resp.status < 300:
                     return resp
                 body = await resp.text()
@@ -673,6 +683,7 @@ async def _process_changes_batch(
         metrics.set("last_poll_timestamp", time.time())
         metrics.set("last_batch_size", len(results))
         metrics.inc("changes_received_total", len(results))
+        metrics.record_batch_received(len(results))
 
     if not results:
         new_since = str(last_seq)
@@ -681,6 +692,17 @@ async def _process_changes_batch(
             metrics.inc("checkpoint_saves_total")
             metrics.set("checkpoint_seq", new_since)
         return new_since, False
+
+    if metrics and len(results) >= metrics.flood_threshold:
+        log_event(
+            logger,
+            "warn",
+            "FLOOD",
+            "flood detected: %d changes in single batch (threshold=%d)"
+            % (len(results), metrics.flood_threshold),
+            batch_size=len(results),
+            flood_threshold=metrics.flood_threshold,
+        )
 
     log_event(
         logger,
@@ -1000,6 +1022,10 @@ async def _process_changes_batch(
 
     if metrics:
         metrics.inc("changes_processed_total", len(filtered))
+        metrics.set(
+            "changes_pending",
+            metrics.changes_received_total - metrics.changes_processed_total,
+        )
 
     total = batch_success + batch_fail
     if total > 0:

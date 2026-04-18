@@ -220,12 +220,23 @@
             <div class="label">
               <span class="label-text flex items-center gap-2">
                 Throttle Feed
-                <div class="tooltip tooltip-right tooltip-wide" data-tip="Artificial delay in seconds inserted between _changes poll cycles. Use to reduce load on the source server when near-real-time processing is not required. 0 = no throttle (default).">
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="Maximum number of changes per _changes request. Caps batch size to prevent memory spikes during floods. The worker loops immediately for the next batch when a full result is returned, so throughput stays high. Default: 5,000. Set to 0 to disable throttling.">
                   <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
                 </div>
               </span>
             </div>
             <input type="number" id="changes_feed_throttle_feed" class="input input-bordered w-full" min="0" />
+          </label>
+          <label class="form-control w-full">
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Flood Threshold
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="Batch size above which the worker logs a FLOOD warning and increments the flood_batches_total metric. Used for monitoring — does not throttle or limit processing. Default: 10,000.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
+            <input type="number" id="changes_feed_flood_threshold" class="input input-bordered w-full" min="0" />
           </label>
           <label class="form-control w-full">
             <div class="label">
@@ -1462,6 +1473,7 @@
     document.getElementById('changes_feed_since').value = cfg.changes_feed?.since ?? '0';
     document.getElementById('changes_feed_limit').value = cfg.changes_feed?.limit ?? 0;
     document.getElementById('changes_feed_throttle_feed').value = cfg.changes_feed?.throttle_feed ?? 0;
+    document.getElementById('changes_feed_flood_threshold').value = cfg.changes_feed?.flood_threshold ?? 10000;
     document.getElementById('changes_feed_heartbeat_ms').value = cfg.changes_feed?.heartbeat_ms ?? 30000;
     document.getElementById('changes_feed_timeout_ms').value = cfg.changes_feed?.timeout_ms ?? 60000;
     document.getElementById('changes_feed_http_timeout_seconds').value = cfg.changes_feed?.http_timeout_seconds ?? 300;
@@ -1676,6 +1688,7 @@
         since: document.getElementById('changes_feed_since').value || '0',
         limit: parseInt(document.getElementById('changes_feed_limit').value) || 0,
         throttle_feed: parseInt(document.getElementById('changes_feed_throttle_feed').value) || 0,
+        flood_threshold: parseInt(document.getElementById('changes_feed_flood_threshold').value) || 10000,
         heartbeat_ms: parseInt(document.getElementById('changes_feed_heartbeat_ms').value) || 30000,
         timeout_ms: parseInt(document.getElementById('changes_feed_timeout_ms').value) || 60000,
         http_timeout_seconds: parseInt(document.getElementById('changes_feed_http_timeout_seconds').value) || 300,
