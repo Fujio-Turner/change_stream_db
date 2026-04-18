@@ -28,7 +28,10 @@
       "primary_key": "id",
       "columns": {
         "order_doc_id": "$._id",
-        "product_id": "$.product_id",
+        "product_id": {
+          "path": "$.product_id",
+          "transform": "uppercase($.product_id)"
+        },
         "qty": "$.qty",
         "price": "$.price"
       },
@@ -43,7 +46,7 @@
     }
   ],
   "_meta": {
-    "updated_at": "2026-04-18T07:05:55.649480+00:00",
+    "updated_at": "2026-04-18T22:14:33.421024+00:00",
     "active": true
   }
 }

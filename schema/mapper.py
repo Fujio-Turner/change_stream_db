@@ -477,7 +477,18 @@ class SchemaMapper:
         self.source: dict = mapping.get("source", {})
         self.match: dict = self.source.get("match", {})
         self.tables: list[dict] = mapping.get("tables", [])
-        ic("SchemaMapper.__init__", mapping.get("name"), self.match)
+
+        # Pre-compute whether any column uses a transform function.
+        # When False, _resolve_row can take a fast path that skips
+        # per-value transform / type-check / date-coercion overhead.
+        self.has_transforms: bool = self._scan_for_transforms()
+
+        ic(
+            "SchemaMapper.__init__",
+            mapping.get("name"),
+            self.match,
+            self.has_transforms,
+        )
 
     @classmethod
     def from_file(cls, path: str | Path) -> SchemaMapper:
@@ -687,7 +698,25 @@ class SchemaMapper:
         """
         table_name: str = tbl.get("name", "?")
         columns: dict[str, str | dict] = tbl.get("columns", {})
-        row: dict[str, Any] = {}
+
+        # --- fast path: no transforms anywhere in this mapping --------
+        # When all columns are plain JSON-path strings we can skip
+        # transform application, type-mismatch checks, float sanitisation,
+        # and date coercion entirely.
+        if not self.has_transforms:
+            row: dict[str, Any] = {}
+            for col_name, col_def in columns.items():
+                path = col_def if isinstance(col_def, str) else col_def.get("path", "$")
+                value = resolve_path(item, path)
+                if value is None and item is not parent_doc:
+                    value = resolve_path(parent_doc, path)
+                if value is None:
+                    diag.add_missing(table_name, col_name)
+                row[col_name] = value
+            return row
+
+        # --- full path: transforms / diagnostics / coercion -----------
+        row = {}
         for col_name, col_def in columns.items():
             value = resolve_column(item, col_def)
             if value is None and item is not parent_doc:
@@ -736,6 +765,14 @@ class SchemaMapper:
         if isinstance(col_def, str):
             return col_def
         return col_def.get("path", f"$.{pk}")
+
+    def _scan_for_transforms(self) -> bool:
+        """Return True if any column in any table defines a transform."""
+        for tbl in self.tables:
+            for col_def in tbl.get("columns", {}).values():
+                if isinstance(col_def, dict) and col_def.get("transform"):
+                    return True
+        return False
 
     def _find_parent_pk_path(self, child_tbl: dict, doc: dict) -> str | None:
         """Find the JSON path for the parent's PK referenced by the child FK."""
