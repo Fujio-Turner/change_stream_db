@@ -30,10 +30,9 @@
   <main class="w-full mx-auto p-6">
     <h1 class="text-2xl font-bold mb-4">Settings: Configuration Editor</h1>
 
-    <div class="flex items-center gap-1 text-sm mb-2 justify-end">
-      <a class="link link-hover link-primary" onclick="toggleAllSections(true)">show all</a>
-      <span class="opacity-40">|</span>
-      <a class="link link-hover link-primary" onclick="toggleAllSections(false)">hide all</a>
+    <div class="flex gap-3 mb-4 justify-end">
+      <button class="btn btn-primary" onclick="saveConfig()">Save Config</button>
+      <button class="btn btn-ghost" onclick="loadConfig()">Reset</button>
     </div>
 
     <div id="viewForm">
@@ -45,7 +44,7 @@
 
       <!-- Gateway -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" />
+        <input type="checkbox" checked />
         <div class="collapse-title font-semibold">Gateway</div>
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
@@ -90,7 +89,7 @@
 
       <!-- Auth -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" />
+        <input type="checkbox" checked />
         <div class="collapse-title font-semibold">Auth</div>
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
@@ -133,7 +132,7 @@
 
       <!-- Changes Feed -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" />
+        <input type="checkbox" checked />
         <div class="collapse-title font-semibold">Changes Feed</div>
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
@@ -328,7 +327,7 @@
 
       <!-- Threads -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" />
+        <input type="checkbox" checked />
         <div class="collapse-title font-semibold">Threads</div>
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
@@ -341,7 +340,7 @@
 
       <!-- Processing -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" />
+        <input type="checkbox" checked />
         <div class="collapse-title font-semibold">Processing</div>
         <div class="collapse-content flex flex-col gap-3">
           <div class="form-control">
@@ -383,7 +382,7 @@
 
       <!-- Output -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" />
+        <input type="checkbox" checked />
         <div class="collapse-title font-semibold">Output</div>
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
@@ -982,7 +981,7 @@
 
       <!-- Couchbase Lite -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" />
+        <input type="checkbox" checked />
         <div class="collapse-title font-semibold">Couchbase Lite</div>
         <div class="collapse-content flex flex-col gap-3">
           <div class="alert alert-info text-sm">
@@ -1048,7 +1047,7 @@
 
       <!-- Dead Letter Queue -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" />
+        <input type="checkbox" checked />
         <div class="collapse-title font-semibold">Dead Letter Queue</div>
         <div class="collapse-content flex flex-col gap-3">
           <div class="alert alert-info text-sm">
@@ -1113,7 +1112,7 @@
 
       <!-- Checkpoint -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" />
+        <input type="checkbox" checked />
         <div class="collapse-title font-semibold">Checkpoint</div>
         <div class="collapse-content flex flex-col gap-3">
           <div class="form-control">
@@ -1154,7 +1153,7 @@
 
       <!-- Shutdown -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" />
+        <input type="checkbox" checked />
         <div class="collapse-title font-semibold">Shutdown</div>
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
@@ -1179,7 +1178,7 @@
 
       <!-- Metrics -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" />
+        <input type="checkbox" checked />
         <div class="collapse-title font-semibold">Metrics</div>
         <div class="collapse-content flex flex-col gap-3">
           <div class="form-control">
@@ -1200,9 +1199,33 @@
         </div>
       </div>
 
+      <!-- Admin UI -->
+      <div class="collapse collapse-arrow bg-base-100 mb-2">
+        <input type="checkbox" checked />
+        <div class="collapse-title font-semibold">Admin UI</div>
+        <div class="collapse-content flex flex-col gap-3">
+          <div class="form-control">
+            <label class="label cursor-pointer justify-start gap-4">
+              <span class="label-text">Enabled</span>
+              <input type="checkbox" id="admin_ui_enabled" class="toggle toggle-success" />
+            </label>
+            <span class="label-text-alt opacity-60">Disable for headless / metrics-only deployments</span>
+          </div>
+          <label class="form-control w-full">
+            <div class="label"><span class="label-text">Host</span></div>
+            <input type="text" id="admin_ui_host" class="input input-bordered w-full" />
+          </label>
+          <fieldset class="form-control w-full">
+            <div class="label"><span class="label-text">Port</span></div>
+            <input type="number" id="admin_ui_port" class="input input-bordered w-full validator" required min="1" max="65535" title="Port must be between 1 and 65535" />
+            <p class="validator-hint hidden">Port must be 1–65535</p>
+          </fieldset>
+        </div>
+      </div>
+
       <!-- Logging -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
-        <input type="checkbox" />
+        <input type="checkbox" checked />
         <div class="collapse-title font-semibold">Logging</div>
         <div class="collapse-content flex flex-col gap-3">
           <label class="form-control w-full">
@@ -1308,22 +1331,12 @@
     </div><!-- /tabs -->
     </div><!-- /viewForm -->
 
-    <!-- Action Bar -->
-    <div class="flex gap-3 mt-6 sticky bottom-4">
-      <button class="btn btn-primary" onclick="saveConfig()">Save Config</button>
-      <button class="btn btn-ghost" onclick="loadConfig()">Reset</button>
-    </div>
+
 
   <!-- Toast container -->
   <div id="toastContainer" class="toast toast-end toast-bottom z-50"></div>
 
 <script>
-
-  // Expand / collapse all sections
-  function toggleAllSections(show) {
-    var checks = document.querySelectorAll('#viewForm .collapse > input[type="checkbox"]');
-    checks.forEach(function(cb) { cb.checked = show; });
-  }
 
   // Tab sync for Raw JSON
   (function() {
@@ -1604,6 +1617,10 @@
     document.getElementById('metrics_host').value = cfg.metrics?.host || '0.0.0.0';
     document.getElementById('metrics_port').value = cfg.metrics?.port ?? 9090;
 
+    document.getElementById('admin_ui_enabled').checked = cfg.admin_ui?.enabled ?? true;
+    document.getElementById('admin_ui_host').value = cfg.admin_ui?.host || '0.0.0.0';
+    document.getElementById('admin_ui_port').value = cfg.admin_ui?.port ?? 8080;
+
     // Logging
     var log = cfg.logging || {};
     document.getElementById('logging_redaction_level').value = log.redaction_level || 'partial';
@@ -1799,6 +1816,11 @@
       shutdown: {
         drain_timeout_seconds: parseInt(document.getElementById('shutdown_drain_timeout_seconds').value) || 60,
         dlq_inflight_on_shutdown: document.getElementById('shutdown_dlq_inflight_on_shutdown').checked
+      },
+      admin_ui: {
+        enabled: document.getElementById('admin_ui_enabled').checked,
+        host: document.getElementById('admin_ui_host').value,
+        port: parseInt(document.getElementById('admin_ui_port').value) || 8080
       },
       metrics: {
         enabled: document.getElementById('metrics_enabled').checked,

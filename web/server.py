@@ -1442,9 +1442,9 @@ def create_app():
     # Pages
     app.router.add_get("/favicon.ico", favicon)
     app.router.add_get("/", page_index)
-    app.router.add_get("/config", page_config)
+    app.router.add_get("/settings", page_config)
     app.router.add_get("/schema", page_schema)
-    app.router.add_get("/transforms", page_transforms)
+    app.router.add_get("/glossary", page_transforms)
     app.router.add_get("/wizard", page_wizard)
     app.router.add_get("/help", page_help)
 

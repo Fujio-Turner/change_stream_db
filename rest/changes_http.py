@@ -845,6 +845,7 @@ async def _process_changes_batch(
                         batch_fail += 1
                         if dlq.enabled and metrics:
                             metrics.inc("dead_letter_total")
+                            metrics.set("dlq_last_write_epoch", time.time())
                         await dlq.write(result["_doc"], result, change.get("seq", ""), target_url=output.target_url, metrics=metrics)
                 except (OutputEndpointDown, ShutdownRequested) as exc:
                     output_failed = True
@@ -882,6 +883,7 @@ async def _process_changes_batch(
                             )
                         if metrics:
                             metrics.inc("dead_letter_total", len(remaining))
+                            metrics.set("dlq_last_write_epoch", time.time())
                         log_event(
                             logger,
                             "warn",
@@ -908,6 +910,7 @@ async def _process_changes_batch(
                         batch_fail += 1
                         if dlq.enabled and metrics:
                             metrics.inc("dead_letter_total")
+                            metrics.set("dlq_last_write_epoch", time.time())
                         await dlq.write(result["_doc"], result, change.get("seq", ""), target_url=output.target_url, metrics=metrics)
             else:
                 tasks = [asyncio.create_task(process_one(c)) for c in filtered]
@@ -922,6 +925,7 @@ async def _process_changes_batch(
                         batch_fail += 1
                         if dlq.enabled and metrics:
                             metrics.inc("dead_letter_total")
+                            metrics.set("dlq_last_write_epoch", time.time())
                         await dlq.write(
                             result["_doc"], result, result["_change"].get("seq", ""),
                             target_url=output.target_url, metrics=metrics,
@@ -971,6 +975,7 @@ async def _process_changes_batch(
                     dlq_count += 1
                 if metrics:
                     metrics.inc("dead_letter_total", dlq_count)
+                    metrics.set("dlq_last_write_epoch", time.time())
                 log_event(
                     logger,
                     "warn",

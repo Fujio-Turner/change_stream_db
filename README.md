@@ -64,6 +64,18 @@ docker run --rm \
   changes-worker
 ```
 
+### Run with Docker Compose
+
+```bash
+# Headless — worker + Prometheus metrics only (port 9090)
+docker compose up --build
+
+# With Admin UI — worker + metrics + web dashboard (ports 9090 + 8080)
+docker compose --profile ui up --build
+```
+
+Set `"admin_ui": { "enabled": false }` in `config.json` for headless deployments where you only need `/_metrics` on port 9090.
+
 | Flag | Description |
 |---|---|
 | `--config <path>` | Path to config.json (default: `config.json`) |
@@ -110,10 +122,10 @@ docker run --rm \
 A web-based admin dashboard at `http://localhost:8080`:
 
 - **Dashboard** (`/`) — Real-time status indicators, live charts, auto-refresh
-- **Config Editor** (`/config`) — Form-based and raw JSON editing with save/reset
+- **Settings** (`/settings`) — Form-based and raw JSON editing with save/reset
 - **Schema Mappings** (`/schema`) — Visual drag-and-drop field mapping with transforms and AI assist
 - **Setup Wizard** (`/wizard`) — 3-step guided setup: connect source → configure output → map fields
-- **Transforms** (`/transforms`) — Reference for all 58 built-in transform functions
+- **Glossary** (`/glossary`) — Reference for all 58 built-in transform functions
 
 📄 **Full documentation:** [`docs/ADMIN_UI.md`](docs/ADMIN_UI.md)
 

@@ -129,6 +129,7 @@ class MetricsCollector:
         self.dead_letter_total: int = 0
         self.dlq_write_failures_total: int = 0
         self.dlq_pending_count: int = 0
+        self.dlq_last_write_epoch: float = 0  # unix timestamp of last DLQ write
 
         # Batch processing
         self.batches_total: int = 0
@@ -432,6 +433,11 @@ class MetricsCollector:
             "changes_worker_dlq_pending_count",
             "Current number of pending entries in the dead letter queue.",
             self.dlq_pending_count,
+        )
+        _gauge(
+            "changes_worker_dlq_last_write_epoch",
+            "Unix timestamp of the last DLQ write (0 = never).",
+            self.dlq_last_write_epoch,
         )
 
         _gauge(

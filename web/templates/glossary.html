@@ -39,6 +39,91 @@
       </div>
     </div>
 
+    <!-- ═══ QUICK EXAMPLE ═══ -->
+    <div id="example" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-success">Example</span> How Transforms Work in Schema Mapping
+        </h2>
+        <p class="opacity-70 mb-3">Transform functions convert source JSON values before they are written to RDBMS columns. Here are a few real-world examples:</p>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr>
+                <th>Source JSON</th>
+                <th>Mapping Notation</th>
+                <th>Transform Function</th>
+                <th></th>
+                <th>RDBMS Value</th>
+                <th>RDBMS Schema</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code class="text-xs">{"orderDate":"2026-04-18T19:14:16.815Z"}</code></td>
+                <td class="font-mono text-sm">$.orderDate</td>
+                <td class="font-mono text-sm">to_epoch($.orderDate)</td>
+                <td class="text-center align-middle" style="color:#22c55e;font-size:1.25rem;">➜</td>
+                <td class="font-mono text-sm">1776539656</td>
+                <td><code class="text-xs">order_date BIGINT NOT NULL</code></td>
+              </tr>
+              <tr>
+                <td><code class="text-xs">{"_id":"invoice::12345"}</code></td>
+                <td class="font-mono text-sm">$._id</td>
+                <td class="font-mono text-sm">split($._id,"::")[0]</td>
+                <td class="text-center align-middle" style="color:#22c55e;font-size:1.25rem;">➜</td>
+                <td class="font-mono text-sm">invoice</td>
+                <td><code class="text-xs">doc_type VARCHAR(50)</code></td>
+              </tr>
+              <tr>
+                <td><code class="text-xs">{"name":" Alice  "}</code></td>
+                <td class="font-mono text-sm">$.name</td>
+                <td class="font-mono text-sm">trim().uppercase()</td>
+                <td class="text-center align-middle" style="color:#22c55e;font-size:1.25rem;">➜</td>
+                <td class="font-mono text-sm">ALICE</td>
+                <td><code class="text-xs">name VARCHAR(100)</code></td>
+              </tr>
+              <tr>
+                <td><code class="text-xs">{"price":29.995}</code></td>
+                <td class="font-mono text-sm">$.price</td>
+                <td class="font-mono text-sm">round(2)</td>
+                <td class="text-center align-middle" style="color:#22c55e;font-size:1.25rem;">➜</td>
+                <td class="font-mono text-sm">30.00</td>
+                <td><code class="text-xs">price NUMERIC(10,2)</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-sm opacity-60 mt-3">Browse the full list of functions below, then use them on the <a href="/schema" class="link link-primary">Schema Mapping</a> page.</p>
+
+        <div class="divider"></div>
+
+        <h3 class="font-semibold mb-2">Chaining Transforms</h3>
+        <p class="opacity-70 mb-3">Transforms can be chained using dot notation. Each function receives the output of the previous one:</p>
+        <div class="mockup-code bg-success text-success-content">
+          <pre data-prefix="▸"><code>trim().lowercase()                      — trim whitespace, then lowercase</code></pre>
+          <pre data-prefix="▸"><code>trim().replace("-"," ").propercase()     — clean and title-case a name</code></pre>
+          <pre data-prefix="▸"><code>to_float().to_decimal(2)                — parse number then format to 2 decimals</code></pre>
+          <pre data-prefix="▸"><code>split(",")[0].trim()                    — take first CSV value and trim it</code></pre>
+        </div>
+
+        <div class="divider"></div>
+
+        <h3 class="font-semibold mb-2">Mapping Format</h3>
+        <p class="opacity-70 mb-3">In the generated mapping JSON, columns without transforms are stored as simple strings. Columns with transforms use an object:</p>
+        <div class="mockup-code bg-success text-success-content">
+          <pre data-prefix="1"><code>{</code></pre>
+          <pre data-prefix="2"><code>  "columns": {</code></pre>
+          <pre data-prefix="3"><code>    "doc_id": "$._id",</code></pre>
+          <pre data-prefix="4"><code>    "email": { "path": "$.email", "transform": "trim().lowercase()" },</code></pre>
+          <pre data-prefix="5"><code>    "price": { "path": "$.price", "transform": "to_decimal(2)" },</code></pre>
+          <pre data-prefix="6"><code>    "state": { "path": "$.address.state", "transform": "uppercase()" }</code></pre>
+          <pre data-prefix="7"><code>  }</code></pre>
+          <pre data-prefix="8"><code>}</code></pre>
+        </div>
+      </div>
+    </div>
+
     <!-- ═══ STRING ═══ -->
     <div id="string" class="card bg-base-100 shadow rounded-2xl">
       <div class="card-body p-6">
@@ -395,29 +480,6 @@
           </table>
         </div>
 
-        <div class="divider"></div>
-        <h3 class="font-semibold mb-2">Chaining Transforms</h3>
-        <p class="opacity-70 mb-3">Transforms can be chained using dot notation. Each function receives the output of the previous one:</p>
-        <div class="mockup-code">
-          <pre><code>trim().lowercase()                      — trim whitespace, then lowercase
-trim().replace(,"-"," ").propercase()   — clean and title-case a name
-to_float().to_decimal(,2)               — parse number then format to 2 decimals
-split(,",")[0].trim()                   — take first CSV value and trim it</code></pre>
-        </div>
-
-        <div class="divider"></div>
-        <h3 class="font-semibold mb-2">Mapping Format</h3>
-        <p class="opacity-70 mb-3">In the generated mapping JSON, columns without transforms are stored as simple strings. Columns with transforms use an object:</p>
-        <div class="mockup-code">
-          <pre><code>{
-  "columns": {
-    "doc_id": "$._id",
-    "email": { "path": "$.email", "transform": "trim().lowercase()" },
-    "price": { "path": "$.price", "transform": "to_decimal(,2)" },
-    "state": { "path": "$.address.state", "transform": "uppercase()" }
-  }
-}</code></pre>
-        </div>
       </div>
     </div>
 

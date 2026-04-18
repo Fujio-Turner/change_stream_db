@@ -347,6 +347,24 @@
           </div>
         </div>
 
+        <!-- Dead Letter Queue group -->
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-sm font-semibold">Dead Letter Queue</h3>
+              <div class="tooltip tooltip-right" data-tip="Documents that failed all retries and were written to the dead letter queue for later review and replay.">
+                <span class="badge badge-ghost badge-sm cursor-help">?</span>
+              </div>
+            </div>
+            <table class="table table-sm"><tbody>
+              <tr><td class="font-medium"><span class="stat-tip">Dead Letters <span class="tooltip tooltip-right tip-q" data-tip="Total documents that failed all retries and were written to the dead letter queue. Review at /api/dlq.">?</span></span></td><td class="text-right text-warning" id="mDlqTotal">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Pending <span class="tooltip tooltip-right tip-q" data-tip="Current number of entries in the dead letter queue awaiting review or replay.">?</span></span></td><td class="text-right" id="mDlqPending">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Write Failures <span class="tooltip tooltip-right tip-q" data-tip="Times the system failed to write to the DLQ itself — data may have been lost. Should always be 0.">?</span></span></td><td class="text-right text-error" id="mDlqWriteFailures">--</td></tr>
+              <tr><td class="font-medium"><span class="stat-tip">Last Write <span class="tooltip tooltip-right tip-q" data-tip="How long ago the last document was written to the dead letter queue.">?</span></span></td><td class="text-right" id="mDlqLastWrite">Never</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+
       </div>
 
       <!-- RIGHT: Output -->
@@ -480,6 +498,18 @@ function fmtUptime(s) {
 function fmtMs(sec) {
   if (!sec) return '--';
   return (sec * 1000).toFixed(1) + 'ms';
+}
+function fmtAgo(epoch) {
+  if (!epoch) return 'Never';
+  var sec = Math.floor(Date.now() / 1000 - epoch);
+  if (sec < 60)    return sec + ' sec';
+  if (sec < 3600)  return Math.floor(sec / 60) + ' min';
+  if (sec < 86400) return Math.floor(sec / 3600) + ' hr';
+  var days = Math.floor(sec / 86400);
+  if (days < 7)    return days + ' days';
+  if (days < 30)   return Math.floor(days / 7) + ' weeks';
+  if (days < 365)  return Math.floor(days / 30) + ' months';
+  return '1yr+';
 }
 function setText(id, v) { document.getElementById(id).textContent = v; }
 function setDot(id, c) { document.getElementById(id).className = 'dot dot-' + c; }
@@ -1538,6 +1568,12 @@ function loadMetrics() {
       setText('mFiltered',        fmt(m['changes_worker_changes_filtered_total']));
       setText('mFilteredDeletes', fmt(m['changes_worker_changes_deleted_total']));
       setText('mFilteredRemoves', fmt(m['changes_worker_changes_removed_total']));
+
+      // DLQ
+      setText('mDlqTotal',         fmt(m['changes_worker_dead_letter_total']));
+      setText('mDlqPending',       fmt(m['changes_worker_dlq_pending_count']));
+      setText('mDlqWriteFailures', fmt(m['changes_worker_dlq_write_failures_total']));
+      setText('mDlqLastWrite',     fmtAgo(m['changes_worker_dlq_last_write_epoch']));
 
       // RIGHT
       setText('mOutRequests', fmt(m['changes_worker_output_requests_total']));
