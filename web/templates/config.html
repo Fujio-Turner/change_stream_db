@@ -30,25 +30,18 @@
   <main class="w-full mx-auto p-6 max-w-4xl">
     <h1 class="text-2xl font-bold mb-4">Settings: Configuration Editor</h1>
 
-    <!-- Tabs: Form / Raw JSON -->
-    <div role="tablist" class="tabs tabs-bordered mb-4">
-      <a role="tab" class="tab tab-active" id="tabForm" onclick="switchTab('form')">Form Editor</a>
-      <a role="tab" class="tab" id="tabRaw" onclick="switchTab('raw')">Raw JSON</a>
-      <div class="ml-auto flex items-center gap-1 text-sm">
-        <a class="link link-hover link-primary" onclick="toggleAllSections(true)">show all</a>
-        <span class="opacity-40">|</span>
-        <a class="link link-hover link-primary" onclick="toggleAllSections(false)">hide all</a>
-      </div>
+    <div class="flex items-center gap-1 text-sm mb-2 justify-end">
+      <a class="link link-hover link-primary" onclick="toggleAllSections(true)">show all</a>
+      <span class="opacity-40">|</span>
+      <a class="link link-hover link-primary" onclick="toggleAllSections(false)">hide all</a>
     </div>
 
-    <!-- Form View -->
     <div id="viewForm">
+    <div class="tabs tabs-border">
 
-      <!-- ── GROUP: SOURCE ── -->
-      <div class="flex items-center gap-3 mt-0 mb-2">
-        <div class="text-xs font-bold tracking-widest uppercase opacity-50">SOURCE</div>
-        <div class="flex-1 border-t border-base-content/10"></div>
-      </div>
+      <!-- ── TAB: SOURCE ── -->
+      <input type="radio" name="config_tabs" class="tab" aria-label="Source" checked="checked" />
+      <div class="tab-content border-base-300 bg-base-100 p-6">
 
       <!-- Gateway -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
@@ -220,11 +213,11 @@
         </div>
       </div>
 
-      <!-- ── GROUP: PROCESS ── -->
-      <div class="flex items-center gap-3 mt-6 mb-2">
-        <div class="text-xs font-bold tracking-widest uppercase opacity-50">PROCESS</div>
-        <div class="flex-1 border-t border-base-content/10"></div>
-      </div>
+      </div><!-- /tab-content Source -->
+
+      <!-- ── TAB: PROCESS ── -->
+      <input type="radio" name="config_tabs" class="tab" aria-label="Process" />
+      <div class="tab-content border-base-300 bg-base-100 p-6">
 
       <!-- Threads -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
@@ -275,11 +268,11 @@
         </div>
       </div>
 
-      <!-- ── GROUP: OUTPUT ── -->
-      <div class="flex items-center gap-3 mt-6 mb-2">
-        <div class="text-xs font-bold tracking-widest uppercase opacity-50">OUTPUT</div>
-        <div class="flex-1 border-t border-base-content/10"></div>
-      </div>
+      </div><!-- /tab-content Process -->
+
+      <!-- ── TAB: OUTPUT ── -->
+      <input type="radio" name="config_tabs" class="tab" aria-label="Output" />
+      <div class="tab-content border-base-300 bg-base-100 p-6">
 
       <!-- Output -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
@@ -874,11 +867,11 @@
         </div>
       </div>
 
-      <!-- ── GROUP: RELIABILITY ── -->
-      <div class="flex items-center gap-3 mt-6 mb-2">
-        <div class="text-xs font-bold tracking-widest uppercase opacity-50">RELIABILITY</div>
-        <div class="flex-1 border-t border-base-content/10"></div>
-      </div>
+      </div><!-- /tab-content Output -->
+
+      <!-- ── TAB: RELIABILITY ── -->
+      <input type="radio" name="config_tabs" class="tab" aria-label="Reliability" />
+      <div class="tab-content border-base-300 bg-base-100 p-6">
 
       <!-- Couchbase Lite -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
@@ -1026,11 +1019,11 @@
         </div>
       </div>
 
-      <!-- ── GROUP: OBSERVABILITY ── -->
-      <div class="flex items-center gap-3 mt-6 mb-2">
-        <div class="text-xs font-bold tracking-widest uppercase opacity-50">OBSERVABILITY</div>
-        <div class="flex-1 border-t border-base-content/10"></div>
-      </div>
+      </div><!-- /tab-content Reliability -->
+
+      <!-- ── TAB: OBSERVABILITY ── -->
+      <input type="radio" name="config_tabs" class="tab" aria-label="Observability" />
+      <div class="tab-content border-base-300 bg-base-100 p-6">
 
       <!-- Metrics -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
@@ -1152,12 +1145,16 @@
         </div>
       </div>
 
-    </div><!-- /viewForm -->
+      </div><!-- /tab-content Observability -->
 
-    <!-- Raw JSON View -->
-    <div id="viewRaw" class="hidden">
-      <textarea id="rawJson" class="textarea textarea-bordered w-full font-mono text-sm" rows="30"></textarea>
-    </div>
+      <!-- ── TAB: RAW JSON ── -->
+      <input type="radio" name="config_tabs" class="tab" aria-label="Raw JSON" />
+      <div class="tab-content border-base-300 bg-base-100 p-6">
+        <textarea id="rawJson" class="textarea textarea-bordered w-full font-mono text-sm" rows="30"></textarea>
+      </div><!-- /tab-content Raw JSON -->
+
+    </div><!-- /tabs -->
+    </div><!-- /viewForm -->
 
     <!-- Action Bar -->
     <div class="flex gap-3 mt-6 sticky bottom-4">
@@ -1176,29 +1173,32 @@
     checks.forEach(function(cb) { cb.checked = show; });
   }
 
-  // Tab switching
-  function switchTab(tab) {
-    var formView = document.getElementById('viewForm');
-    var rawView = document.getElementById('viewRaw');
-    var tabForm = document.getElementById('tabForm');
-    var tabRaw = document.getElementById('tabRaw');
-    if (tab === 'form') {
-      formView.classList.remove('hidden');
-      rawView.classList.add('hidden');
-      tabForm.classList.add('tab-active');
-      tabRaw.classList.remove('tab-active');
-      try {
-        var cfg = JSON.parse(document.getElementById('rawJson').value);
-        populateForm(cfg);
-      } catch(e) {}
-    } else {
-      formView.classList.add('hidden');
-      rawView.classList.remove('hidden');
-      tabRaw.classList.add('tab-active');
-      tabForm.classList.remove('tab-active');
-      document.getElementById('rawJson').value = JSON.stringify(collectConfig(), null, 2);
-    }
-  }
+  // Tab sync for Raw JSON
+  (function() {
+    var rawTab = document.querySelector('input[name="config_tabs"][aria-label="Raw JSON"]');
+    var allTabs = document.querySelectorAll('input[name="config_tabs"]');
+
+    // When Raw JSON tab is selected, populate textarea
+    rawTab.addEventListener('change', function() {
+      if (this.checked) {
+        document.getElementById('rawJson').value = JSON.stringify(collectConfig(), null, 2);
+      }
+    });
+
+    // When switching away from Raw JSON, parse it back
+    allTabs.forEach(function(tab) {
+      if (tab !== rawTab) {
+        tab.addEventListener('change', function() {
+          if (this.checked) {
+            try {
+              var cfg = JSON.parse(document.getElementById('rawJson').value);
+              populateForm(cfg);
+            } catch(e) {}
+          }
+        });
+      }
+    });
+  })();
 
   // Auth field visibility
   function toggleAuthFields() {
@@ -1703,8 +1703,8 @@
   // Save config to server
   async function saveConfig() {
     var cfg;
-    var rawView = document.getElementById('viewRaw');
-    if (!rawView.classList.contains('hidden')) {
+    var isRawActive = document.querySelector('input[name="config_tabs"][aria-label="Raw JSON"]').checked;
+    if (isRawActive) {
       try {
         cfg = JSON.parse(document.getElementById('rawJson').value);
       } catch (e) {

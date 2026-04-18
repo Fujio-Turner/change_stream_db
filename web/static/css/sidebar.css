@@ -10,14 +10,14 @@
   position: fixed;
   top: 0; left: 0; bottom: 0;
   width: var(--sidebar-width);
-  background: oklch(var(--color-base-100));
-  color: oklch(var(--color-base-content));
+  background: var(--color-base-100);
+  color: var(--color-base-content);
   display: flex;
   flex-direction: column;
   z-index: 50;
   transition: width var(--sidebar-transition);
   overflow: hidden;
-  border-right: 1px solid oklch(var(--color-base-300));
+  border-right: 1px solid var(--color-base-300);
 }
 .sidebar.collapsed { width: var(--sidebar-collapsed-width); }
 
@@ -36,7 +36,7 @@
 .sidebar-brand {
   display: flex; align-items: center; gap: 10px;
   padding: 14px 12px;
-  border-bottom: 1px solid oklch(var(--color-base-300));
+  border-bottom: 1px solid var(--color-base-300);
   flex-shrink: 0; min-height: 56px;
 }
 .sidebar-brand img { width: 28px; height: 28px; flex-shrink: 0; }
@@ -51,7 +51,7 @@
 .sidebar-toggle {
   position: absolute; top: 14px; right: 8px;
   background: none; border: none;
-  color: oklch(var(--color-base-content));
+  color: var(--color-base-content);
   cursor: pointer; padding: 4px; opacity: 0.5;
   transition: opacity var(--sidebar-transition), transform var(--sidebar-transition);
   z-index: 2;
@@ -76,7 +76,7 @@
 .sidebar-section {
   font-size: 10px; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.05em;
-  color: oklch(var(--color-base-content));
+  color: var(--color-base-content);
   opacity: 0.4;
   padding: 10px 10px 4px;
   white-space: nowrap; overflow: hidden;
@@ -89,23 +89,23 @@
   display: flex; align-items: center; gap: 10px;
   padding: 9px 10px; border-radius: 6px;
   text-decoration: none;
-  color: oklch(var(--color-base-content));
+  color: var(--color-base-content);
   font-size: 13px; white-space: nowrap;
   transition: background 0.15s;
   position: relative;
 }
 .sidebar-link:hover {
-  background: oklch(var(--color-base-200));
+  background: var(--color-base-200);
 }
 .sidebar-link.active {
-  background: oklch(var(--color-primary) / 0.12);
-  color: oklch(var(--color-primary));
+  background: color-mix(in oklab, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
   font-weight: 600;
 }
 .sidebar-link.active::before {
   content: ''; position: absolute;
   left: -6px; top: 6px; bottom: 6px; width: 3px;
-  background: oklch(var(--color-primary));
+  background: var(--color-primary);
   border-radius: 0 3px 3px 0;
 }
 
@@ -119,6 +119,18 @@
   opacity: 0.7;
 }
 .sidebar-link.active .sidebar-link-icon img { opacity: 1; }
+
+/* Mask-based nav icons — inherit color from parent */
+.sidebar-icon-mask {
+  display: block;
+  width: 18px; height: 18px;
+  background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  opacity: 0.55;
+}
+.sidebar-link.active .sidebar-icon-mask { opacity: 1; }
 
 /* SVG icons use stroke="currentColor" which defaults to black in <img>;
    invert them in dark mode so they render white on the dark sidebar. */
@@ -137,8 +149,8 @@
   position: absolute;
   left: calc(var(--sidebar-collapsed-width) - 2px);
   top: 50%; transform: translateY(-50%);
-  background: oklch(var(--color-neutral));
-  color: oklch(var(--color-neutral-content));
+  background: var(--color-neutral);
+  color: var(--color-neutral-content);
   padding: 5px 10px; border-radius: 6px;
   font-size: 12px; white-space: nowrap; z-index: 100;
   box-shadow: 0 2px 8px rgba(0,0,0,0.25);
@@ -148,7 +160,7 @@
 /* Divider */
 .sidebar-divider {
   height: 1px;
-  background: oklch(var(--color-base-300));
+  background: var(--color-base-300);
   margin: 6px 10px;
   flex-shrink: 0;
 }
@@ -156,12 +168,12 @@
 /* Footer */
 .sidebar-footer {
   padding: 10px 12px;
-  border-top: 1px solid oklch(var(--color-base-300));
+  border-top: 1px solid var(--color-base-300);
   flex-shrink: 0;
 }
 .sidebar-theme-toggle {
   font-size: 12px;
-  color: oklch(var(--color-base-content));
+  color: var(--color-base-content);
   opacity: 0.7;
 }
 .sidebar-theme-btn {
@@ -171,7 +183,7 @@
   white-space: nowrap; overflow: hidden;
   transition: background 0.15s;
 }
-.sidebar-theme-btn:hover { background: oklch(var(--color-base-200)); }
+.sidebar-theme-btn:hover { background: var(--color-base-200); }
 .sidebar-theme-label {
   transition: opacity var(--sidebar-transition), width var(--sidebar-transition);
 }
@@ -202,9 +214,9 @@
 .sidebar-mobile-toggle {
   display: none;
   position: fixed; top: 10px; left: 10px; z-index: 60;
-  background: oklch(var(--color-base-100));
-  color: oklch(var(--color-base-content));
-  border: 1px solid oklch(var(--color-base-300));
+  background: var(--color-base-100);
+  color: var(--color-base-content);
+  border: 1px solid var(--color-base-300);
   border-radius: 6px; padding: 6px 8px; cursor: pointer;
   align-items: center; justify-content: center;
   box-shadow: 0 2px 6px rgba(0,0,0,0.15);

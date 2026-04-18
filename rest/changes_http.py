@@ -1233,6 +1233,12 @@ async def _consume_websocket_stream(
     if channels and src != "couchdb":
         payload["filter"] = "sync_gateway/bychannel"
         payload["channels"] = ",".join(channels)
+    # Request periodic heartbeat frames from SG so idle connections
+    # stay alive and are not mistaken for dead sockets.
+    # Default to 30s; the idle timeout below is set well above this.
+    heartbeat_ms = feed_cfg.get("heartbeat_ms", 30000)
+    if heartbeat_ms and src != "couchdb":
+        payload["heartbeat"] = heartbeat_ms
 
     # Build WebSocket headers for auth
     ws_headers = dict(auth_headers) if auth_headers else {}
@@ -1276,10 +1282,13 @@ async def _consume_websocket_stream(
             # Send the request payload
             await ws.send_json(payload)
 
-            # Idle timeout: if no data arrives within 2× the configured
-            # timeout or 5 minutes (whichever is larger), treat as dead
-            # connection and reconnect.
-            ws_idle_timeout = max(timeout_ms * 2 / 1000.0, 300.0)
+            # Idle timeout: if no heartbeat or data arrives within 3× the
+            # heartbeat interval (or 5 minutes if no heartbeat), treat as
+            # dead connection and reconnect.
+            if heartbeat_ms and src != "couchdb":
+                ws_idle_timeout = max(heartbeat_ms * 3 / 1000.0, 120.0)
+            else:
+                ws_idle_timeout = max(timeout_ms * 2 / 1000.0, 300.0)
 
             while not shutdown_event.is_set():
                 try:
@@ -1287,9 +1296,11 @@ async def _consume_websocket_stream(
                         ws.receive(), timeout=ws_idle_timeout
                     )
                 except asyncio.TimeoutError:
+                    failure_count += 1
                     logger.warning(
-                        "WebSocket idle timeout (%.0fs) – reconnecting",
+                        "WebSocket idle timeout (%.0fs) – reconnecting (failure #%d)",
                         ws_idle_timeout,
+                        failure_count,
                     )
                     if metrics:
                         metrics.inc("poll_errors_total")

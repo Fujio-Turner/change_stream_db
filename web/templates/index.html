@@ -641,12 +641,28 @@ function computeStatus(m, cfg) {
     feedChecks.push(diagOk('Worker is running (uptime: ' + fmtUptime(uptime) + ')'));
     var errorRatio = pollCycles > 0 ? pollErrors / pollCycles : 0;
     var feedReceived = m['changes_worker_changes_received_total'] || 0;
-    if (pollCycles === 0 && feedReceived === 0) {
+    var feedType = (cfg && cfg.changes_feed) ? cfg.changes_feed.feed_type : '';
+    var isStreaming = (feedType === 'websocket' || feedType === 'continuous');
+    if (isStreaming) {
+      // In streaming mode poll_errors are idle-timeout reconnects (normal),
+      // not real failures. Use stream_reconnects + uptime to judge health.
+      if (feedReceived > 0 || uptime > 30) {
+        feedColor = 'green';
+        if (feedReceived > 0) {
+          feedChecks.push(diagOk('Streaming mode (' + feedType + ') — ' + fmt(feedReceived) + ' change(s) received'));
+        } else {
+          feedChecks.push(diagOk('Streaming mode (' + feedType + ') — connected, waiting for changes'));
+        }
+      } else {
+        feedColor = 'yellow';
+        feedChecks.push(diagWarn('Streaming mode (' + feedType + ') — still connecting'));
+      }
+      if (pollErrors > 0) {
+        feedChecks.push(diagInfo(fmt(pollErrors) + ' idle-timeout reconnect(s) — normal for streaming'));
+      }
+    } else if (pollCycles === 0 && feedReceived === 0) {
       feedChecks.push(diagWarn('No poll cycles completed yet — still starting up'));
       feedColor = 'yellow';
-    } else if (pollCycles === 0 && feedReceived > 0) {
-      feedColor = 'green';
-      feedChecks.push(diagOk('Streaming mode — ' + fmt(feedReceived) + ' change(s) received'));
     } else if (errorRatio > 0.1) {
       feedColor = 'yellow';
       feedChecks.push(diagWarn('High error ratio: ' + (errorRatio * 100).toFixed(1) + '% of poll cycles failed'));
