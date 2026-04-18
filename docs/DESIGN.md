@@ -9,6 +9,7 @@ This document describes the internal architecture of the changes_worker, how dat
 - [`SCHEMA_MAPPING.md`](SCHEMA_MAPPING.md) -- JSON-to-relational mapping definitions
 - [`RDBMS_PLAN.md`](RDBMS_PLAN.md) -- RDBMS output architecture and config
 - [`RDBMS_IMPLEMENTATION.md`](RDBMS_IMPLEMENTATION.md) -- RDBMS implementation guide (single-table, multi-table, transactions)
+- [`CLOUD_BLOB_PLAN.md`](CLOUD_BLOB_PLAN.md) -- Cloud blob storage output (S3, GCS, Azure)
 - [`ADMIN_UI.md — Transforms`](ADMIN_UI.md#transform-functions-reference-transforms) -- Transform function reference (58 built-in functions)
 
 ---
@@ -21,7 +22,7 @@ This document describes the internal architecture of the changes_worker, how dat
 |---|---|
 | **LEFT** | Consume `_changes` on SG / App Services / Edge Server / CouchDB via longpoll, continuous (2-phase: batched catch-up → streaming), websocket (SG / App Services only), SSE (Edge Server only), or eventsource (CouchDB). Returns a batch of changes with `last_seq`. |
 | **MIDDLE** | Filter (skip deletes/removes), optionally fetch full docs via `_bulk_get`, serialize to the output format, manage checkpoints. |
-| **RIGHT** | Forward each doc to the output: configurable HTTP method (`PUT`/`POST`/`PATCH`/`DELETE`) to a REST endpoint with URL templating, write to stdout, or write to an RDBMS via the `db/` module (UPSERT/DELETE with optional multi-table transactions). Track success/failure per doc. Periodic heartbeat monitors endpoint health. |
+| **RIGHT** | Forward each doc to the output: configurable HTTP method (`PUT`/`POST`/`PATCH`/`DELETE`) to a REST endpoint with URL templating, write to stdout, write to an RDBMS via the `db/` module (UPSERT/DELETE with optional multi-table transactions), or upload to a cloud blob store via the `cloud/` module (S3, GCS, Azure Blob). Track success/failure per doc. Periodic heartbeat monitors endpoint health. |
 
 The admin UI dashboard mirrors this pipeline with a [charts-first grouped layout](ADMIN_UI.md#charts-row) showing live metrics for each stage.
 

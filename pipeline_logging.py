@@ -40,7 +40,7 @@ LOG_KEYS = frozenset(
         "CHANGES",  # _changes feed input
         "PROCESSING",  # filtering, routing
         "MAPPING",  # schema mapping
-        "OUTPUT",  # stdout / HTTP / DB output
+        "OUTPUT",  # stdout / HTTP / DB / cloud output
         "HTTP",  # HTTP requests / responses
         "CHECKPOINT",  # checkpoint load / save
         "RETRY",  # retry / backoff decisions

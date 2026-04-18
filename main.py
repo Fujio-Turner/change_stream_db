@@ -37,10 +37,30 @@ from rest import (
     OutputForwarder,
     OutputEndpointDown,
     DeadLetterQueue,
-    determine_method,
     VALID_OUTPUT_FORMATS,
 )
 from rest.output_http import check_serialization_library
+from rest.changes_http import (
+    ShutdownRequested,
+    RetryableHTTP,
+    ClientHTTPError,
+    RedirectHTTPError,
+    ServerHTTPError,
+    fetch_docs,
+    _fetch_single_doc_with_retry,
+    _fetch_docs_bulk_get,
+    _fetch_docs_individually,
+    _build_changes_body,
+    _sleep_with_backoff,
+    _process_changes_batch,
+    _catch_up_normal,
+    _consume_continuous_stream,
+    _consume_websocket_stream,
+    _replay_dead_letter_queue,
+    _sleep_or_shutdown,
+    _chunked,
+)
+from rest import determine_method  # re-export for backward compat
 from cbl_store import (
     USE_CBL,
     CBLStore,
@@ -52,7 +72,6 @@ from cbl_store import (
 from pipeline_logging import (
     configure_logging,
     log_event,
-    infer_operation,
 )
 
 # ---------------------------------------------------------------------------
@@ -819,6 +838,17 @@ class MetricsCollector:
                 lines.append(db_lines)
         except Exception:
             pass  # db_base may not be loaded if no DB output is configured
+
+        # ── Per-provider / per-job cloud metrics ──────────────────────────
+        try:
+            from cloud.cloud_base import CloudMetrics
+
+            cloud_lines = CloudMetrics.render_all()
+            if cloud_lines:
+                lines.append("")
+                lines.append(cloud_lines)
+        except Exception:
+            pass  # cloud_base may not be loaded if no cloud output is configured
 
         lines.append("")
         return "\n".join(lines)
@@ -1642,1303 +1672,6 @@ class Checkpoint:
 
 
 # ---------------------------------------------------------------------------
-# HTTP helpers with retry
-# ---------------------------------------------------------------------------
-
-
-class ShutdownRequested(Exception):
-    """Raised when a shutdown signal interrupts a retryable operation."""
-
-
-class RetryableHTTP:
-    def __init__(self, session: aiohttp.ClientSession, retry_cfg: dict):
-        self._session = session
-        self._max_retries = retry_cfg.get("max_retries", 5)
-        self._backoff_base = retry_cfg.get("backoff_base_seconds", 1)
-        self._backoff_max = retry_cfg.get("backoff_max_seconds", 60)
-        self._retry_statuses = set(
-            retry_cfg.get("retry_on_status", [500, 502, 503, 504])
-        )
-        self._metrics = None
-        self._shutdown_event: asyncio.Event | None = None
-
-    def set_metrics(self, metrics: "MetricsCollector | None") -> None:
-        self._metrics = metrics
-
-    def set_shutdown_event(self, event: asyncio.Event) -> None:
-        self._shutdown_event = event
-
-    async def request(self, method: str, url: str, **kwargs) -> aiohttp.ClientResponse:
-        shutdown = kwargs.pop("shutdown_event", None) or self._shutdown_event
-        last_exc: Exception | None = None
-        for attempt in range(1, self._max_retries + 1):
-            if shutdown and shutdown.is_set():
-                raise ShutdownRequested(
-                    f"Shutdown requested before attempt #{attempt} for {method} {url}"
-                )
-
-            try:
-                resp = await self._session.request(method, url, **kwargs)
-                if resp.status < 300:
-                    return resp
-                body = await resp.text()
-                if resp.status in self._retry_statuses:
-                    log_event(
-                        logger,
-                        "warn",
-                        "RETRY",
-                        "retryable response",
-                        http_method=method,
-                        url=url,
-                        status=resp.status,
-                        attempt=attempt,
-                    )
-                    resp.release()
-                    if self._metrics:
-                        self._metrics.inc("retries_total")
-                elif 400 <= resp.status < 500:
-                    log_event(
-                        logger,
-                        "error",
-                        "HTTP",
-                        "client error",
-                        http_method=method,
-                        url=url,
-                        status=resp.status,
-                    )
-                    raise ClientHTTPError(resp.status, body)
-                elif 300 <= resp.status < 400:
-                    log_event(
-                        logger,
-                        "warn",
-                        "HTTP",
-                        "redirect – not following",
-                        http_method=method,
-                        url=url,
-                        status=resp.status,
-                    )
-                    raise RedirectHTTPError(resp.status, body)
-                else:
-                    raise ServerHTTPError(resp.status, body)
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                log_event(
-                    logger,
-                    "warn",
-                    "RETRY",
-                    "connection error: %s" % exc,
-                    http_method=method,
-                    url=url,
-                    attempt=attempt,
-                )
-                last_exc = exc
-                if self._metrics:
-                    self._metrics.inc("retries_total")
-
-            if attempt < self._max_retries:
-                delay = min(
-                    self._backoff_base * (2 ** (attempt - 1)), self._backoff_max
-                )
-                log_event(
-                    logger,
-                    "info",
-                    "RETRY",
-                    "backing off before retry",
-                    delay_seconds=delay,
-                    attempt=attempt,
-                )
-                if shutdown:
-                    try:
-                        await asyncio.wait_for(shutdown.wait(), timeout=delay)
-                        raise ShutdownRequested(
-                            f"Shutdown during backoff for {method} {url}"
-                        )
-                    except asyncio.TimeoutError:
-                        pass
-                else:
-                    await asyncio.sleep(delay)
-
-        if self._metrics:
-            self._metrics.inc("retry_exhausted_total")
-        raise ConnectionError(
-            f"All {self._max_retries} retries exhausted for {method} {url}"
-        ) from last_exc
-
-
-class ClientHTTPError(Exception):
-    def __init__(self, status: int, body: str):
-        self.status = status
-        self.body = body
-        super().__init__(f"HTTP {status}: {body[:200]}")
-
-
-class RedirectHTTPError(Exception):
-    def __init__(self, status: int, body: str):
-        self.status = status
-        self.body = body
-        super().__init__(f"HTTP {status}: {body[:200]}")
-
-
-class ServerHTTPError(Exception):
-    def __init__(self, status: int, body: str):
-        self.status = status
-        self.body = body
-        super().__init__(f"HTTP {status}: {body[:200]}")
-
-
-# ---------------------------------------------------------------------------
-# Fetch-docs helpers (bulk_get for SG/App Services, individual GET for Edge)
-# ---------------------------------------------------------------------------
-
-
-def _chunked(lst: list, size: int) -> list[list]:
-    """Split a list into chunks of at most `size` items."""
-    return [lst[i : i + size] for i in range(0, len(lst), size)]
-
-
-async def fetch_docs(
-    http: RetryableHTTP,
-    base_url: str,
-    rows: list[dict],
-    auth: aiohttp.BasicAuth | None,
-    headers: dict,
-    src: str,
-    max_concurrent: int = 20,
-    batch_size: int = 100,
-    metrics: MetricsCollector | None = None,
-) -> list[dict]:
-    """
-    Fetch full document bodies for _changes rows that only have id/rev.
-
-    Rows are processed in batches of `batch_size` (default 100) to avoid
-    overwhelming the server with a single massive request.
-
-    - Sync Gateway / App Services → POST _bulk_get  (one request per batch)
-    - Edge Server → individual GET /{keyspace}/{docid}?rev=  (no _bulk_get)
-    """
-    eligible = [r for r in rows if r.get("changes")]
-    if not eligible:
-        return []
-
-    batches = _chunked(eligible, batch_size)
-    ic(f"fetch_docs: {len(eligible)} docs in {len(batches)} batch(es) of {batch_size}")
-
-    all_results: list[dict] = []
-    for i, batch in enumerate(batches):
-        ic(f"fetch_docs batch {i + 1}/{len(batches)}: {len(batch)} docs")
-        if src == "edge_server":
-            results = await _fetch_docs_individually(
-                http, base_url, batch, auth, headers, max_concurrent, metrics=metrics
-            )
-        else:
-            results = await _fetch_docs_bulk_get(
-                http, base_url, batch, auth, headers, metrics=metrics
-            )
-        all_results.extend(results)
-
-    return all_results
-
-
-async def _fetch_docs_bulk_get(
-    http: RetryableHTTP,
-    base_url: str,
-    rows: list[dict],
-    auth: aiohttp.BasicAuth | None,
-    headers: dict,
-    metrics: MetricsCollector | None = None,
-) -> list[dict]:
-    """Fetch full docs via _bulk_get (Sync Gateway / App Services)."""
-    docs_req = [{"id": r["id"], "rev": r["changes"][0]["rev"]} for r in rows]
-    if not docs_req:
-        return []
-    url = f"{base_url}/_bulk_get?revs=false"
-    payload = {"docs": docs_req}
-    ic(url, len(docs_req))
-    t0 = time.monotonic()
-    resp = await http.request(
-        "POST",
-        url,
-        json=payload,
-        auth=auth,
-        headers={**headers, "Content-Type": "application/json"},
-    )
-    # _bulk_get returns multipart/mixed or JSON depending on SG version
-    ct = resp.content_type or ""
-    results: list[dict] = []
-    if "application/json" in ct:
-        raw_bytes = await resp.read()
-        if metrics:
-            metrics.inc("bytes_received_total", len(raw_bytes))
-        body = json.loads(raw_bytes)
-        for item in body.get("results", []):
-            for doc_entry in item.get("docs", []):
-                ok = doc_entry.get("ok")
-                if ok:
-                    results.append(ok)
-    else:
-        # Fallback: read raw text and attempt JSON extraction
-        raw = await resp.text()
-        if metrics:
-            metrics.inc("bytes_received_total", len(raw.encode("utf-8")))
-        for line in raw.splitlines():
-            line = line.strip()
-            if line.startswith("{"):
-                try:
-                    results.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-    if metrics:
-        metrics.inc("doc_fetch_requests_total")
-        metrics.record_doc_fetch_time(time.monotonic() - t0)
-    return results
-
-
-async def _fetch_docs_individually(
-    http: RetryableHTTP,
-    base_url: str,
-    rows: list[dict],
-    auth: aiohttp.BasicAuth | None,
-    headers: dict,
-    max_concurrent: int,
-    metrics: MetricsCollector | None = None,
-) -> list[dict]:
-    """
-    Fetch docs one-by-one via GET /{keyspace}/{docid}?rev={rev}.
-
-    Used for Edge Server which does not have a _bulk_get endpoint.
-    Requests are fanned out with a semaphore to cap concurrency.
-    """
-    sem = asyncio.Semaphore(max_concurrent)
-    results: list[dict] = []
-    lock = asyncio.Lock()
-    t0 = time.monotonic()
-
-    async def _get_one(row: dict) -> None:
-        doc_id = row.get("id", "")
-        rev = row["changes"][0]["rev"] if row.get("changes") else None
-        url = f"{base_url}/{doc_id}"
-        params: dict[str, str] = {}
-        if rev:
-            params["rev"] = rev
-        ic("GET doc (edge_server)", url, rev)
-        async with sem:
-            try:
-                resp = await http.request(
-                    "GET", url, params=params, auth=auth, headers=headers
-                )
-                raw_bytes = await resp.read()
-                if metrics:
-                    metrics.inc("bytes_received_total", len(raw_bytes))
-                doc = json.loads(raw_bytes)
-                resp.release()
-                async with lock:
-                    results.append(doc)
-            except Exception as exc:
-                logger.warning("Failed to fetch doc %s: %s", doc_id, exc)
-                if metrics:
-                    metrics.inc("doc_fetch_errors_total")
-
-    tasks = [asyncio.create_task(_get_one(r)) for r in rows]
-    ic(
-        f"Fetching {len(tasks)} docs individually (Edge Server, concurrency={max_concurrent})"
-    )
-    await asyncio.gather(*tasks)
-    if metrics:
-        metrics.inc("doc_fetch_requests_total")
-        metrics.record_doc_fetch_time(time.monotonic() - t0)
-    return results
-
-
-# ---------------------------------------------------------------------------
-# Helpers: shared batch processing & continuous feed
-# ---------------------------------------------------------------------------
-
-
-def _build_changes_params(
-    feed_cfg: dict,
-    src: str,
-    since: str,
-    feed_type: str,
-    timeout_ms: int,
-    limit: int = 0,
-) -> dict[str, str]:
-    """Build query params for a _changes request."""
-    params: dict[str, str] = {
-        "feed": feed_type,
-        "since": since,
-        "heartbeat": str(feed_cfg.get("heartbeat_ms", 30000)),
-        "timeout": str(timeout_ms),
-    }
-    # active_only is a Couchbase-specific parameter (not supported by CouchDB)
-    if feed_cfg.get("active_only") and src != "couchdb":
-        params["active_only"] = "true"
-    if feed_cfg.get("include_docs"):
-        params["include_docs"] = "true"
-    if limit > 0:
-        params["limit"] = str(limit)
-    # Channels filter is SG/App Services specific (not CouchDB)
-    channels = feed_cfg.get("channels", [])
-    if channels and src != "couchdb":
-        params["filter"] = "sync_gateway/bychannel"
-        params["channels"] = ",".join(channels)
-    if src in ("sync_gateway", "app_services"):
-        params["version_type"] = feed_cfg.get("version_type", "rev")
-    return params
-
-
-async def _sleep_with_backoff(
-    retry_cfg: dict, failure_count: int, shutdown_event: asyncio.Event
-) -> None:
-    """Exponential backoff sleep using retry config."""
-    base = retry_cfg.get("backoff_base_seconds", 1)
-    max_s = retry_cfg.get("backoff_max_seconds", 60)
-    delay = min(base * (2 ** (failure_count - 1)), max_s)
-    logger.info("Backing off %.1fs before retry (failure #%d)", delay, failure_count)
-    await _sleep_or_shutdown(delay, shutdown_event)
-
-
-async def _process_changes_batch(
-    results: list[dict],
-    last_seq: str,
-    since: str,
-    *,
-    feed_cfg: dict,
-    proc_cfg: dict,
-    output: "OutputForwarder",
-    dlq: "DeadLetterQueue",
-    checkpoint: Checkpoint,
-    http: RetryableHTTP,
-    base_url: str,
-    basic_auth: aiohttp.BasicAuth | None,
-    auth_headers: dict,
-    semaphore: asyncio.Semaphore,
-    src: str,
-    metrics: MetricsCollector | None,
-    every_n_docs: int,
-    max_concurrent: int,
-    shutdown_cfg: dict | None = None,
-) -> tuple[str, bool]:
-    """
-    Process a batch of _changes results: filter, fetch docs, forward to output,
-    checkpoint.  Returns (new_since, output_failed).
-    """
-    batch_t0 = time.monotonic()
-    sequential = proc_cfg.get("sequential", False)
-
-    if metrics:
-        metrics.inc("poll_cycles_total")
-        metrics.set("last_poll_timestamp", time.time())
-        metrics.set("last_batch_size", len(results))
-        metrics.inc("changes_received_total", len(results))
-
-    if not results:
-        new_since = str(last_seq)
-        await checkpoint.save(new_since, http, base_url, basic_auth, auth_headers)
-        if metrics:
-            metrics.inc("checkpoint_saves_total")
-            metrics.set("checkpoint_seq", new_since)
-        return new_since, False
-
-    log_event(
-        logger,
-        "debug",
-        "CHANGES",
-        "received _changes batch",
-        seq=since,
-        batch_size=len(results),
-    )
-
-    # Count deletes/removes in the feed (always), then optionally filter
-    filtered: list[dict] = []
-    deleted_count = 0
-    removed_count = 0
-    feed_deletes = 0
-    feed_removes = 0
-    for change in results:
-        if change.get("deleted"):
-            feed_deletes += 1
-        if change.get("removed"):
-            feed_removes += 1
-        if proc_cfg.get("ignore_delete") and change.get("deleted"):
-            ic("ignoring deleted", change.get("id"))
-            deleted_count += 1
-            continue
-        if proc_cfg.get("ignore_remove") and change.get("removed"):
-            ic("ignoring removed", change.get("id"))
-            removed_count += 1
-            continue
-        filtered.append(change)
-
-    if metrics:
-        if feed_deletes:
-            metrics.inc("feed_deletes_seen_total", feed_deletes)
-        if feed_removes:
-            metrics.inc("feed_removes_seen_total", feed_removes)
-        if deleted_count or removed_count:
-            metrics.inc("changes_deleted_total", deleted_count)
-            metrics.inc("changes_removed_total", removed_count)
-            metrics.inc("changes_filtered_total", deleted_count + removed_count)
-
-    if deleted_count or removed_count:
-        log_event(
-            logger,
-            "debug",
-            "PROCESSING",
-            "filtered changes batch",
-            input_count=len(results),
-            filtered_count=len(filtered),
-        )
-
-    # If include_docs was false, fetch full docs
-    docs_by_id: dict[str, dict] = {}
-    if not feed_cfg.get("include_docs") and filtered:
-        batch_size = proc_cfg.get("get_batch_number", 100)
-        fetched = await fetch_docs(
-            http,
-            base_url,
-            filtered,
-            basic_auth,
-            auth_headers,
-            src,
-            max_concurrent,
-            batch_size,
-            metrics=metrics,
-        )
-        for doc in fetched:
-            docs_by_id[doc.get("_id", "")] = doc
-        if metrics:
-            metrics.inc("docs_fetched_total", len(fetched))
-
-    # Process changes – send each doc to the output
-    output_failed = False
-    batch_success = 0
-    batch_fail = 0
-
-    async def process_one(change: dict) -> dict:
-        async with semaphore:
-            if metrics:
-                metrics.inc("active_tasks")
-            try:
-                doc_id = change.get("id", "")
-                if feed_cfg.get("include_docs"):
-                    doc = change.get("doc", change)
-                else:
-                    doc = docs_by_id.get(doc_id, change)
-                method = determine_method(
-                    change,
-                    write_method=getattr(output, "_write_method", "PUT"),
-                    delete_method=getattr(output, "_delete_method", "DELETE"),
-                )
-                op = infer_operation(change=change, doc=doc, method=method)
-                log_event(
-                    logger,
-                    "trace",
-                    "OUTPUT",
-                    "sending document",
-                    operation=op,
-                    doc_id=doc_id,
-                    mode=output._mode,
-                    http_method=method,
-                )
-                result = await output.send(doc, method)
-                result["_change"] = change
-                result["_doc"] = doc
-                if result.get("ok"):
-                    log_event(
-                        logger,
-                        "debug",
-                        "OUTPUT",
-                        "document forwarded",
-                        operation=op,
-                        doc_id=doc_id,
-                        status=result.get("status"),
-                    )
-                else:
-                    log_event(
-                        logger,
-                        "warn",
-                        "OUTPUT",
-                        "document delivery failed",
-                        operation=op,
-                        doc_id=doc_id,
-                        status=result.get("status"),
-                    )
-                return result
-            finally:
-                if metrics:
-                    metrics.inc("active_tasks", -1)
-
-    if every_n_docs > 0 and sequential:
-        for i in range(0, len(filtered), every_n_docs):
-            sub_batch = filtered[i : i + every_n_docs]
-            for change in sub_batch:
-                try:
-                    result = await process_one(change)
-                    if result.get("ok"):
-                        batch_success += 1
-                    else:
-                        batch_fail += 1
-                        if dlq.enabled and metrics:
-                            metrics.inc("dead_letter_total")
-                        await dlq.write(result["_doc"], result, change.get("seq", ""))
-                except (OutputEndpointDown, ShutdownRequested) as exc:
-                    output_failed = True
-                    is_shutdown = isinstance(exc, ShutdownRequested)
-                    logger.error(
-                        "%s – not advancing checkpoint past since=%s: %s",
-                        "SHUTDOWN" if is_shutdown else "OUTPUT DOWN",
-                        since,
-                        exc,
-                    )
-                    # DLQ remaining docs in this sub-batch if shutdown + dlq_inflight_on_shutdown
-                    if (
-                        is_shutdown
-                        and (shutdown_cfg or {}).get("dlq_inflight_on_shutdown", False)
-                        and dlq.enabled
-                    ):
-                        remaining = sub_batch[sub_batch.index(change) :]
-                        for rem in remaining:
-                            rem_doc = (
-                                rem.get("doc", rem)
-                                if feed_cfg.get("include_docs")
-                                else docs_by_id.get(rem.get("id", ""), rem)
-                            )
-                            await dlq.write(
-                                rem_doc,
-                                {
-                                    "doc_id": rem.get("id", ""),
-                                    "method": "PUT",
-                                    "status": 0,
-                                    "error": "shutdown_inflight",
-                                },
-                                rem.get("seq", ""),
-                            )
-                        if metrics:
-                            metrics.inc("dead_letter_total", len(remaining))
-                        log_event(
-                            logger,
-                            "warn",
-                            "SHUTDOWN",
-                            "DLQ'd %d remaining docs from sub-batch" % len(remaining),
-                        )
-                    break
-            if output_failed:
-                break
-            sub_seq = str(sub_batch[-1].get("seq", last_seq))
-            since = sub_seq
-            await checkpoint.save(since, http, base_url, basic_auth, auth_headers)
-            if metrics:
-                metrics.inc("checkpoint_saves_total")
-                metrics.set("checkpoint_seq", since)
-    else:
-        try:
-            if sequential:
-                for change in filtered:
-                    result = await process_one(change)
-                    if result.get("ok"):
-                        batch_success += 1
-                    else:
-                        batch_fail += 1
-                        if dlq.enabled and metrics:
-                            metrics.inc("dead_letter_total")
-                        await dlq.write(result["_doc"], result, change.get("seq", ""))
-            else:
-                tasks = [asyncio.create_task(process_one(c)) for c in filtered]
-                done, _ = await asyncio.wait(tasks)
-                for t in done:
-                    if t.exception():
-                        raise t.exception()
-                    result = t.result()
-                    if result.get("ok"):
-                        batch_success += 1
-                    else:
-                        batch_fail += 1
-                        if dlq.enabled and metrics:
-                            metrics.inc("dead_letter_total")
-                        await dlq.write(
-                            result["_doc"], result, result["_change"].get("seq", "")
-                        )
-        except (OutputEndpointDown, ShutdownRequested) as exc:
-            output_failed = True
-            is_shutdown = isinstance(exc, ShutdownRequested)
-            logger.error(
-                "%s – not advancing checkpoint past since=%s: %s",
-                "SHUTDOWN" if is_shutdown else "OUTPUT DOWN",
-                since,
-                exc,
-            )
-            # DLQ all unprocessed docs if shutdown + dlq_inflight_on_shutdown
-            if (
-                is_shutdown
-                and (shutdown_cfg or {}).get("dlq_inflight_on_shutdown", False)
-                and dlq.enabled
-            ):
-                # In sequential mode, we know which docs haven't been tried yet
-                processed_ids = set()  # noqa: F841
-                if sequential:
-                    # Find which docs were already processed (succeeded or failed above)
-                    # The current change that raised is the boundary
-                    pass
-                # For parallel mode, all docs were dispatched as tasks;
-                # unfinished ones got cancelled — DLQ all filtered docs that didn't succeed
-                dlq_count = 0
-                for ch in filtered:
-                    ch_doc = (
-                        ch.get("doc", ch)
-                        if feed_cfg.get("include_docs")
-                        else docs_by_id.get(ch.get("id", ""), ch)
-                    )
-                    await dlq.write(
-                        ch_doc,
-                        {
-                            "doc_id": ch.get("id", ""),
-                            "method": "PUT",
-                            "status": 0,
-                            "error": "shutdown_inflight",
-                        },
-                        ch.get("seq", ""),
-                    )
-                    dlq_count += 1
-                if metrics:
-                    metrics.inc("dead_letter_total", dlq_count)
-                log_event(
-                    logger,
-                    "warn",
-                    "SHUTDOWN",
-                    "DLQ'd %d docs from batch (checkpoint not advanced)" % dlq_count,
-                )
-
-    if metrics:
-        metrics.inc("changes_processed_total", len(filtered))
-
-    total = batch_success + batch_fail
-    if total > 0:
-        log_event(
-            logger,
-            "info",
-            "PROCESSING",
-            "batch complete: %d/%d succeeded, %d failed%s"
-            % (
-                batch_success,
-                total,
-                batch_fail,
-                " (%d written to dead letter queue)" % batch_fail
-                if batch_fail and dlq.enabled
-                else "",
-            ),
-        )
-
-    output.log_stats()
-
-    if output_failed:
-        if metrics:
-            metrics.record_batch_processing_time(time.monotonic() - batch_t0)
-            metrics.inc("batches_total")
-            metrics.inc("batches_failed_total")
-        return since, True
-
-    if not (every_n_docs > 0 and sequential):
-        since = str(last_seq)
-        await checkpoint.save(since, http, base_url, basic_auth, auth_headers)
-        if metrics:
-            metrics.inc("checkpoint_saves_total")
-            metrics.set("checkpoint_seq", since)
-
-    if metrics:
-        metrics.record_batch_processing_time(time.monotonic() - batch_t0)
-        metrics.inc("batches_total")
-
-    return since, False
-
-
-async def _catch_up_normal(
-    *,
-    since: str,
-    changes_url: str,
-    feed_cfg: dict,
-    proc_cfg: dict,
-    retry_cfg: dict,
-    src: str,
-    http: RetryableHTTP,
-    basic_auth: aiohttp.BasicAuth | None,
-    auth_headers: dict,
-    base_url: str,
-    output: "OutputForwarder",
-    dlq: "DeadLetterQueue",
-    checkpoint: Checkpoint,
-    semaphore: asyncio.Semaphore,
-    shutdown_event: asyncio.Event,
-    metrics: MetricsCollector | None,
-    every_n_docs: int,
-    max_concurrent: int,
-    timeout_ms: int,
-    changes_http_timeout: aiohttp.ClientTimeout,
-    shutdown_cfg: dict | None = None,
-) -> str:
-    """
-    Phase 1 of continuous mode: catch up using one-shot normal requests
-    with a limit.  Repeats until the server returns 0 results, meaning
-    we are caught up.  Returns the latest since value.
-    """
-    catchup_limit = feed_cfg.get("continuous_catchup_limit", 500)
-    failure_count = 0
-
-    logger.info(
-        "CONTINUOUS catch-up: starting from since=%s (limit=%d)", since, catchup_limit
-    )
-
-    while not shutdown_event.is_set():
-        params = _build_changes_params(
-            feed_cfg, src, since, "normal", timeout_ms, limit=catchup_limit
-        )
-        ic(changes_url, params, since, "catch-up")
-
-        try:
-            t0_changes = time.monotonic()
-            resp = await http.request(
-                "GET",
-                changes_url,
-                params=params,
-                auth=basic_auth,
-                headers=auth_headers,
-                timeout=changes_http_timeout,
-            )
-            raw_body = await resp.read()
-            body = json.loads(raw_body)
-            if metrics:
-                metrics.inc("bytes_received_total", len(raw_body))
-                metrics.record_changes_request_time(time.monotonic() - t0_changes)
-            resp.release()
-            failure_count = 0
-        except (ClientHTTPError, RedirectHTTPError) as exc:
-            logger.error("Non-retryable error during catch-up: %s", exc)
-            if metrics:
-                metrics.inc("poll_errors_total")
-            raise
-        except (
-            ConnectionError,
-            ServerHTTPError,
-            aiohttp.ClientError,
-            asyncio.TimeoutError,
-        ) as exc:
-            failure_count += 1
-            logger.error(
-                "Catch-up request failed (attempt #%d): %s", failure_count, exc
-            )
-            if metrics:
-                metrics.inc("poll_errors_total")
-            await _sleep_with_backoff(retry_cfg, failure_count, shutdown_event)
-            continue
-
-        results = body.get("results", [])
-        last_seq = body.get("last_seq", since)
-        ic(len(results), last_seq, "catch-up batch")
-
-        since, output_failed = await _process_changes_batch(
-            results,
-            str(last_seq),
-            since,
-            feed_cfg=feed_cfg,
-            proc_cfg=proc_cfg,
-            output=output,
-            dlq=dlq,
-            checkpoint=checkpoint,
-            http=http,
-            base_url=base_url,
-            basic_auth=basic_auth,
-            auth_headers=auth_headers,
-            semaphore=semaphore,
-            src=src,
-            metrics=metrics,
-            every_n_docs=every_n_docs,
-            max_concurrent=max_concurrent,
-            shutdown_cfg=shutdown_cfg,
-        )
-
-        if output_failed:
-            await _sleep_or_shutdown(
-                feed_cfg.get("poll_interval_seconds", 10), shutdown_event
-            )
-            continue
-
-        if not results:
-            logger.info("CONTINUOUS catch-up complete at since=%s", since)
-            return since
-
-        logger.info(
-            "CONTINUOUS catch-up: got %d rows, fetching next batch from since=%s",
-            len(results),
-            since,
-        )
-
-    return since
-
-
-async def _consume_continuous_stream(
-    *,
-    since: str,
-    changes_url: str,
-    feed_cfg: dict,
-    proc_cfg: dict,
-    retry_cfg: dict,
-    src: str,
-    http: RetryableHTTP,
-    session: aiohttp.ClientSession,
-    basic_auth: aiohttp.BasicAuth | None,
-    auth_headers: dict,
-    base_url: str,
-    output: "OutputForwarder",
-    dlq: "DeadLetterQueue",
-    checkpoint: Checkpoint,
-    semaphore: asyncio.Semaphore,
-    shutdown_event: asyncio.Event,
-    metrics: MetricsCollector | None,
-    every_n_docs: int,
-    max_concurrent: int,
-    timeout_ms: int,
-    shutdown_cfg: dict | None = None,
-) -> str:
-    """
-    Phase 2 of continuous mode: open a streaming connection with
-    feed=continuous and read changes line-by-line.  Returns the latest
-    since value when the stream ends (disconnect / error).
-    """
-    params = _build_changes_params(feed_cfg, src, since, "continuous", timeout_ms)
-    # No limit for continuous mode – we want all changes as they arrive
-    params.pop("limit", None)
-    # No server-side timeout – the stream stays open indefinitely
-    params.pop("timeout", None)
-
-    # Use an open-ended HTTP timeout for the streaming connection
-    continuous_timeout = aiohttp.ClientTimeout(total=None, sock_read=None)
-
-    logger.info("CONTINUOUS stream: connecting from since=%s", since)
-    ic(changes_url, params, since, "continuous stream")
-
-    failure_count = 0
-
-    while not shutdown_event.is_set():
-        try:
-            resp = await http.request(
-                "GET",
-                changes_url,
-                params=params,
-                auth=basic_auth,
-                headers=auth_headers,
-                timeout=continuous_timeout,
-            )
-        except (
-            ConnectionError,
-            ServerHTTPError,
-            aiohttp.ClientError,
-            asyncio.TimeoutError,
-        ) as exc:
-            failure_count += 1
-            logger.error(
-                "Continuous stream connect failed (attempt #%d): %s", failure_count, exc
-            )
-            if metrics:
-                metrics.inc("poll_errors_total")
-            await _sleep_with_backoff(retry_cfg, failure_count, shutdown_event)
-            continue
-        except (ClientHTTPError, RedirectHTTPError) as exc:
-            logger.error("Non-retryable error opening continuous stream: %s", exc)
-            if metrics:
-                metrics.inc("poll_errors_total")
-            raise
-
-        logger.info("CONTINUOUS stream: connected, listening for changes")
-        if metrics and failure_count > 0:
-            metrics.inc("stream_reconnects_total")
-        failure_count = 0
-
-        try:
-            while not shutdown_event.is_set():
-                raw_line = await resp.content.readline()
-                if raw_line == b"":
-                    logger.warning("Continuous stream closed by server (EOF)")
-                    break
-
-                if metrics:
-                    metrics.inc("bytes_received_total", len(raw_line))
-
-                line = raw_line.strip()
-                if not line:
-                    continue  # heartbeat / blank line
-
-                try:
-                    row = json.loads(line)
-                    if metrics:
-                        metrics.inc("stream_messages_total")
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "Continuous stream: unparseable line: %s", line[:200]
-                    )
-                    if metrics:
-                        metrics.inc("stream_parse_errors_total")
-                    continue
-
-                row_seq = str(row.get("seq", since))
-                ic(row.get("id"), row_seq, "continuous row")
-
-                since, output_failed = await _process_changes_batch(
-                    [row],
-                    row_seq,
-                    since,
-                    feed_cfg=feed_cfg,
-                    proc_cfg=proc_cfg,
-                    output=output,
-                    dlq=dlq,
-                    checkpoint=checkpoint,
-                    http=http,
-                    base_url=base_url,
-                    basic_auth=basic_auth,
-                    auth_headers=auth_headers,
-                    semaphore=semaphore,
-                    src=src,
-                    metrics=metrics,
-                    every_n_docs=every_n_docs,
-                    max_concurrent=max_concurrent,
-                    shutdown_cfg=shutdown_cfg,
-                )
-
-                if output_failed:
-                    logger.warning(
-                        "Output failed during continuous stream – dropping to catch-up"
-                    )
-                    break
-
-            # Update params with latest since for reconnect
-            params["since"] = since
-        except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError) as exc:
-            failure_count += 1
-            logger.warning("Continuous stream read error: %s", exc)
-            if metrics:
-                metrics.inc("poll_errors_total")
-        finally:
-            resp.release()
-
-        if failure_count > 0:
-            await _sleep_with_backoff(retry_cfg, failure_count, shutdown_event)
-        else:
-            # Clean EOF / output failure – return to catch-up
-            return since
-
-    return since
-
-
-async def _consume_websocket_stream(
-    *,
-    since: str,
-    changes_url: str,
-    feed_cfg: dict,
-    proc_cfg: dict,
-    retry_cfg: dict,
-    src: str,
-    http: RetryableHTTP,
-    session: aiohttp.ClientSession,
-    basic_auth: aiohttp.BasicAuth | None,
-    auth_headers: dict,
-    base_url: str,
-    output: "OutputForwarder",
-    dlq: "DeadLetterQueue",
-    checkpoint: Checkpoint,
-    semaphore: asyncio.Semaphore,
-    shutdown_event: asyncio.Event,
-    metrics: MetricsCollector | None,
-    every_n_docs: int,
-    max_concurrent: int,
-    timeout_ms: int,
-    shutdown_cfg: dict | None = None,
-) -> str:
-    """
-    WebSocket mode: open a real WebSocket connection to the _changes
-    endpoint and read change rows as messages.
-
-    Sync Gateway expects:
-      1. ws:// (or wss://) connection to {keyspace}/_changes?feed=websocket
-      2. After connection, send a JSON payload with parameters (since, etc.)
-      3. Server streams back one JSON message per change row, ending with
-         a final message containing only "last_seq".
-    """
-    # Build ws:// URL from http:// URL
-    ws_url = changes_url.replace("https://", "wss://").replace("http://", "ws://")
-    ws_url += "?feed=websocket"
-
-    # Build the JSON payload to send after connection (mirrors sg_websocket_feed.py)
-    payload: dict = {"since": since}
-    if feed_cfg.get("include_docs"):
-        payload["include_docs"] = True
-    if feed_cfg.get("active_only") and src != "couchdb":
-        payload["active_only"] = True
-    channels = feed_cfg.get("channels", [])
-    if channels and src != "couchdb":
-        payload["filter"] = "sync_gateway/bychannel"
-        payload["channels"] = ",".join(channels)
-
-    # Build WebSocket headers for auth
-    ws_headers = dict(auth_headers) if auth_headers else {}
-    if basic_auth:
-        import base64
-
-        credentials = f"{basic_auth.login}:{basic_auth.password}"
-        ws_headers["Authorization"] = "Basic " + base64.b64encode(
-            credentials.encode("utf-8")
-        ).decode("utf-8")
-
-    logger.info("WEBSOCKET stream: connecting from since=%s", since)
-    ic(ws_url, payload, since, "websocket stream")
-
-    failure_count = 0
-
-    while not shutdown_event.is_set():
-        try:
-            ws = await session.ws_connect(
-                ws_url,
-                headers=ws_headers,
-                heartbeat=None,  # SG does not respond to WS ping/pong
-                timeout=aiohttp.ClientWSTimeout(ws_close=timeout_ms / 1000.0),
-            )
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
-            failure_count += 1
-            logger.error(
-                "WebSocket connect failed (attempt #%d): %s", failure_count, exc
-            )
-            if metrics:
-                metrics.inc("poll_errors_total")
-            await _sleep_with_backoff(retry_cfg, failure_count, shutdown_event)
-            continue
-
-        logger.info("WEBSOCKET stream: connected, sending payload")
-        if metrics and failure_count > 0:
-            metrics.inc("stream_reconnects_total")
-        failure_count = 0
-
-        try:
-            # Send the request payload
-            await ws.send_json(payload)
-
-            while not shutdown_event.is_set():
-                msg = await ws.receive()
-
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    # SG sends empty frames as heartbeats – skip them
-                    if not msg.data or not msg.data.strip():
-                        continue
-
-                    if metrics:
-                        metrics.inc("bytes_received_total", len(msg.data))
-
-                    try:
-                        parsed = json.loads(msg.data)
-                        if metrics:
-                            metrics.inc("stream_messages_total")
-                    except json.JSONDecodeError:
-                        logger.warning(
-                            "WebSocket: unparseable message (length=%d)", len(msg.data)
-                        )
-                        if metrics:
-                            metrics.inc("stream_parse_errors_total")
-                        continue
-
-                    # SG may send a single dict or an array of change rows
-                    rows = parsed if isinstance(parsed, list) else [parsed]
-
-                    # Check for final message: dict with "last_seq" and no "id"
-                    if (
-                        isinstance(parsed, dict)
-                        and "last_seq" in parsed
-                        and "id" not in parsed
-                    ):
-                        since = str(parsed["last_seq"])
-                        ic(since, "websocket last_seq received")
-                        payload["since"] = since
-                        break
-
-                    # Filter out any last_seq-only sentinel dicts in an array
-                    change_rows = [r for r in rows if isinstance(r, dict) and "id" in r]
-                    if not change_rows:
-                        continue
-
-                    last_seq = str(change_rows[-1].get("seq", since))
-                    ic(
-                        len(change_rows),
-                        last_seq,
-                        "websocket batch",
-                        [
-                            {
-                                k: r.get(k)
-                                for k in ("_id", "_rev", "_deleted", "_removed", "seq")
-                                if k in r
-                            }
-                            for r in change_rows
-                        ],
-                    )
-
-                    since, output_failed = await _process_changes_batch(
-                        change_rows,
-                        last_seq,
-                        since,
-                        feed_cfg=feed_cfg,
-                        proc_cfg=proc_cfg,
-                        output=output,
-                        dlq=dlq,
-                        checkpoint=checkpoint,
-                        http=http,
-                        base_url=base_url,
-                        basic_auth=basic_auth,
-                        auth_headers=auth_headers,
-                        semaphore=semaphore,
-                        src=src,
-                        metrics=metrics,
-                        every_n_docs=every_n_docs,
-                        max_concurrent=max_concurrent,
-                        shutdown_cfg=shutdown_cfg,
-                    )
-                    payload["since"] = since
-
-                    if output_failed:
-                        logger.warning(
-                            "Output failed during WebSocket stream – reconnecting"
-                        )
-                        break
-
-                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSING):
-                    logger.warning("WebSocket stream closed by server")
-                    break
-                elif msg.type == aiohttp.WSMsgType.ERROR:
-                    logger.warning("WebSocket stream error: %s", ws.exception())
-                    break
-
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
-            failure_count += 1
-            logger.warning("WebSocket stream read error: %s", exc)
-            if metrics:
-                metrics.inc("poll_errors_total")
-        finally:
-            if not ws.closed:
-                await ws.close()
-
-        if failure_count > 0:
-            await _sleep_with_backoff(retry_cfg, failure_count, shutdown_event)
-        else:
-            # Clean close – reconnect immediately for more changes
-            continue
-
-    return since
-
-
-# ---------------------------------------------------------------------------
-# DLQ replay
-# ---------------------------------------------------------------------------
-
-
-async def _replay_dead_letter_queue(
-    dlq: "DeadLetterQueue",
-    output: "OutputForwarder",
-    metrics: MetricsCollector | None,
-    shutdown_event: asyncio.Event,
-) -> dict:
-    """Replay pending DLQ entries before processing new _changes.
-
-    Sends each DLQ doc to the output endpoint. On success, purges the entry
-    from CBL so it doesn't accumulate. On failure, leaves it for next startup.
-
-    Returns a summary dict with counts.
-    """
-    pending = dlq.list_pending()
-    if not pending:
-        log_event(logger, "info", "DLQ", "no pending dead-letter entries to replay")
-        return {"total": 0, "succeeded": 0, "failed": 0}
-
-    log_event(
-        logger,
-        "info",
-        "DLQ",
-        "replaying %d dead-letter entries before processing new changes" % len(pending),
-    )
-
-    succeeded = 0
-    failed = 0
-    for entry in pending:
-        if shutdown_event.is_set():
-            log_event(logger, "warn", "DLQ", "shutdown during DLQ replay – stopping")
-            break
-
-        dlq_id = entry.get("id", "")
-        doc_id = entry.get("doc_id_original", entry.get("doc_id", ""))
-        method = entry.get("method", "PUT")
-
-        # Get the full doc data
-        full_entry = dlq.get_entry_doc(dlq_id)
-        if full_entry is None:
-            log_event(
-                logger,
-                "warn",
-                "DLQ",
-                "could not load DLQ entry for replay",
-                doc_id=dlq_id,
-            )
-            failed += 1
-            continue
-
-        doc = full_entry.get("doc_data", {})
-        log_event(
-            logger,
-            "info",
-            "DLQ",
-            "replaying DLQ entry",
-            doc_id=doc_id,
-            dlq_id=dlq_id,
-            method=method,
-        )
-
-        try:
-            result = await output.send(doc, method)
-            if result.get("ok"):
-                await dlq.purge(dlq_id)
-                succeeded += 1
-                log_event(
-                    logger,
-                    "info",
-                    "DLQ",
-                    "DLQ entry replayed successfully – purged",
-                    doc_id=doc_id,
-                    dlq_id=dlq_id,
-                )
-            else:
-                failed += 1
-                log_event(
-                    logger,
-                    "warn",
-                    "DLQ",
-                    "DLQ entry replay failed – keeping for next startup",
-                    doc_id=doc_id,
-                    dlq_id=dlq_id,
-                    status=result.get("status"),
-                )
-        except Exception as exc:
-            failed += 1
-            log_event(
-                logger,
-                "warn",
-                "DLQ",
-                "DLQ entry replay error: %s" % exc,
-                doc_id=doc_id,
-                dlq_id=dlq_id,
-            )
-
-    summary = {"total": len(pending), "succeeded": succeeded, "failed": failed}
-    log_event(
-        logger,
-        "info",
-        "DLQ",
-        "DLQ replay complete: %d/%d succeeded, %d failed"
-        % (succeeded, len(pending), failed),
-    )
-    return summary
-
-
-# ---------------------------------------------------------------------------
 # Core: changes feed loop
 # ---------------------------------------------------------------------------
 
@@ -3007,6 +1740,7 @@ async def poll_changes(
 
         output_mode = out_cfg.get("mode", "stdout")
         db_output = None  # track DB forwarder for cleanup
+        cloud_output = None  # track cloud forwarder for cleanup
 
         if output_mode == "db":
             db_engine = out_cfg.get("db", {}).get("engine", "postgres")
@@ -3032,6 +1766,15 @@ async def poll_changes(
             db_output = output
             log_event(
                 logger, "info", "OUTPUT", f"database output ready (engine={db_engine})"
+            )
+        elif output_mode in ("s3", "gcs", "azure"):
+            from cloud import create_cloud_output
+
+            output = create_cloud_output(out_cfg, dry_run, metrics=metrics)
+            await output.connect()
+            cloud_output = output
+            log_event(
+                logger, "info", "OUTPUT", f"cloud output ready (provider={output_mode})"
             )
         else:
             output = OutputForwarder(
@@ -3088,6 +1831,19 @@ async def poll_changes(
                 log_event(logger, "info", "DLQ", "DLQ replay summary: %s" % dlq_summary)
 
         throttle = feed_cfg.get("throttle_feed", 0)
+
+        # For Couchbase products: force active_only=true during the initial
+        # sync (since=0) so we only process the current state of documents,
+        # not historical deletes/removes.  After the initial sync completes
+        # we revert to the user's config setting.
+        initial_sync = since == "0" and src != "couchdb"
+        if initial_sync:
+            log_event(
+                logger,
+                "info",
+                "CHANGES",
+                "initial sync detected – forcing active_only=true to skip historical deletes",
+            )
 
         # Source-specific feed type validation
         feed_type = feed_cfg.get("feed_type", "longpoll")
@@ -3159,8 +1915,10 @@ async def poll_changes(
                         shutdown_event=stop_event,
                         timeout_ms=timeout_ms,
                         changes_http_timeout=changes_http_timeout,
+                        initial_sync=initial_sync,
                         **batch_kwargs,
                     )
+                    initial_sync = False
                     if stop_event.is_set():
                         break
                     since = await _consume_continuous_stream(
@@ -3190,8 +1948,10 @@ async def poll_changes(
                     shutdown_event=stop_event,
                     timeout_ms=timeout_ms,
                     changes_http_timeout=changes_http_timeout,
+                    initial_sync=initial_sync,
                     **batch_kwargs,
                 )
+                initial_sync = False
                 if not stop_event.is_set():
                     # Phase 2: switch to WebSocket stream
                     since = await _consume_websocket_stream(
@@ -3207,25 +1967,30 @@ async def poll_changes(
 
             # ── Polled mode (longpoll / normal / sse) ────────────────────────
             while not stop_event.is_set():
-                params = _build_changes_params(
-                    feed_cfg, src, since, feed_type, timeout_ms
+                body_payload = _build_changes_body(
+                    feed_cfg,
+                    src,
+                    since,
+                    feed_type,
+                    timeout_ms,
+                    active_only_override=True if initial_sync else None,
                 )
                 # throttle_feed overrides limit – eat the feed one bite at a time
                 if throttle > 0:
-                    params["limit"] = str(throttle)
+                    body_payload["limit"] = throttle
                 elif feed_cfg.get("limit", 0) > 0:
-                    params["limit"] = str(feed_cfg["limit"])
+                    body_payload["limit"] = feed_cfg["limit"]
 
-                ic(changes_url, params, since)
+                ic(changes_url, body_payload, since)
 
                 try:
                     t0_changes = time.monotonic()
                     resp = await http.request(
-                        "GET",
+                        "POST",
                         changes_url,
-                        params=params,
+                        json=body_payload,
                         auth=basic_auth,
-                        headers=auth_headers,
+                        headers={**auth_headers, "Content-Type": "application/json"},
                         timeout=changes_http_timeout,
                     )
                     raw_body = await resp.read()
@@ -3241,7 +2006,7 @@ async def poll_changes(
                     if metrics:
                         metrics.inc("poll_errors_total")
                     break
-                except (ConnectionError, ServerHTTPError) as exc:
+                except (ConnectionError, ServerHTTPError, asyncio.TimeoutError) as exc:
                     logger.error("Retries exhausted polling _changes: %s", exc)
                     if metrics:
                         metrics.inc("poll_errors_total")
@@ -3273,6 +2038,14 @@ async def poll_changes(
                     continue
 
                 if not results:
+                    if initial_sync:
+                        initial_sync = False
+                        log_event(
+                            logger,
+                            "info",
+                            "CHANGES",
+                            "initial sync complete – reverting active_only to config value",
+                        )
                     await _sleep_or_shutdown(
                         feed_cfg.get("poll_interval_seconds", 10), stop_event
                     )
@@ -3296,13 +2069,8 @@ async def poll_changes(
             await output.stop_heartbeat() if hasattr(output, "stop_heartbeat") else None
             if db_output is not None:
                 await db_output.close()
-
-
-async def _sleep_or_shutdown(seconds: float, event: asyncio.Event) -> None:
-    try:
-        await asyncio.wait_for(event.wait(), timeout=seconds)
-    except asyncio.TimeoutError:
-        pass
+            if cloud_output is not None:
+                await cloud_output.close()
 
 
 # ---------------------------------------------------------------------------
@@ -3376,11 +2144,11 @@ async def test_connection(cfg: dict, src: str) -> bool:
         # 3) _changes endpoint
         try:
             resp = await http.request(
-                "GET",
+                "POST",
                 f"{base_url}/_changes",
-                params={"since": "0", "limit": "1"},
+                json={"since": "0", "limit": 1},
                 auth=basic_auth,
-                headers=auth_headers,
+                headers={**auth_headers, "Content-Type": "application/json"},
             )
             body = await resp.json()
             resp.release()

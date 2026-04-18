@@ -8,25 +8,25 @@
     "items": [
       {
         "product_id": "prod_C",
-        "qty": 789987,
-        "price": 21.99
+        "qty": 789,
+        "price": 17.999
       },
       {
         "product_id": "prod_A",
-        "qty": 685321,
-        "price": 49.99
+        "qty": 321,
+        "price": 7.999
       },
       {
         "product_id": "prod_E",
-        "qty": 4156,
-        "price": 789,
+        "qty": 4144556,
+        "price": 7.777,
         "discount": false
       },
       {
         "product_id": "prod_B",
-        "qty": 80,
-        "price": 9786.99,
-        "draft": "pending"
+        "qty": 444444,
+        "price": 7.99,
+        "draft": "aoeu"
       }
     ],
     "channels": [
@@ -34,6 +34,10 @@
       "kevin"
     ],
     "_id": "postgres_01",
-    "_rev": "24-e9a67782a71f6b002acade6b0251319f"
+    "_rev": "35-65cbd67213ede3fe74bd75283014f5ad"
+  },
+  "_meta": {
+    "updated_at": "2026-04-18T07:05:55.653436+00:00",
+    "active": true
   }
 }

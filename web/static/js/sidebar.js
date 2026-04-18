@@ -41,7 +41,7 @@
       }
       var active = (item.href === '/' ? path === '/' : path.indexOf(item.href) === 0) ? ' active' : '';
       return '<a href="' + item.href + '" class="sidebar-link' + active + '" data-tooltip="' + item.label + '">' +
-        '<span class="sidebar-link-icon"><img src="' + item.icon + '" alt="" /></span>' +
+        '<span class="sidebar-link-icon"><span class="sidebar-icon-mask" style="-webkit-mask-image:url(' + item.icon + ');mask-image:url(' + item.icon + ')"></span></span>' +
         '<span class="sidebar-link-text">' + item.label + '</span></a>';
     }).join('\n');
   }
@@ -67,9 +67,7 @@
             '<span class="sidebar-link-icon" id="onlineIcon" style="color:#36d399"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="6"/></svg></span>' +
             '<span class="sidebar-theme-label" id="onlineLabel">Online</span>' +
           '</button>' +
-          '<div class="tooltip tooltip-top sidebar-theme-label" data-tip="Online: Feed is running. Offline: Feed paused, worker stays alive — update config/mappings safely, then go Online. Restart: Reload config & reconnect. Shutdown: Graceful full stop.">' +
-            '<span style="font-size:10px;opacity:0.4;cursor:help;border:1px solid currentColor;border-radius:50%;width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center">?</span>' +
-          '</div>' +
+          '<span id="controlsHelpTrigger" class="sidebar-theme-label" style="font-size:10px;opacity:0.4;cursor:help;border:1px solid currentColor;border-radius:50%;width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center">?</span>' +
         '</div>' +
         '<div class="sidebar-controls" style="display:flex;align-items:center;gap:4px;margin-bottom:6px">' +
           '<button type="button" id="restartBtn" class="sidebar-theme-btn" style="flex:1" data-tooltip="Restart Worker">' +
@@ -255,6 +253,27 @@
         .catch(function (e) {
           sidebarToast('Shutdown failed: ' + e.message, 'error');
         });
+    });
+  }
+
+  /* ── Controls help tooltip (appended to body to escape overflow) ── */
+  var helpTrigger = document.getElementById('controlsHelpTrigger');
+  if (helpTrigger) {
+    var tipText = 'Online: Feed is running. Offline: Feed paused, worker stays alive \u2014 update config/mappings safely, then go Online. Restart: Reload config & reconnect. Shutdown: Graceful full stop.';
+    var tipEl = null;
+
+    helpTrigger.addEventListener('mouseenter', function () {
+      tipEl = document.createElement('div');
+      tipEl.textContent = tipText;
+      tipEl.style.cssText = 'position:fixed;z-index:9999;max-width:280px;padding:8px 12px;border-radius:6px;font-size:12px;line-height:1.4;pointer-events:none;background:oklch(var(--color-neutral));color:oklch(var(--color-neutral-content));box-shadow:0 2px 8px rgba(0,0,0,0.3)';
+      document.body.appendChild(tipEl);
+      var rect = helpTrigger.getBoundingClientRect();
+      tipEl.style.left = rect.left + 'px';
+      tipEl.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
+    });
+
+    helpTrigger.addEventListener('mouseleave', function () {
+      if (tipEl) { tipEl.remove(); tipEl = null; }
     });
   }
 })();

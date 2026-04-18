@@ -18,6 +18,11 @@ from pathlib import Path
 
 import aiohttp
 
+try:
+    from icecream import ic
+except ImportError:  # pragma: no cover
+    ic = lambda *a, **kw: None  # noqa: E731
+
 # Optional serialization libraries – imported lazily so the worker starts
 # even if they are not installed (only errors if actually selected).
 try:
@@ -103,39 +108,69 @@ def serialize_doc(doc: dict, fmt: str) -> tuple[bytes | str, str]:
 
     Returns (body_bytes_or_str, content_type).
     """
-    if fmt == "json":
-        return json.dumps(doc, default=str), CONTENT_TYPES["json"]
+    ic("serialize_doc", fmt, list(doc.keys()) if doc else None)
 
-    if fmt == "xml":
-        return _dict_to_xml(doc), CONTENT_TYPES["xml"]
+    if fmt not in CONTENT_TYPES:
+        log_event(
+            logger,
+            "error",
+            "OUTPUT",
+            "unknown serialization format",
+            error_detail=f"output_format={fmt}, valid={VALID_OUTPUT_FORMATS}",
+        )
+        raise ValueError(f"Unknown output_format: {fmt}")
 
-    if fmt == "form":
-        flat = _flatten_dict(doc)
-        return urllib.parse.urlencode(flat), CONTENT_TYPES["form"]
+    try:
+        if fmt == "json":
+            return json.dumps(doc, default=str), CONTENT_TYPES["json"]
 
-    if fmt == "msgpack":
-        if msgpack is None:
-            raise RuntimeError("msgpack library not installed – pip install msgpack")
-        return msgpack.packb(doc, default=str), CONTENT_TYPES["msgpack"]
+        if fmt == "xml":
+            return _dict_to_xml(doc), CONTENT_TYPES["xml"]
 
-    if fmt == "cbor":
-        if cbor2 is None:
-            raise RuntimeError("cbor2 library not installed – pip install cbor2")
-        return cbor2.dumps(doc), CONTENT_TYPES["cbor"]
+        if fmt == "form":
+            flat = _flatten_dict(doc)
+            return urllib.parse.urlencode(flat), CONTENT_TYPES["form"]
 
-    if fmt == "bson":
-        if bson is None:
-            raise RuntimeError(
-                "bson library not installed – pip install pymongo (provides bson)"
-            )
-        return bson.BSON.encode(doc), CONTENT_TYPES["bson"]
+        if fmt == "msgpack":
+            if msgpack is None:
+                raise RuntimeError(
+                    "msgpack library not installed – pip install msgpack"
+                )
+            return msgpack.packb(doc, default=str), CONTENT_TYPES["msgpack"]
 
-    if fmt == "yaml":
-        if yaml is None:
-            raise RuntimeError("pyyaml library not installed – pip install pyyaml")
-        return yaml.dump(doc, default_flow_style=False), CONTENT_TYPES["yaml"]
+        if fmt == "cbor":
+            if cbor2 is None:
+                raise RuntimeError("cbor2 library not installed – pip install cbor2")
+            return cbor2.dumps(doc), CONTENT_TYPES["cbor"]
 
-    raise ValueError(f"Unknown output_format: {fmt}")
+        if fmt == "bson":
+            if bson is None:
+                raise RuntimeError(
+                    "bson library not installed – pip install pymongo (provides bson)"
+                )
+            return bson.BSON.encode(doc), CONTENT_TYPES["bson"]
+
+        if fmt == "yaml":
+            if yaml is None:
+                raise RuntimeError("pyyaml library not installed – pip install pyyaml")
+            return yaml.dump(doc, default_flow_style=False), CONTENT_TYPES["yaml"]
+
+    except RuntimeError:
+        raise  # re-raise missing-library errors as-is
+    except (TypeError, ValueError, OverflowError) as exc:
+        doc_id = doc.get("_id", doc.get("id", "unknown"))
+        log_event(
+            logger,
+            "error",
+            "OUTPUT",
+            "serialization failed",
+            doc_id=doc_id,
+            error_detail=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+
+    # Unreachable, but satisfies type-checkers
+    raise ValueError(f"Unknown output_format: {fmt}")  # pragma: no cover
 
 
 def check_serialization_library(out_fmt: str) -> tuple[str, str] | None:
@@ -197,6 +232,7 @@ class OutputForwarder:
         self._target_url = out_cfg.get("target_url", "").rstrip("/")
         self._dry_run = dry_run
         self._halt_on_failure = out_cfg.get("halt_on_failure", True)
+        ic("OutputForwarder init", self._mode, self._target_url, self._dry_run)
         self._log_response_times = out_cfg.get("log_response_times", True)
         self._output_format = out_cfg.get("output_format", "json")
         self._url_template = out_cfg.get("url_template", "{target_url}/{doc_id}")
@@ -261,13 +297,32 @@ class OutputForwarder:
     async def send(self, doc: dict, method: str = "PUT") -> dict:
         """Send a single doc. Returns result dict with 'ok' bool. Raises OutputEndpointDown if halt_on_failure."""
         if doc is None:
+            ic("send: None doc – skipping", method)
             log_event(logger, "warn", "OUTPUT", "received None doc – skipping")
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {"ok": True, "doc_id": "unknown", "method": method, "skipped": True}
 
         if self._mode == "stdout":
-            self._send_stdout(doc)
+            try:
+                self._send_stdout(doc)
+            except (OSError, TypeError, ValueError) as exc:
+                ic("send: stdout serialization/write error", exc)
+                log_event(
+                    logger,
+                    "error",
+                    "OUTPUT",
+                    "stdout write failed",
+                    doc_id=doc.get("_id", doc.get("id", "unknown")),
+                    error_detail=f"{type(exc).__name__}: {exc}",
+                )
+                return {
+                    "ok": False,
+                    "doc_id": doc.get("_id", doc.get("id", "unknown")),
+                    "method": method,
+                    "status": 0,
+                    "error": str(exc)[:500],
+                }
             if self._metrics:
                 self._metrics.inc("output_requests_total")
                 mk = self._method_key(method)
@@ -283,7 +338,27 @@ class OutputForwarder:
         url = self._url_template.format(
             target_url=self._target_url, doc_id=encoded_doc_id
         )
-        body, content_type = serialize_doc(doc, self._output_format)
+        ic("send", method, doc_id, url)
+
+        try:
+            body, content_type = serialize_doc(doc, self._output_format)
+        except (ValueError, TypeError, RuntimeError) as exc:
+            ic("send: serialization failed", doc_id, exc)
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "serialization failed – cannot send",
+                doc_id=doc_id,
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
+            return {
+                "ok": False,
+                "doc_id": doc_id,
+                "method": method,
+                "status": 0,
+                "error": f"serialization: {exc}",
+            }
         body_len = len(body) if isinstance(body, (bytes, str)) else 0
 
         if self._dry_run:
@@ -326,6 +401,7 @@ class OutputForwarder:
             status = resp.status
             resp.release()
 
+            ic("send: response", doc_id, status, round(elapsed_ms, 1))
             await self._record_time(elapsed_ms)
             if self._metrics:
                 self._metrics.inc("output_requests_total")
@@ -352,6 +428,7 @@ class OutputForwarder:
 
         except _ClientHTTPError as exc:
             elapsed_ms = (time.monotonic() - t_start) * 1000
+            ic("send: client HTTP error", doc_id, exc.status, exc.body[:200])
             await self._record_time(elapsed_ms)
             if self._metrics:
                 self._metrics.inc("output_errors_total")
@@ -362,13 +439,14 @@ class OutputForwarder:
                 logger,
                 "error",
                 "OUTPUT",
-                "client error",
+                "client error (4xx)",
                 operation=infer_operation(doc=doc, method=method),
                 doc_id=doc_id,
                 http_method=method,
                 url=url,
                 status=exc.status,
                 elapsed_ms=round(elapsed_ms, 1),
+                error_detail=exc.body[:500],
             )
             if self._halt_on_failure:
                 if self._metrics:
@@ -396,6 +474,7 @@ class OutputForwarder:
 
         except _RedirectHTTPError as exc:
             elapsed_ms = (time.monotonic() - t_start) * 1000
+            ic("send: redirect error", doc_id, exc.status)
             await self._record_time(elapsed_ms)
             if self._metrics:
                 self._metrics.inc("output_errors_total")
@@ -406,13 +485,14 @@ class OutputForwarder:
                 logger,
                 "error",
                 "OUTPUT",
-                "redirect error",
+                "redirect error (3xx)",
                 operation=infer_operation(doc=doc, method=method),
                 doc_id=doc_id,
                 http_method=method,
                 url=url,
                 status=exc.status,
                 elapsed_ms=round(elapsed_ms, 1),
+                error_detail=exc.body[:500],
             )
             if self._halt_on_failure:
                 if self._metrics:
@@ -437,13 +517,182 @@ class OutputForwarder:
                     "error": exc.body[:500],
                 }
 
-        except (
-            ConnectionError,
-            _ServerHTTPError,
-            aiohttp.ClientError,
-            asyncio.TimeoutError,
-        ) as exc:
+        except _ServerHTTPError as exc:
             elapsed_ms = (time.monotonic() - t_start) * 1000
+            ic("send: server HTTP error (5xx)", doc_id, exc.status)
+            await self._record_time(elapsed_ms)
+            if self._metrics:
+                self._metrics.inc("output_errors_total")
+                self._metrics.inc(f"output_{mk}_errors_total")
+                self._metrics.inc("bytes_output_total", body_len)
+                self._metrics.record_output_response_time(elapsed_ms / 1000)
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "server error (5xx) after retries",
+                operation=infer_operation(doc=doc, method=method),
+                doc_id=doc_id,
+                http_method=method,
+                url=url,
+                status=exc.status,
+                elapsed_ms=round(elapsed_ms, 1),
+                error_detail=exc.body[:500],
+            )
+            if self._halt_on_failure:
+                if self._metrics:
+                    self._metrics.set("output_endpoint_up", 0)
+                raise OutputEndpointDown(
+                    f"Output endpoint returned {exc.status} for {method} {url} – "
+                    f"halting to preserve checkpoint"
+                ) from exc
+            else:
+                log_event(
+                    logger,
+                    "warn",
+                    "OUTPUT",
+                    "halt_on_failure=false – skipping doc",
+                    doc_id=doc_id,
+                    status=exc.status,
+                )
+                return {
+                    "ok": False,
+                    "doc_id": doc_id,
+                    "method": method,
+                    "status": exc.status,
+                    "error": exc.body[:500],
+                }
+
+        except asyncio.TimeoutError:
+            elapsed_ms = (time.monotonic() - t_start) * 1000
+            ic("send: timeout", doc_id, url, round(elapsed_ms, 1))
+            await self._record_time(elapsed_ms)
+            if self._metrics:
+                self._metrics.inc("output_errors_total")
+                self._metrics.inc(f"output_{mk}_errors_total")
+                self._metrics.record_output_response_time(elapsed_ms / 1000)
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "request timed out",
+                operation=infer_operation(doc=doc, method=method),
+                doc_id=doc_id,
+                http_method=method,
+                url=url,
+                elapsed_ms=round(elapsed_ms, 1),
+                error_detail=f"timeout after {self._request_timeout}s",
+            )
+            if self._halt_on_failure:
+                if self._metrics:
+                    self._metrics.set("output_endpoint_up", 0)
+                raise OutputEndpointDown(
+                    f"Output endpoint timed out for {method} {url} – "
+                    f"halting to preserve checkpoint"
+                )
+            return {
+                "ok": False,
+                "doc_id": doc_id,
+                "method": method,
+                "status": 0,
+                "error": f"timeout after {self._request_timeout}s",
+            }
+
+        except aiohttp.ClientConnectorError as exc:
+            elapsed_ms = (time.monotonic() - t_start) * 1000
+            ic("send: connection error", doc_id, url, type(exc).__name__, str(exc))
+            await self._record_time(elapsed_ms)
+            if self._metrics:
+                self._metrics.inc("output_errors_total")
+                self._metrics.inc(f"output_{mk}_errors_total")
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "connection failed (DNS / refused / unreachable)",
+                operation=infer_operation(doc=doc, method=method),
+                doc_id=doc_id,
+                http_method=method,
+                url=url,
+                elapsed_ms=round(elapsed_ms, 1),
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
+            if self._halt_on_failure:
+                if self._metrics:
+                    self._metrics.set("output_endpoint_up", 0)
+                raise OutputEndpointDown(
+                    f"Output endpoint unreachable for {method} {url} – "
+                    f"halting to preserve checkpoint: {exc}"
+                ) from exc
+            return {
+                "ok": False,
+                "doc_id": doc_id,
+                "method": method,
+                "status": 0,
+                "error": str(exc)[:500],
+            }
+
+        except aiohttp.ClientSSLError as exc:
+            elapsed_ms = (time.monotonic() - t_start) * 1000
+            ic("send: SSL/TLS error", doc_id, url, str(exc))
+            await self._record_time(elapsed_ms)
+            if self._metrics:
+                self._metrics.inc("output_errors_total")
+                self._metrics.inc(f"output_{mk}_errors_total")
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "SSL/TLS handshake failed",
+                operation=infer_operation(doc=doc, method=method),
+                doc_id=doc_id,
+                http_method=method,
+                url=url,
+                elapsed_ms=round(elapsed_ms, 1),
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
+            if self._halt_on_failure:
+                if self._metrics:
+                    self._metrics.set("output_endpoint_up", 0)
+                raise OutputEndpointDown(
+                    f"SSL error for {method} {url} – halting to preserve checkpoint: {exc}"
+                ) from exc
+            return {
+                "ok": False,
+                "doc_id": doc_id,
+                "method": method,
+                "status": 0,
+                "error": f"SSL: {exc}",
+            }
+
+        except aiohttp.InvalidURL as exc:
+            ic("send: invalid URL", doc_id, url, str(exc))
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "invalid URL",
+                doc_id=doc_id,
+                http_method=method,
+                url=url,
+                error_detail=str(exc),
+            )
+            return {
+                "ok": False,
+                "doc_id": doc_id,
+                "method": method,
+                "status": 0,
+                "error": f"invalid URL: {exc}",
+            }
+
+        except (ConnectionError, aiohttp.ClientError) as exc:
+            elapsed_ms = (time.monotonic() - t_start) * 1000
+            ic(
+                "send: generic connection/client error",
+                doc_id,
+                type(exc).__name__,
+                str(exc),
+            )
             await self._record_time(elapsed_ms)
             if self._metrics:
                 self._metrics.inc("output_errors_total")
@@ -460,6 +709,7 @@ class OutputForwarder:
                 http_method=method,
                 url=url,
                 elapsed_ms=round(elapsed_ms, 1),
+                error_detail=f"{type(exc).__name__}: {exc}",
             )
             if self._halt_on_failure:
                 if self._metrics:
@@ -489,6 +739,8 @@ class OutputForwarder:
         if self._mode != "http" or not self._target_url:
             return True
         assert self._http is not None
+        probe_url = self._hc_url or self._target_url
+        ic("test_reachable", probe_url)
         try:
             t_start = time.monotonic()
             kwargs: dict = {
@@ -499,11 +751,10 @@ class OutputForwarder:
             }
             if self._ssl_ctx is not None:
                 kwargs["ssl"] = self._ssl_ctx
-            resp = await self._http.request(
-                "GET", self._hc_url or self._target_url, **kwargs
-            )
+            resp = await self._http.request("GET", probe_url, **kwargs)
             elapsed_ms = (time.monotonic() - t_start) * 1000
             resp.release()
+            ic("test_reachable: OK", resp.status, round(elapsed_ms, 1))
             log_event(
                 logger,
                 "info",
@@ -515,13 +766,48 @@ class OutputForwarder:
                 elapsed_ms=round(elapsed_ms, 1),
             )
             return True
-        except Exception as exc:
+        except aiohttp.ClientConnectorError as exc:
+            ic("test_reachable: connection failed", type(exc).__name__, str(exc))
             log_event(
                 logger,
                 "error",
                 "HTTP",
-                "output endpoint unreachable: %s" % exc,
+                "output endpoint unreachable (DNS / refused / unreachable)",
                 url=self._target_url,
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
+            return False
+        except aiohttp.ClientSSLError as exc:
+            ic("test_reachable: SSL error", str(exc))
+            log_event(
+                logger,
+                "error",
+                "HTTP",
+                "output endpoint SSL/TLS error",
+                url=self._target_url,
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
+            return False
+        except asyncio.TimeoutError:
+            ic("test_reachable: timeout", probe_url)
+            log_event(
+                logger,
+                "error",
+                "HTTP",
+                "output endpoint timed out",
+                url=self._target_url,
+                error_detail=f"timeout after {self._hc_timeout}s",
+            )
+            return False
+        except (ConnectionError, aiohttp.ClientError, OSError) as exc:
+            ic("test_reachable: error", type(exc).__name__, str(exc))
+            log_event(
+                logger,
+                "error",
+                "HTTP",
+                "output endpoint unreachable",
+                url=self._target_url,
+                error_detail=f"{type(exc).__name__}: {exc}",
             )
             return False
 
@@ -579,6 +865,7 @@ class OutputForwarder:
             return True
         if self._metrics:
             self._metrics.inc("health_probes_total")
+        ic("_health_check", self._hc_method, self._hc_url)
         try:
             timeout = aiohttp.ClientTimeout(total=self._hc_timeout)
             kwargs: dict = {
@@ -595,6 +882,7 @@ class OutputForwarder:
             resp.release()
             if self._metrics:
                 self._metrics.record_health_probe_time(elapsed_ms / 1000)
+            ic("_health_check: response", resp.status, round(elapsed_ms, 1))
             log_event(
                 logger,
                 "debug",
@@ -605,15 +893,56 @@ class OutputForwarder:
                 elapsed_ms=round(elapsed_ms, 1),
             )
             return resp.status < 500
-        except Exception as exc:
+        except asyncio.TimeoutError:
+            ic("_health_check: timeout", self._hc_url)
             if self._metrics:
                 self._metrics.inc("health_probe_failures_total")
             log_event(
                 logger,
                 "warn",
                 "HTTP",
-                "health check failed: %s" % exc,
+                "health check timed out",
                 url=self._hc_url,
+                error_detail=f"timeout after {self._hc_timeout}s",
+            )
+            return False
+        except aiohttp.ClientConnectorError as exc:
+            ic("_health_check: connection error", type(exc).__name__, str(exc))
+            if self._metrics:
+                self._metrics.inc("health_probe_failures_total")
+            log_event(
+                logger,
+                "warn",
+                "HTTP",
+                "health check connection failed",
+                url=self._hc_url,
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
+            return False
+        except aiohttp.ClientSSLError as exc:
+            ic("_health_check: SSL error", str(exc))
+            if self._metrics:
+                self._metrics.inc("health_probe_failures_total")
+            log_event(
+                logger,
+                "warn",
+                "HTTP",
+                "health check SSL/TLS error",
+                url=self._hc_url,
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
+            return False
+        except (ConnectionError, aiohttp.ClientError, OSError) as exc:
+            ic("_health_check: error", type(exc).__name__, str(exc))
+            if self._metrics:
+                self._metrics.inc("health_probe_failures_total")
+            log_event(
+                logger,
+                "warn",
+                "HTTP",
+                "health check failed",
+                url=self._hc_url,
+                error_detail=f"{type(exc).__name__}: {exc}",
             )
             return False
 
@@ -667,6 +996,7 @@ class DeadLetterQueue:
         return self._use_cbl or self._path is not None
 
     async def write(self, doc: dict, result: dict, seq: str | int) -> None:
+        ic("DLQ.write", result.get("doc_id"), seq, "cbl" if self._use_cbl else "file")
         if self._use_cbl and self._store:
             self._store.add_dlq_entry(
                 doc_id=result.get("doc_id", "unknown"),
@@ -699,9 +1029,23 @@ class DeadLetterQueue:
             "time": int(time.time()),
             "doc": doc,
         }
-        async with self._lock:
-            with open(self._path, "a") as f:
-                f.write(json.dumps(entry) + "\n")
+        try:
+            async with self._lock:
+                with open(self._path, "a") as f:
+                    f.write(json.dumps(entry) + "\n")
+        except OSError as exc:
+            ic("DLQ.write: file write failed", self._path, exc)
+            log_event(
+                logger,
+                "error",
+                "DLQ",
+                "failed to write DLQ entry to file",
+                doc_id=result.get("doc_id"),
+                seq=str(seq),
+                storage="file",
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
+            return
         log_event(
             logger,
             "warn",
@@ -715,6 +1059,7 @@ class DeadLetterQueue:
 
     async def purge(self, dlq_id: str) -> None:
         """Remove a DLQ entry after successful reprocessing."""
+        ic("DLQ.purge", dlq_id, "cbl" if self._use_cbl else "file")
         if self._use_cbl and self._store:
             self._store.delete_dlq_entry(dlq_id)
             log_event(

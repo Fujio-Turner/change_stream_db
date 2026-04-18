@@ -9,6 +9,7 @@
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
   <script src="/static/js/tailwind.js"></script>
+  <script src="/static/js/ai-assist.js"></script>
   <script>
     (function(){
       var t = localStorage.getItem('cw_theme') || 'dark';
@@ -1498,17 +1499,12 @@ function wizChooseMode(mode) {
 }
 
 function wizSwitchAITab(tab) {
-  document.getElementById('wizAiTabExport').classList.toggle('tab-active', tab === 'export');
-  document.getElementById('wizAiTabImport').classList.toggle('tab-active', tab === 'import');
-  document.getElementById('wizAiPanelExport').classList.toggle('hidden', tab !== 'export');
-  document.getElementById('wizAiPanelImport').classList.toggle('hidden', tab !== 'import');
+  aiSwitchTab(tab, 'wizAiTabExport', 'wizAiTabImport', 'wizAiPanelExport', 'wizAiPanelImport');
 }
 
 function wizBuildAIContext() {
-  // 1. Sample document
   var sampleDoc = wizardSampleDoc || null;
 
-  // 2. Current target tables (if introspected from DB in step 2)
   var targetTables = [];
   for (var i = 0; i < wizTables.length; i++) {
     var t = wizTables[i];
@@ -1528,139 +1524,41 @@ function wizBuildAIContext() {
     });
   }
 
-  // 3. Source fields
   var sourceFieldsList = wizSourceFieldsList.map(function(f) {
     return { path: f.path, type: f.type, sample_value: f.sample };
   });
 
-  // 4. Transforms grouped by category
-  var transformsByCategory = {
-    'String': TRANSFORMS.slice(1, 20),
-    'Numeric': TRANSFORMS.slice(20, 29),
-    'Date / Time': TRANSFORMS.slice(29, 38),
-    'Array / Object': TRANSFORMS.slice(38, 42),
-    'Encoding / Hash': TRANSFORMS.slice(42, 50),
-    'Conditional': TRANSFORMS.slice(50)
-  };
-  for (var cat in transformsByCategory) {
-    transformsByCategory[cat] = transformsByCategory[cat].filter(function(t) { return t; });
-  }
-
-  // 5. Source match
   var matchField = document.getElementById('wizMatchField').value.trim();
   var matchValue = document.getElementById('wizMatchValue').value.trim();
 
-  // 6. Output mode
   var outputMode = wizOutputMode === 'db' ? 'tables' : 'json';
 
-  var context = {
-    _instructions: [
-      'You are generating a Changes Worker schema mapping JSON.',
-      'Return ONLY valid JSON — no markdown, no code fences.',
-      'Include an "_explanation" field (array of strings) explaining your reasoning.',
-      '',
-      '## How mappings work',
-      '',
-      'A mapping tells the Changes Worker how to transform a Couchbase/Sync Gateway document into SQL rows or a JSON object.',
-      '',
-      '### Tables mode (output_mode = "tables")',
-      '',
-      'The top-level object has:',
-      '  - "source": { "match": { "field": "<doc_field>", "value": "<value>" } }',
-      '  - "tables": [ ... ] — an ordered array of table definitions.',
-      '',
-      'Each table object has these EXACT fields:',
-      '  - "name" (string, REQUIRED): The SQL table name.',
-      '  - "primary_key" (string, REQUIRED): The primary key column.',
-      '  - "columns" (object, REQUIRED): Maps SQL column names to JSONPath expressions or transform objects.',
-      '  - "on_delete" (string): Usually "delete".',
-      '  - "parent" (string): For child tables — the parent table name.',
-      '  - "foreign_key" (object): For child tables — { "column": "<fk_col>", "references": "<parent_pk>" }.',
-      '  - "source_array" (string): For child tables — JSONPath to the source array.',
-      '  - "replace_strategy" (string): For child tables — usually "delete_insert".',
-      '',
-      '### Column value formats',
-      '  - Simple JSONPath: "$.field_name"',
-      '  - Transform object: { "path": "$.field_name", "transform": "uppercase()" }',
-      '',
-      '### JSONPath rules',
-      '  - Parent table columns: paths relative to root ("$._id", "$.status").',
-      '  - Child table columns: paths relative to each array element ("$.product_id", "$.qty").',
-      '  - Child FK referencing parent: still uses root path ("$._id").',
-      '',
-      '### Simple arrays',
-      '  Option A: Store as JSON string: { "path": "$.tags", "transform": "json_stringify()" }',
-      '  Option B: Child table with "source_array" and column "$" for the element value.',
-      '',
-      '### JSON mode (output_mode = "json")',
-      '  Use "output_format": "json" and "mapping": { "targetKey": "$.source.path" }.',
-      '',
-      '### Transforms',
-      '  Use from available_transforms. Only when type/format conversion is needed.'
-    ].join('\n'),
-    output_mode: outputMode,
-    source_match: (matchField && matchValue) ? { field: matchField, value: matchValue } : null,
-    sample_document: sampleDoc || '(no sample document — fetch one in Step 1)',
-    source_fields: sourceFieldsList.length ? sourceFieldsList : '(no sample loaded)',
-    target_tables: targetTables.length ? targetTables : '(no target tables — add manually or import from DB in Step 2)',
-    available_transforms: transformsByCategory,
-    response_format: {
-      _note: 'Return JSON matching this structure exactly. Always include _explanation.',
-      tables_mode_example: {
-        _explanation: ['Reasoning for each mapping decision...'],
-        source: { match: { field: 'type', value: 'order' } },
-        tables: [
-          { name: 'orders', primary_key: 'doc_id', columns: { doc_id: '$._id', status: '$.status' }, on_delete: 'delete' },
-          { name: 'order_items', primary_key: '', parent: 'orders', foreign_key: { column: 'order_doc_id', references: 'doc_id' }, source_array: '$.items', replace_strategy: 'delete_insert', columns: { order_doc_id: '$._id', product_id: '$.product_id' }, on_delete: 'delete' }
-        ]
-      },
-      json_mode_example: {
-        _explanation: ['Reasoning...'],
-        source: { match: { field: 'type', value: 'example' } },
-        output_format: 'json',
-        mapping: { targetKey: '$.source.path' }
-      }
-    }
-  };
-
-  return context;
+  return aiBuildContext({
+    sampleDoc: sampleDoc,
+    sourceFields: sourceFieldsList,
+    targetTables: targetTables,
+    outputMode: outputMode,
+    sourceMatch: (matchField && matchValue) ? { field: matchField, value: matchValue } : null,
+    jsonMappings: null,
+    transforms: TRANSFORMS
+  });
 }
 
 function wizCopyAIContext() {
-  var el = document.getElementById('wizAiContextOutput');
-  navigator.clipboard.writeText(el.value).then(function() {
-    // Brief visual feedback
+  aiCopy('wizAiContextOutput', function() {
     var btn = event.target;
     var orig = btn.textContent;
     btn.textContent = 'Copied!';
     setTimeout(function() { btn.textContent = orig; }, 1500);
-  }).catch(function() {
-    el.select();
-    document.execCommand('copy');
   });
 }
 
 function wizDownloadAIContext() {
-  var content = document.getElementById('wizAiContextOutput').value;
-  var blob = new Blob([content], { type: 'application/json' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'ai_mapping_context.json';
-  a.click();
-  URL.revokeObjectURL(a.href);
+  aiDownload('wizAiContextOutput', 'ai_mapping_context.json');
 }
 
 function wizUploadAIResponse(event) {
-  var file = event.target.files[0];
-  if (!file) return;
-  var reader = new FileReader();
-  reader.onload = function(e) {
-    document.getElementById('wizAiResponseInput').value = e.target.result;
-    document.getElementById('wizAiImportStatus').textContent = 'Loaded ' + file.name;
-    document.getElementById('wizAiImportStatus').className = 'text-sm mt-2 text-success';
-  };
-  reader.readAsText(file);
-  event.target.value = '';
+  aiUploadFile(event, 'wizAiResponseInput', 'wizAiImportStatus');
 }
 
 function wizImportAIResponse() {

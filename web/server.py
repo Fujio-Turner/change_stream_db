@@ -862,6 +862,301 @@ def _split_ddl_body(body: str) -> list[str]:
     return parts
 
 
+# --- Auto-Map API ---
+
+
+async def auto_map_columns(request):
+    """
+    Score-based auto-mapping of JSON source fields to SQL table columns.
+    POST body: {
+      "source_fields": [{"path": "$.order_date", "type": "string", "sample": "2024-09-15"}, ...],
+      "tables": [{"name": "orders", "columns": {"order_date": "date", "total": "numeric(10,2)"}}]
+    }
+    Returns: {"mappings": {"orders": {"order_date": "$.order_date", ...}}}
+    """
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return error_response("Invalid JSON")
+
+    src_fields = body.get("source_fields", [])
+    table_defs = body.get("tables", [])
+    if not src_fields or not table_defs:
+        return error_response("source_fields and tables are required")
+
+    result = _auto_map(src_fields, table_defs)
+    return json_response({"mappings": result})
+
+
+def _auto_map(src_fields: list, table_defs: list) -> dict:
+    import re
+    import difflib
+
+    def norm_tokens(name: str) -> list[str]:
+        s = re.sub(r"([a-z])([A-Z])", r"\1_\2", name).lower()
+        return [t for t in re.split(r"[^a-z0-9]+", s) if t]
+
+    def norm_compact(name: str) -> str:
+        return "".join(norm_tokens(name))
+
+    # Synonym dictionary for semantic matching without ML
+    SYNONYMS: dict[str, list[str]] = {
+        "cost": ["price", "amount", "fee", "rate", "charge"],
+        "price": ["cost", "amount", "fee", "rate", "charge"],
+        "amount": ["price", "cost", "total", "sum", "fee"],
+        "total": ["amount", "sum"],
+        "vendor": ["supplier", "provider", "merchant", "seller"],
+        "supplier": ["vendor", "provider", "merchant"],
+        "customer": ["client", "buyer", "patron", "account"],
+        "client": ["customer", "buyer", "patron"],
+        "user": ["account", "member", "person", "owner"],
+        "name": ["title", "label"],
+        "description": ["desc", "summary", "note", "details", "comment", "memo"],
+        "desc": ["description", "summary", "note"],
+        "created": ["created_at", "creation_date", "date_created"],
+        "updated": ["updated_at", "modified", "modified_at", "last_modified"],
+        "id": ["identifier", "key", "pk", "ref"],
+        "uuid": ["guid", "unique_id", "external_id"],
+        "email": ["mail", "email_address"],
+        "phone": ["tel", "telephone", "mobile", "cell", "fax"],
+        "qty": ["quantity", "count", "num", "units"],
+        "quantity": ["qty", "count", "num", "units"],
+        "status": ["state", "condition", "flag"],
+        "active": ["enabled", "is_active"],
+        "category": ["type", "kind", "class", "group"],
+        "type": ["kind", "category", "class"],
+        "city": ["town", "municipality", "locality"],
+        "zip": ["postal", "postal_code", "zipcode", "postcode"],
+        "country": ["nation", "country_code"],
+        "url": ["uri", "link", "href", "website"],
+        "image": ["img", "photo", "picture", "thumbnail", "avatar"],
+        "product": ["item", "sku", "goods", "article"],
+        "order": ["purchase", "transaction", "booking"],
+        "comment": ["remark", "feedback", "review", "note"],
+    }
+
+    SEMANTIC_GROUPS = [
+        {"id", "key", "identifier", "uuid", "guid"},
+        {"date", "time", "timestamp", "created", "updated", "modified", "datetime"},
+        {"name", "title", "label", "display"},
+        {"email", "mail"},
+        {"phone", "tel", "mobile", "fax"},
+        {"price", "cost", "amount", "total", "fee", "rate"},
+        {"qty", "quantity", "count", "num", "number"},
+        {"status", "state", "flag", "active", "enabled"},
+        {"desc", "description", "note", "notes", "comment", "summary"},
+        {"address", "street", "city", "zip", "postal", "country", "region"},
+    ]
+
+    FALSE_FRIENDS = [
+        ("id", "uuid"),
+        ("created", "updated"),
+        ("start", "end"),
+        ("first", "last"),
+        ("source", "target"),
+        ("min", "max"),
+        ("from", "to"),
+        ("width", "height"),
+        ("latitude", "longitude"),
+    ]
+
+    # Sniff patterns for data profiling
+    SNIFF_PATTERNS = [
+        (
+            "uuid",
+            re.compile(
+                r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I
+            ),
+        ),
+        ("iso_date", re.compile(r"^\d{4}-\d{2}-\d{2}")),
+        ("email", re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")),
+        ("url", re.compile(r"^https?://", re.I)),
+        ("phone", re.compile(r"^[+]?\d[\d\s\-()\.]{6,}$")),
+        ("bool_str", re.compile(r"^(true|false|yes|no|on|off|0|1)$", re.I)),
+    ]
+    SNIFF_AFFINITY: dict[str, list[str]] = {
+        "uuid": ["uuid", "varchar", "text", "char"],
+        "iso_date": ["date", "timestamp", "datetime"],
+        "email": ["varchar", "text"],
+        "url": ["varchar", "text"],
+        "phone": ["varchar", "text"],
+        "bool_str": ["boolean", "bool", "bit", "smallint"],
+    }
+
+    def sniff_value(sample: str) -> str | None:
+        if not sample:
+            return None
+        for name, pat in SNIFF_PATTERNS:
+            if pat.match(sample):
+                return name
+        return None
+
+    def sniff_type_boost(sample: str, sql_type: str) -> float:
+        if not sql_type:
+            return 0.0
+        fmt = sniff_value(sample)
+        if not fmt:
+            return 0.0
+        affinities = SNIFF_AFFINITY.get(fmt, [])
+        st = sql_type.lower()
+        for a in affinities:
+            if a in st:
+                return 0.2
+        if fmt == "iso_date" and re.search(r"int|serial", st):
+            return -0.15
+        if fmt == "uuid" and re.search(r"int|serial|numeric", st):
+            return -0.15
+        return 0.0
+
+    def synonym_score(col: str, field_leaf: str) -> float:
+        ct = norm_tokens(col)
+        ft = norm_tokens(field_leaf)
+        best = 0.0
+        for c in ct:
+            for f in ft:
+                if c == f:
+                    best = max(best, 1.0)
+                    continue
+                syns = SYNONYMS.get(c, [])
+                for syn in syns:
+                    if f in norm_tokens(syn):
+                        best = max(best, 0.85)
+                        break
+        return best
+
+    def name_similarity(col: str, field_leaf: str) -> float:
+        cc = norm_compact(col)
+        fc = norm_compact(field_leaf)
+        if not cc or not fc:
+            return 0.0
+        if cc == fc:
+            return 1.0
+        ratio = difflib.SequenceMatcher(None, cc, fc).ratio()
+        ct = set(norm_tokens(col))
+        ft = set(norm_tokens(field_leaf))
+        if ct and ft:
+            overlap = len(ct & ft) / max(len(ct), len(ft))
+            ratio = max(ratio, 0.5 + 0.4 * overlap)
+        return ratio
+
+    def type_compat(json_type: str, sample: str, sql_type: str) -> float:
+        if not sql_type:
+            return 0.5
+        st = sql_type.lower()
+        if json_type == "string":
+            if re.search(r"varchar|text|char|json", st):
+                return 0.8
+            if re.search(r"date|timestamp|time", st):
+                return 1.3 if (sample and re.match(r"\d{4}-\d{2}", sample)) else 0.6
+            return 0.3
+        if json_type == "number":
+            return (
+                1.0
+                if re.search(r"int|numeric|decimal|float|double|real|serial|money", st)
+                else 0.3
+            )
+        if json_type == "boolean":
+            return 1.2 if "bool" in st else (0.7 if re.search(r"int|bit", st) else 0.3)
+        return 0.3
+
+    def semantic_group_boost(col: str, field_leaf: str) -> float:
+        ct = set(norm_tokens(col))
+        ft = set(norm_tokens(field_leaf))
+        for group in SEMANTIC_GROUPS:
+            if ct & group and ft & group:
+                return 0.1
+        return 0.0
+
+    def path_context_score(col: str, field_path: str, tbl_name: str) -> float:
+        col_toks = norm_tokens(col)
+        segs = field_path.lstrip("$.").split(".")
+        if len(segs) < 2:
+            return 0.0
+        parent_toks = []
+        for s in segs[:-1]:
+            parent_toks.extend(norm_tokens(s.replace("[]", "")))
+        score = 0.0
+        for ct in col_toks:
+            for pt in parent_toks:
+                if ct == pt:
+                    score += 0.12
+                elif len(ct) > 2 and len(pt) > 2 and (ct in pt or pt in ct):
+                    score += 0.06
+                syns = SYNONYMS.get(ct, [])
+                for syn in syns:
+                    if pt in norm_tokens(syn):
+                        score += 0.08
+                        break
+        tbl_toks = norm_tokens(tbl_name)
+        for pt in parent_toks:
+            if pt in tbl_toks:
+                score += 0.05
+        return min(score, 0.25)
+
+    def false_friend_penalty(col: str, field_leaf: str) -> float:
+        ct = norm_tokens(col)
+        ft = norm_tokens(field_leaf)
+        for a, b in FALSE_FRIENDS:
+            col0, col1 = a in ct, b in ct
+            fld0, fld1 = a in ft, b in ft
+            if (col0 and fld1 and not fld0) or (col1 and fld0 and not fld1):
+                return -0.3
+        return 0.0
+
+    # Build field list
+    fields = []
+    for f in src_fields:
+        if f.get("type") in ("object", "array"):
+            continue
+        path = f.get("path", "")
+        segments = path.split(".")
+        leaf = segments[-1].replace("[]", "") if segments else ""
+        if leaf:
+            fields.append(
+                {
+                    "path": path,
+                    "leaf": leaf,
+                    "type": f.get("type", "string"),
+                    "sample": f.get("sample", ""),
+                }
+            )
+
+    result = {}
+    for tbl in table_defs:
+        tbl_name = tbl.get("name", "")
+        col_types = tbl.get("columns", {})
+        candidates = []
+        for col_name, sql_type in col_types.items():
+            for fld in fields:
+                ns = name_similarity(col_name, fld["leaf"])
+                syn = synonym_score(col_name, fld["leaf"])
+                best_name = max(ns, syn)
+                tc = type_compat(fld["type"], fld["sample"], sql_type or "")
+                sniff = sniff_type_boost(fld["sample"], sql_type or "")
+                sem = semantic_group_boost(col_name, fld["leaf"])
+                path_ctx = path_context_score(col_name, fld["path"], tbl_name)
+                ff = false_friend_penalty(col_name, fld["leaf"])
+                total = 0.45 * best_name + 0.2 * tc + sniff + sem + path_ctx + ff
+                if total >= 0.4:
+                    candidates.append(
+                        {"col": col_name, "path": fld["path"], "score": round(total, 4)}
+                    )
+
+        candidates.sort(key=lambda c: c["score"], reverse=True)
+        used_cols: set[str] = set()
+        used_paths: set[str] = set()
+        mapping = {}
+        for c in candidates:
+            if c["col"] not in used_cols and c["path"] not in used_paths:
+                mapping[c["col"]] = {"path": c["path"], "confidence": c["score"]}
+                used_cols.add(c["col"])
+                used_paths.add(c["path"])
+        if mapping:
+            result[tbl_name] = mapping
+
+    return result
+
+
 # --- Wizard API ---
 
 
@@ -1016,7 +1311,7 @@ async def validate_mapping(request):
         if not matched:
             return json_response({"matches": False, "ops": []})
 
-        ops = mapper.map_document(doc)
+        ops, _diag = mapper.map_document(doc)
         result_ops = []
         for op in ops:
             sql, params = op.to_sql()
@@ -1031,12 +1326,86 @@ async def validate_mapping(request):
                     "type": op.op_type,
                     "table": op.table,
                     "sql": sql,
-                    "params": safe_params,
+                    "params": params,
+                    "params_display": safe_params,
                 }
             )
-        return json_response({"matches": True, "ops": result_ops})
+
+        # Run EXPLAIN on each statement against the real database
+        explain_results = await _explain_ops(result_ops)
+        for ro, ex in zip(result_ops, explain_results):
+            ro["explain"] = ex
+            # Replace params with display-safe version for JSON response
+            ro["params"] = ro.pop("params_display")
+
+        all_ok = all(e.get("ok") for e in explain_results)
+        return json_response({"matches": True, "ops": result_ops, "explain_ok": all_ok})
     except Exception as exc:
         return error_response(str(exc), status=500)
+
+
+async def _explain_ops(ops: list[dict]) -> list[dict]:
+    """Run EXPLAIN on each SQL statement against the configured database.
+
+    Returns a list of dicts with ``ok``, ``plan`` (on success), or ``error``
+    (on failure) for each operation.
+    """
+    try:
+        if USE_CBL:
+            cfg = CBLStore().load_config() or {}
+        else:
+            cfg = json.loads(CONFIG_PATH.read_text())
+        db_cfg = cfg.get("output", {}).get("db", {})
+        engine = db_cfg.get("engine", "")
+    except Exception:
+        return [{"ok": None, "error": "Could not load config"}] * len(ops)
+
+    if engine != "postgres":
+        return [
+            {"ok": None, "error": f"EXPLAIN not supported for engine: {engine}"}
+        ] * len(ops)
+
+    try:
+        import asyncpg
+
+        ssl_ctx = None
+        if db_cfg.get("ssl"):
+            import ssl as _ssl
+
+            ssl_ctx = _ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = _ssl.CERT_NONE
+
+        conn = await asyncpg.connect(
+            host=db_cfg.get("host", "localhost"),
+            port=db_cfg.get("port", 5432),
+            database=db_cfg.get("database", ""),
+            user=db_cfg.get("username", "postgres"),
+            password=db_cfg.get("password", ""),
+            ssl=ssl_ctx,
+        )
+    except Exception as exc:
+        return [{"ok": None, "error": f"DB connect failed: {exc}"}] * len(ops)
+
+    results = []
+    try:
+        for op in ops:
+            sql = op["sql"]
+            params = op["params"]
+            try:
+                rows = await conn.fetch(f"EXPLAIN {sql}", *params)
+                plan = [r[0] for r in rows]
+                results.append({"ok": True, "plan": plan})
+            except Exception as exc:
+                err_msg = str(exc)
+                # Extract the most useful part of the error
+                if hasattr(exc, "message"):
+                    err_msg = exc.message
+                results.append({"ok": False, "error": err_msg})
+    finally:
+        await conn.close()
+
+    return results
 
 
 # --- App factory ---
@@ -1095,6 +1464,9 @@ def create_app():
     app.router.add_post("/api/db/test", db_test_connection)
     app.router.add_post("/api/db/introspect", db_introspect)
     app.router.add_post("/api/db/parse-ddl", parse_ddl)
+
+    # Auto-Map API
+    app.router.add_post("/api/auto-map", auto_map_columns)
 
     # Wizard API
     app.router.add_post("/api/wizard/test-source", wizard_test_source)

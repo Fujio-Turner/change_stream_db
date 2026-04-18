@@ -11,12 +11,36 @@ import abc
 import asyncio
 import json
 import logging
+import re
 import threading
 import time
 from collections import deque
 from pathlib import Path
 
+from pipeline_logging import log_event
+
+try:
+    from icecream import ic
+except ImportError:
+    ic = lambda *a, **kw: None  # noqa: E731
+
 logger = logging.getLogger("changes_worker")
+
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+
+
+def validate_identifier(name: str, context: str = "identifier") -> str:
+    """Validate a SQL identifier and return it unchanged.
+
+    Raises ValueError if the name contains characters that could enable
+    SQL injection.
+    """
+    if not _IDENT_RE.match(name):
+        raise ValueError(
+            f"Invalid SQL {context}: {name!r} — "
+            "only letters, digits, underscores, and $ are allowed"
+        )
+    return name
 
 
 # ── Per-engine / per-job metrics proxy ──────────────────────────────────────
@@ -201,6 +225,7 @@ class BaseOutputForwarder(abc.ABC):
         # Response time tracking (local to this forwarder)
         self._resp_times: deque[float] = deque(maxlen=10_000)
         self._lock = asyncio.Lock()
+        self._pool_lock = asyncio.Lock()
 
     def _init_metrics(self) -> None:
         """Call from subclass __init__ after the engine property is available."""
@@ -231,7 +256,9 @@ class BaseOutputForwarder(abc.ABC):
         Load schema mappers from CBL or filesystem.
         Called by connect() after the pool is created.
         """
-        from schema.mapper import SchemaMapper
+        from schema.mapper import MappingDiagnostics, SchemaMapper
+
+        new_mappers: list = []
 
         # Prefer CBL (single source of truth), fall back to filesystem
         cbl_loaded = False
@@ -249,13 +276,24 @@ class BaseOutputForwarder(abc.ABC):
                         continue
                     data = json.loads(raw) if isinstance(raw, str) else raw
                     data["_source_name"] = name
-                    self._mappers.append(SchemaMapper(data))
-                    logger.info("Loaded schema mapping from CBL: %s", name)
+                    new_mappers.append(SchemaMapper(data))
+                    log_event(
+                        logger,
+                        "info",
+                        "MAPPING",
+                        "loaded schema mapping from CBL",
+                        doc_id=name,
+                        storage="cbl",
+                    )
                 cbl_loaded = True
         except Exception as exc:
-            logger.warning(
-                "Could not load mappings from CBL (%s) – falling back to filesystem",
-                exc,
+            ic("_load_mappers: CBL fallback", type(exc).__name__, str(exc))
+            log_event(
+                logger,
+                "warn",
+                "MAPPING",
+                "could not load mappings from CBL – falling back to filesystem",
+                error_detail=f"{type(exc).__name__}: {exc}",
             )
 
         if not cbl_loaded:
@@ -269,35 +307,91 @@ class BaseOutputForwarder(abc.ABC):
                             raw = json.loads(f.read_text())
                             meta = raw.get("_meta", {})
                             if not meta.get("active", True):
-                                logger.info("Skipping inactive mapping: %s", f)
+                                log_event(
+                                    logger,
+                                    "info",
+                                    "MAPPING",
+                                    "skipping inactive mapping",
+                                    doc_id=str(f),
+                                )
                                 continue
-                        except (json.JSONDecodeError, OSError):
-                            pass
-                        self._mappers.append(SchemaMapper.from_file(f))
-                        logger.info("Loaded schema mapping from %s", f)
+                            new_mappers.append(SchemaMapper(raw))
+                            log_event(
+                                logger,
+                                "info",
+                                "MAPPING",
+                                "loaded schema mapping from file",
+                                doc_id=str(f),
+                                storage="file",
+                            )
+                        except (json.JSONDecodeError, OSError) as exc:
+                            log_event(
+                                logger,
+                                "warn",
+                                "MAPPING",
+                                "skipping invalid mapping file",
+                                doc_id=str(f),
+                                error_detail=f"{type(exc).__name__}: {exc}",
+                            )
+                            continue
+                        except Exception as exc:
+                            log_event(
+                                logger,
+                                "warn",
+                                "MAPPING",
+                                "skipping invalid mapping definition",
+                                doc_id=str(f),
+                                error_detail=f"{type(exc).__name__}: {exc}",
+                            )
+                            continue
             if self._mapping_file:
-                self._mappers.append(SchemaMapper.from_file(self._mapping_file))
-                logger.info("Loaded schema mapping from %s", self._mapping_file)
+                try:
+                    new_mappers.append(SchemaMapper.from_file(self._mapping_file))
+                    log_event(
+                        logger,
+                        "info",
+                        "MAPPING",
+                        "loaded schema mapping from file",
+                        doc_id=self._mapping_file,
+                        storage="file",
+                    )
+                except Exception as exc:
+                    log_event(
+                        logger,
+                        "warn",
+                        "MAPPING",
+                        "failed to load mapping file",
+                        doc_id=self._mapping_file,
+                        error_detail=f"{type(exc).__name__}: {exc}",
+                    )
 
-        if not self._mappers:
-            logger.warning("No schema mappings loaded – documents will be skipped")
+        if not new_mappers:
+            log_event(
+                logger,
+                "warn",
+                "MAPPING",
+                "no schema mappings loaded – documents will be skipped",
+            )
 
         # Warn about duplicate match filters (first-match wins)
         seen_matches: dict[str, str] = {}
-        for m in self._mappers:
+        for m in new_mappers:
             key = f"{m.match.get('field', '')}={m.match.get('value', '')}"
             src = m.mapping.get("_source_name", "?")
             if key in seen_matches:
-                logger.warning(
-                    "DUPLICATE MAPPING: '%s' and '%s' both match %s — "
-                    "only '%s' will be used (first-match wins)",
-                    seen_matches[key],
-                    src,
-                    key,
-                    seen_matches[key],
+                log_event(
+                    logger,
+                    "warn",
+                    "MAPPING",
+                    "duplicate mapping: '%s' and '%s' both match %s — "
+                    "only '%s' will be used (first-match wins)"
+                    % (seen_matches[key], src, key, seen_matches[key]),
                 )
             else:
                 seen_matches[key] = src
+
+        self._mappers = new_mappers
+        ic("_load_mappers: done", len(self._mappers))
 
     # ── Pool lifecycle (subclass hooks) ─────────────────────────────────
 
@@ -315,14 +409,28 @@ class BaseOutputForwarder(abc.ABC):
 
     async def connect(self) -> None:
         """Create the connection pool and load schema mappings."""
-        await self._connect_pool()
-        self._load_mappers()
+        ic("connect", self._engine)
+        async with self._pool_lock:
+            await self._connect_pool()
+            try:
+                self._load_mappers()
+            except Exception:
+                await self._close_pool()
+                raise
+        log_event(
+            logger, "info", "OUTPUT", "connection pool created", mode=self._engine
+        )
 
     async def close(self) -> None:
         """Close the connection pool and unregister metrics."""
-        await self._close_pool()
-        if self._metrics:
-            self._metrics.unregister()
+        ic("close", self._engine)
+        try:
+            async with self._pool_lock:
+                await self._close_pool()
+        finally:
+            if self._metrics:
+                self._metrics.unregister()
+        log_event(logger, "info", "OUTPUT", "connection pool closed", mode=self._engine)
 
     # ── SQL execution (subclass hook) ───────────────────────────────────
 
@@ -351,14 +459,26 @@ class BaseOutputForwarder(abc.ABC):
 
     async def test_reachable(self) -> bool:
         """Test that the database server is reachable."""
+        ic("test_reachable", self._engine)
         try:
             if not hasattr(self, "_pool") or getattr(self, "_pool", None) is None:
                 await self.connect()
             await self._test_connection()
-            logger.info("%s reachable", self._engine.upper())
+            ic("test_reachable: OK", self._engine)
+            log_event(logger, "info", "OUTPUT", "database reachable", mode=self._engine)
             return True
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            logger.error("%s unreachable: %s", self._engine.upper(), exc)
+            ic("test_reachable: FAIL", self._engine, type(exc).__name__, str(exc))
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "database unreachable",
+                mode=self._engine,
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
             return False
 
     # ── send() — the main document processing method ────────────────────
@@ -373,8 +493,9 @@ class BaseOutputForwarder(abc.ABC):
         Returns result dict with 'ok' bool plus 'retryable' and
         'error_class' on failure.
         """
+        ic("send", doc.get("_id", doc.get("id", "unknown")) if doc else "None", method)
         if doc is None:
-            logger.debug("Received None doc – skipping")
+            log_event(logger, "debug", "OUTPUT", "received None doc – skipping")
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {"ok": True, "doc_id": "unknown", "skipped": True}
@@ -383,7 +504,13 @@ class BaseOutputForwarder(abc.ABC):
         is_delete = method == "DELETE"
 
         if not self._mappers:
-            logger.warning("No schema mapping loaded – skipping doc %s", doc_id)
+            log_event(
+                logger,
+                "warn",
+                "MAPPING",
+                "no schema mapping loaded – skipping doc",
+                doc_id=doc_id,
+            )
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {
@@ -401,21 +528,37 @@ class BaseOutputForwarder(abc.ABC):
                 mapper = m
                 break
         if not mapper:
-            logger.debug("Doc %s does not match any mapping filter – skipping", doc_id)
+            log_event(
+                logger,
+                "debug",
+                "MAPPING",
+                "doc does not match any mapping filter – skipping",
+                doc_id=doc_id,
+            )
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
                 self._metrics.inc("mapper_skipped_total")
             return {"ok": True, "doc_id": doc_id, "skipped": True}
 
         try:
-            ops = mapper.map_document(doc, is_delete=is_delete)
+            ops, diag = mapper.map_document(doc, is_delete=is_delete)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             if self._metrics:
                 self._metrics.inc("output_requests_total")
                 self._metrics.inc("output_errors_total")
                 self._metrics.inc("mapper_errors_total")
                 self._metrics.inc("db_permanent_errors_total")
-            logger.error("Mapping error for doc %s: %s", doc_id, exc)
+            ic("send: mapping error", doc_id, type(exc).__name__, str(exc))
+            log_event(
+                logger,
+                "error",
+                "MAPPING",
+                "mapping error",
+                doc_id=doc_id,
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
             return {
                 "ok": False,
                 "doc_id": doc_id,
@@ -423,6 +566,16 @@ class BaseOutputForwarder(abc.ABC):
                 "retryable": False,
                 "error_class": "mapping",
             }
+
+        if diag.has_issues:
+            doc_rev = doc.get("_rev", doc.get("rev", "?"))
+            log_event(
+                logger,
+                "warn",
+                "MAPPING",
+                "mapping issues: %s" % diag.summary(),
+                doc_id=doc_id,
+            )
 
         if self._metrics:
             self._metrics.inc("mapper_matched_total")
@@ -435,7 +588,13 @@ class BaseOutputForwarder(abc.ABC):
         if self._dry_run:
             for op in ops:
                 sql, params = op.to_sql()
-                logger.info("[DRY RUN] %s | params=%s", sql, params)
+                log_event(
+                    logger,
+                    "info",
+                    "OUTPUT",
+                    "[DRY RUN] %s | params=%s" % (sql, params),
+                    doc_id=doc_id,
+                )
             return {"ok": True, "doc_id": doc_id, "ops": len(ops), "dry_run": True}
 
         # -- Execute with retry for transient errors --
@@ -456,12 +615,18 @@ class BaseOutputForwarder(abc.ABC):
                     self._metrics.inc("mapper_ops_total", len(ops))
                     self._metrics.record_output_response_time(elapsed_ms / 1000)
 
-                logger.debug(
-                    "%s: %d ops for %s (%.1fms)",
-                    self._engine.upper(),
-                    len(ops),
-                    doc_id,
-                    elapsed_ms,
+                doc_rev = doc.get("_rev", doc.get("rev", "?"))
+                ic("send: OK", doc_id, len(ops), round(elapsed_ms, 1))
+                log_event(
+                    logger,
+                    "debug",
+                    "OUTPUT",
+                    "executed SQL ops",
+                    doc_id=doc_id,
+                    operation="DELETE" if is_delete else "UPSERT",
+                    elapsed_ms=round(elapsed_ms, 1),
+                    mode=self._engine,
+                    http_method=method,
                 )
                 return {
                     "ok": True,
@@ -470,6 +635,8 @@ class BaseOutputForwarder(abc.ABC):
                     "elapsed_ms": round(elapsed_ms, 1),
                 }
 
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
                 last_exc = exc
                 eclass = self._error_class(exc)
@@ -480,12 +647,21 @@ class BaseOutputForwarder(abc.ABC):
                         self._metrics.inc("output_requests_total")
                         self._metrics.inc("output_errors_total")
                         self._metrics.inc("db_permanent_errors_total")
-                    logger.error(
-                        "%s permanent error for doc %s [%s]: %s",
-                        self._engine.upper(),
+                    ic(
+                        "send: permanent error",
                         doc_id,
                         eclass,
-                        exc,
+                        type(exc).__name__,
+                        str(exc),
+                    )
+                    log_event(
+                        logger,
+                        "error",
+                        "OUTPUT",
+                        "permanent error",
+                        doc_id=doc_id,
+                        mode=self._engine,
+                        error_detail=f"{type(exc).__name__}: {exc}",
                     )
 
                     if self._halt_on_failure:
@@ -509,30 +685,58 @@ class BaseOutputForwarder(abc.ABC):
 
                 if eclass == "connection":
                     try:
-                        logger.warning(
-                            "%s connection error – reconnecting pool "
-                            "(attempt %d/%d): %s",
-                            self._engine.upper(),
+                        ic(
+                            "send: connection error, reconnecting",
+                            doc_id,
                             attempt,
                             self._max_retries,
-                            exc,
+                        )
+                        log_event(
+                            logger,
+                            "warn",
+                            "OUTPUT",
+                            "connection error – reconnecting pool",
+                            doc_id=doc_id,
+                            mode=self._engine,
+                            attempt=attempt,
+                            error_detail=f"{type(exc).__name__}: {exc}",
                         )
                         await self._reconnect_pool()
                         if self._metrics:
                             self._metrics.inc("db_pool_reconnects_total")
                     except Exception as reconn_exc:
-                        logger.error("Pool reconnect failed: %s", reconn_exc)
+                        ic(
+                            "send: pool reconnect failed",
+                            type(reconn_exc).__name__,
+                            str(reconn_exc),
+                        )
+                        log_event(
+                            logger,
+                            "error",
+                            "OUTPUT",
+                            "pool reconnect failed",
+                            mode=self._engine,
+                            error_detail=f"{type(reconn_exc).__name__}: {reconn_exc}",
+                        )
                         if attempt == self._max_retries:
                             break
                 else:
-                    logger.warning(
-                        "%s transient error for doc %s [%s] (attempt %d/%d): %s",
-                        self._engine.upper(),
+                    ic(
+                        "send: transient error",
                         doc_id,
                         eclass,
                         attempt,
                         self._max_retries,
-                        exc,
+                    )
+                    log_event(
+                        logger,
+                        "warn",
+                        "OUTPUT",
+                        "transient error",
+                        doc_id=doc_id,
+                        mode=self._engine,
+                        attempt=attempt,
+                        error_detail=f"{type(exc).__name__}: {exc}",
                     )
 
                 if attempt < self._max_retries:
@@ -548,13 +752,18 @@ class BaseOutputForwarder(abc.ABC):
             self._metrics.inc("output_requests_total")
             self._metrics.inc("output_errors_total")
             self._metrics.inc("db_retry_exhausted_total")
-        logger.error(
-            "%s retries exhausted for doc %s [%s] after %d attempts: %s",
-            self._engine.upper(),
-            doc_id,
-            eclass,
-            self._max_retries,
-            last_exc,
+        ic("send: retries exhausted", doc_id, eclass, self._max_retries)
+        log_event(
+            logger,
+            "error",
+            "OUTPUT",
+            "retries exhausted",
+            doc_id=doc_id,
+            mode=self._engine,
+            attempt=self._max_retries,
+            error_detail=f"{type(last_exc).__name__}: {last_exc}"
+            if last_exc
+            else "unknown",
         )
 
         if self._halt_on_failure:
@@ -582,11 +791,11 @@ class BaseOutputForwarder(abc.ABC):
         avg = sum(self._resp_times) / n
         lo = min(self._resp_times)
         hi = max(self._resp_times)
-        logger.info(
-            "%s stats: %d ops | avg=%.1fms | min=%.1fms | max=%.1fms",
-            self._engine.upper(),
-            n,
-            avg,
-            lo,
-            hi,
+        log_event(
+            logger,
+            "info",
+            "OUTPUT",
+            "%s stats: %d ops | avg=%.1fms | min=%.1fms | max=%.1fms"
+            % (self._engine.upper(), n, avg, lo, hi),
+            mode=self._engine,
         )
