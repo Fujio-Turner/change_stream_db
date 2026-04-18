@@ -15,6 +15,11 @@ import logging
 from pathlib import Path
 from typing import Any  # noqa: F401
 
+try:
+    from icecream import ic
+except ImportError:
+    ic = lambda *a, **kw: None  # noqa: E731
+
 logger = logging.getLogger("changes_worker")
 
 

@@ -171,22 +171,46 @@
           </label>
           <div class="form-control" id="active_only_wrap">
             <label class="label cursor-pointer justify-start gap-4">
-              <span class="label-text">Active Only</span>
+              <span class="label-text flex items-center gap-2">
+                Active Only
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="Couchbase product feature only (Sync Gateway, App Services, Edge Server). When enabled the _changes feed excludes deleted and removed documents. Not supported by CouchDB.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
               <input type="checkbox" id="changes_feed_active_only" class="toggle toggle-success" />
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
-              <span class="label-text">Include Docs</span>
+              <span class="label-text flex items-center gap-2">
+                Include Docs
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="Optimization for small documents (~512 bytes or less). Embeds full document bodies directly in the _changes response to reduce network round-trips. When off (default), documents are fetched separately via _bulk_get in batches.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
               <input type="checkbox" id="changes_feed_include_docs" class="toggle toggle-success" />
             </label>
           </div>
           <label class="form-control w-full" id="channels_wrap">
-            <div class="label"><span class="label-text">Channels</span></div>
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Channels
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="Server-side filter for the _changes feed. Only documents belonging to the listed channels are returned. Leave empty to receive all changes. Couchbase Sync Gateway, App Services, and Edge Server only – not supported by CouchDB.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
             <input type="text" id="changes_feed_channels" class="input input-bordered w-full" placeholder="Type a channel and press Enter" />
           </label>
           <label class="form-control w-full">
-            <div class="label"><span class="label-text">Throttle Feed</span></div>
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Throttle Feed
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="Artificial delay in seconds inserted between _changes poll cycles. Use to reduce load on the source server when near-real-time processing is not required. 0 = no throttle (default).">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
             <input type="number" id="changes_feed_throttle_feed" class="input input-bordered w-full" min="0" />
           </label>
           <label class="form-control w-full">

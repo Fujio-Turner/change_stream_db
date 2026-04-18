@@ -11,9 +11,16 @@ Oracle-specific SQL:
   - Identifiers are double-quoted (same as PostgreSQL)
 """
 
+import asyncio
 import logging
 
 from db.db_base import BaseOutputForwarder
+from pipeline_logging import log_event
+
+try:
+    from icecream import ic
+except ImportError:
+    ic = lambda *a, **kw: None  # noqa: E731
 
 logger = logging.getLogger("changes_worker")
 
@@ -87,12 +94,14 @@ class OracleOutputForwarder(BaseOutputForwarder):
             self._dsn = f"{self._host}:{self._port}/{self._database}"
 
         self._pool: "oracledb.AsyncConnectionPool | None" = None
+        self._pool_lock = asyncio.Lock()
 
         self._init_metrics()
 
     # ── Pool lifecycle ──────────────────────────────────────────────────
 
     async def _connect_pool(self) -> None:
+        ic("_connect_pool", self._dsn, self._pool_min, self._pool_max)
         self._pool = oracledb.create_pool_async(
             user=self._user,
             password=self._password,
@@ -100,22 +109,25 @@ class OracleOutputForwarder(BaseOutputForwarder):
             min=self._pool_min,
             max=self._pool_max,
         )
-        logger.info(
-            "Oracle pool created: %s (pool %d–%d)",
-            self._dsn,
-            self._pool_min,
-            self._pool_max,
+        log_event(
+            logger, "info", "OUTPUT",
+            "Oracle pool created",
+            host=self._dsn,
+            mode="db",
         )
 
     async def _close_pool(self) -> None:
-        if self._pool:
-            await self._pool.close()
-            logger.info("Oracle pool closed")
+        ic("_close_pool")
+        pool, self._pool = self._pool, None
+        if pool:
+            await pool.close()
+            log_event(logger, "info", "OUTPUT", "Oracle pool closed", mode="db")
 
     async def _reconnect_pool(self) -> None:
-        await self._close_pool()
-        await self._connect_pool()
-        self._load_mappers()
+        ic("_reconnect_pool")
+        async with self._pool_lock:
+            await self._close_pool()
+            await self._connect_pool()
 
     # ── Oracle SQL generation helpers ───────────────────────────────────
 
@@ -179,13 +191,26 @@ class OracleOutputForwarder(BaseOutputForwarder):
     # ── SQL execution ───────────────────────────────────────────────────
 
     async def _execute_ops(self, ops: list) -> None:
-        async with self._pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                for op in ops:
-                    sql, params = self._op_to_oracle_sql(op)
-                    logger.debug("SQL: %s | params=%s", sql, params)
-                    await cur.execute(sql, params)
-            await conn.commit()
+        pool = self._pool
+        if pool is None:
+            raise ConnectionError("Oracle pool is not connected")
+        ic("_execute_ops", len(ops))
+        async with pool.acquire() as conn:
+            try:
+                async with conn.cursor() as cur:
+                    for op in ops:
+                        sql, params = self._op_to_oracle_sql(op)
+                        log_event(
+                            logger, "debug", "OUTPUT",
+                            "executing SQL",
+                            operation=op.op_type,
+                            mode="db",
+                        )
+                        await cur.execute(sql, params)
+                await conn.commit()
+            except Exception:
+                await conn.rollback()
+                raise
 
     # ── Error classification ────────────────────────────────────────────
 
@@ -226,10 +251,19 @@ class OracleOutputForwarder(BaseOutputForwarder):
     # ── Health check ────────────────────────────────────────────────────
 
     async def _test_connection(self) -> None:
-        async with self._pool.acquire() as conn:
+        pool = self._pool
+        if pool is None:
+            raise ConnectionError("Oracle pool is not connected")
+        async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("SELECT 1 FROM DUAL")
-        logger.info("Oracle reachable: %s", self._dsn)
+        ic("_test_connection: OK", self._dsn)
+        log_event(
+            logger, "info", "OUTPUT",
+            "Oracle reachable",
+            host=self._dsn,
+            mode="db",
+        )
 
 
 # ── Introspection (standalone functions, not part of the forwarder) ──────
@@ -278,110 +312,119 @@ async def introspect_tables(ora_cfg: dict) -> list[dict]:
         schema = (ora_cfg.get("schema", "") or ora_cfg.get("user", "")).upper()
 
         cur = conn.cursor()
-
-        # Get all tables
-        await cur.execute(
-            "SELECT table_name FROM all_tables WHERE owner = :1 ORDER BY table_name",
-            [schema],
-        )
-        table_rows = await cur.fetchall()
-
-        result = []
-        for (table_name,) in table_rows:
-            # Get columns
+        try:
+            # Get all tables
             await cur.execute(
-                "SELECT column_name, data_type, data_length, data_precision, "
-                "data_scale, nullable, data_default "
-                "FROM all_tab_columns "
-                "WHERE owner = :1 AND table_name = :2 "
-                "ORDER BY column_id",
-                [schema, table_name],
+                "SELECT table_name FROM all_tables WHERE owner = :1 ORDER BY table_name",
+                [schema],
             )
-            col_rows = await cur.fetchall()
+            table_rows = await cur.fetchall()
 
-            columns = []
-            for (
-                col_name,
-                data_type,
-                data_length,
-                data_precision,
-                data_scale,
-                nullable,
-                default_val,
-            ) in col_rows:
-                display_type = data_type
-                if data_type in ("NUMBER",) and data_precision is not None:
-                    display_type = f"{data_type}({data_precision},{data_scale or 0})"
-                elif data_type in ("VARCHAR2", "CHAR", "NVARCHAR2", "NCHAR", "RAW"):
-                    display_type = f"{data_type}({data_length})"
+            result = []
+            for (table_name,) in table_rows:
+                # Get columns
+                await cur.execute(
+                    "SELECT column_name, data_type, data_length, data_precision, "
+                    "data_scale, nullable, data_default "
+                    "FROM all_tab_columns "
+                    "WHERE owner = :1 AND table_name = :2 "
+                    "ORDER BY column_id",
+                    [schema, table_name],
+                )
+                col_rows = await cur.fetchall()
 
-                columns.append(
+                columns = []
+                for (
+                    col_name,
+                    data_type,
+                    data_length,
+                    data_precision,
+                    data_scale,
+                    nullable,
+                    default_val,
+                ) in col_rows:
+                    display_type = data_type
+                    if data_type in ("NUMBER",) and data_precision is not None:
+                        display_type = (
+                            f"{data_type}({data_precision},{data_scale or 0})"
+                        )
+                    elif data_type in (
+                        "VARCHAR2",
+                        "CHAR",
+                        "NVARCHAR2",
+                        "NCHAR",
+                        "RAW",
+                    ):
+                        display_type = f"{data_type}({data_length})"
+
+                    columns.append(
+                        {
+                            "name": col_name,
+                            "type": data_type,
+                            "display_type": display_type,
+                            "nullable": nullable == "Y",
+                            "default": default_val.strip() if default_val else None,
+                        }
+                    )
+
+                # Get primary key columns
+                await cur.execute(
+                    "SELECT cols.column_name "
+                    "FROM all_constraints cons "
+                    "JOIN all_cons_columns cols "
+                    "  ON cons.constraint_name = cols.constraint_name "
+                    "  AND cons.owner = cols.owner "
+                    "WHERE cons.owner = :1 AND cons.table_name = :2 "
+                    "  AND cons.constraint_type = 'P' "
+                    "ORDER BY cols.position",
+                    [schema, table_name],
+                )
+                pk_rows = await cur.fetchall()
+                pk_cols = [r[0] for r in pk_rows]
+
+                # Get foreign keys
+                await cur.execute(
+                    "SELECT a.column_name, "
+                    "  c_pk.table_name AS references_table, "
+                    "  b.column_name AS references_column "
+                    "FROM all_cons_columns a "
+                    "JOIN all_constraints c "
+                    "  ON a.constraint_name = c.constraint_name "
+                    "  AND a.owner = c.owner "
+                    "JOIN all_constraints c_pk "
+                    "  ON c.r_constraint_name = c_pk.constraint_name "
+                    "  AND c.r_owner = c_pk.owner "
+                    "JOIN all_cons_columns b "
+                    "  ON c_pk.constraint_name = b.constraint_name "
+                    "  AND c_pk.owner = b.owner "
+                    "  AND a.position = b.position "
+                    "WHERE c.owner = :1 AND c.table_name = :2 "
+                    "  AND c.constraint_type = 'R'",
+                    [schema, table_name],
+                )
+                fk_rows = await cur.fetchall()
+                fks = [
                     {
-                        "name": col_name,
-                        "type": data_type,
-                        "display_type": display_type,
-                        "nullable": nullable == "Y",
-                        "default": default_val.strip() if default_val else None,
+                        "column": r[0],
+                        "references_table": r[1],
+                        "references_column": r[2],
+                    }
+                    for r in fk_rows
+                ]
+
+                result.append(
+                    {
+                        "table_name": table_name,
+                        "schema": schema,
+                        "columns": columns,
+                        "primary_key": pk_cols,
+                        "foreign_keys": fks,
                     }
                 )
 
-            # Get primary key columns
-            await cur.execute(
-                "SELECT cols.column_name "
-                "FROM all_constraints cons "
-                "JOIN all_cons_columns cols "
-                "  ON cons.constraint_name = cols.constraint_name "
-                "  AND cons.owner = cols.owner "
-                "WHERE cons.owner = :1 AND cons.table_name = :2 "
-                "  AND cons.constraint_type = 'P' "
-                "ORDER BY cols.position",
-                [schema, table_name],
-            )
-            pk_rows = await cur.fetchall()
-            pk_cols = [r[0] for r in pk_rows]
-
-            # Get foreign keys
-            await cur.execute(
-                "SELECT a.column_name, "
-                "  c_pk.table_name AS references_table, "
-                "  b.column_name AS references_column "
-                "FROM all_cons_columns a "
-                "JOIN all_constraints c "
-                "  ON a.constraint_name = c.constraint_name "
-                "  AND a.owner = c.owner "
-                "JOIN all_constraints c_pk "
-                "  ON c.r_constraint_name = c_pk.constraint_name "
-                "  AND c.r_owner = c_pk.owner "
-                "JOIN all_cons_columns b "
-                "  ON c_pk.constraint_name = b.constraint_name "
-                "  AND c_pk.owner = b.owner "
-                "  AND a.position = b.position "
-                "WHERE c.owner = :1 AND c.table_name = :2 "
-                "  AND c.constraint_type = 'R'",
-                [schema, table_name],
-            )
-            fk_rows = await cur.fetchall()
-            fks = [
-                {
-                    "column": r[0],
-                    "references_table": r[1],
-                    "references_column": r[2],
-                }
-                for r in fk_rows
-            ]
-
-            result.append(
-                {
-                    "table_name": table_name,
-                    "schema": schema,
-                    "columns": columns,
-                    "primary_key": pk_cols,
-                    "foreign_keys": fks,
-                }
-            )
-
-        await cur.close()
-        return result
+            return result
+        finally:
+            await cur.close()
     finally:
         await conn.close()
 

@@ -10,6 +10,11 @@ import threading
 from pipeline_logging import log_event
 
 try:
+    from icecream import ic
+except ImportError:
+    ic = lambda *a, **kw: None  # noqa: E731
+
+try:
     from CouchbaseLite.Database import Database, DatabaseConfiguration
     from CouchbaseLite.Document import MutableDocument
     from CouchbaseLite._PyCBL import ffi, lib
@@ -70,11 +75,13 @@ def get_db():
     """Open or return the singleton CBL database handle."""
     global _db
     if _db is None:
+        ic("get_db: opening", CBL_DB_NAME, CBL_DB_DIR)
         os.makedirs(CBL_DB_DIR, exist_ok=True)
         config = DatabaseConfiguration(CBL_DB_DIR)
         t0 = time.monotonic()
         _db = Database(CBL_DB_NAME, config)
         elapsed = (time.monotonic() - t0) * 1000
+        ic("get_db: opened", CBL_DB_NAME, round(elapsed, 1))
         log_event(
             logger,
             "info",
@@ -93,6 +100,7 @@ def close_db():
     """Close the singleton CBL database handle."""
     global _db
     if _db is not None:
+        ic("close_db: closing", CBL_DB_NAME)
         t0 = time.monotonic()
         _db.close()
         elapsed = (time.monotonic() - t0) * 1000
@@ -225,6 +233,7 @@ class CBLStore:
     # ── Config ────────────────────────────────────────────────
 
     def load_config(self) -> dict | None:
+        ic("load_config: entry")
         t0 = time.monotonic()
         doc = _coll_get_doc(self.db, COLL_CONFIG, "config")
         elapsed = (time.monotonic() - t0) * 1000
@@ -267,6 +276,7 @@ class CBLStore:
         return None
 
     def save_config(self, cfg: dict) -> None:
+        ic("save_config: entry")
         t0 = time.monotonic()
         doc = _coll_get_mutable_doc(self.db, COLL_CONFIG, "config")
         if not doc:
@@ -307,6 +317,7 @@ class CBLStore:
 
     def load_checkpoint(self, uuid: str) -> dict | None:
         doc_id = f"checkpoint:{uuid}"
+        ic("load_checkpoint: entry", uuid, doc_id)
         t0 = time.monotonic()
         doc = _coll_get_doc(self.db, COLL_CHECKPOINTS, doc_id)
         elapsed = (time.monotonic() - t0) * 1000
@@ -344,6 +355,7 @@ class CBLStore:
 
     def save_checkpoint(self, uuid: str, seq: str, client_id: str, remote: int) -> None:
         doc_id = f"checkpoint:{uuid}"
+        ic("save_checkpoint: entry", uuid, seq)
         t0 = time.monotonic()
         doc = _coll_get_mutable_doc(self.db, COLL_CHECKPOINTS, doc_id)
         is_new = doc is None
@@ -452,6 +464,7 @@ class CBLStore:
 
     def save_mapping(self, name: str, content: str) -> None:
         doc_id = f"mapping:{name}"
+        ic("save_mapping: entry", doc_id)
         t0 = time.monotonic()
         doc = _coll_get_mutable_doc(self.db, COLL_MAPPINGS, doc_id)
         is_new = doc is None
@@ -505,6 +518,7 @@ class CBLStore:
 
     def delete_mapping(self, name: str) -> None:
         doc_id = f"mapping:{name}"
+        ic("delete_mapping: entry", doc_id)
         doc = _coll_get_doc(self.db, COLL_MAPPINGS, doc_id)
         if not doc:
             log_event(
@@ -539,6 +553,7 @@ class CBLStore:
     def add_dlq_entry(
         self, doc_id: str, seq: str, method: str, status: int, error: str, doc: dict
     ) -> None:
+        ic("add_dlq_entry: entry", doc_id)
         ts = int(time.time())
         dlq_id = f"dlq:{doc_id}:{ts}"
         t0 = time.monotonic()
@@ -656,6 +671,7 @@ class CBLStore:
         )
 
     def delete_dlq_entry(self, dlq_id: str) -> None:
+        ic("delete_dlq_entry: entry", dlq_id)
         doc = _coll_get_doc(self.db, COLL_DLQ, dlq_id)
         if not doc:
             return
@@ -851,6 +867,7 @@ class CBLMaintenanceScheduler:
     def _run_loop(self) -> None:
         while not self._stop_event.wait(timeout=self.interval_seconds):
             try:
+                ic("_run_loop: before maintenance")
                 store = CBLStore()
                 info = store.db_info()
                 log_event(
@@ -862,6 +879,7 @@ class CBLMaintenanceScheduler:
                     db_size_mb=info["db_size_mb"],
                 )
                 results = store.run_all_maintenance()
+                ic("_run_loop: after maintenance", results)
                 log_event(
                     logger,
                     "info",
@@ -1065,3 +1083,5 @@ def migrate_files_to_cbl(config_path: str = "config.json") -> None:
             doc_type="checkpoint",
             seq=data.get("SGs_Seq", "0"),
         )
+
+    ic("migrate_files_to_cbl: done", len(disk_names), added, updated, removed)

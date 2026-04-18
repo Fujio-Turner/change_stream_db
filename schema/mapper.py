@@ -17,6 +17,13 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
+from pipeline_logging import log_event
+
+try:
+    from icecream import ic
+except ImportError:
+    ic = lambda *a, **kw: None  # noqa: E731
+
 logger = logging.getLogger("changes_worker")
 
 
@@ -196,7 +203,9 @@ def apply_transform(value: Any, transform: str) -> Any:
         return bool(re.search(pattern, str(value)))
 
     # Unrecognised transform – pass through unchanged
-    logger.debug("Unrecognised transform %r – passing value through", transform)
+    log_event(logger, "debug", "MAPPING",
+              "unrecognised transform – passing value through",
+              error_detail=transform)
     return value
 
 
@@ -378,6 +387,57 @@ class SqlOperation:
 # ---------------------------------------------------------------------------
 
 
+class MappingDiagnostics:
+    """Collects field-level issues found during document mapping."""
+
+    __slots__ = ("missing", "type_mismatches")
+
+    def __init__(self) -> None:
+        self.missing: list[str] = []  # "table.column"
+        self.type_mismatches: list[str] = []  # "table.column: expected str, got list"
+
+    def add_missing(self, table: str, column: str) -> None:
+        self.missing.append(f"{table}.{column}")
+
+    def add_type_mismatch(
+        self, table: str, column: str, expected: str, got: str
+    ) -> None:
+        self.type_mismatches.append(f"{table}.{column}: expected {expected}, got {got}")
+
+    @property
+    def has_issues(self) -> bool:
+        return bool(self.missing or self.type_mismatches)
+
+    def summary(self) -> str:
+        parts: list[str] = []
+        if self.missing:
+            parts.append(f"missing=[{', '.join(self.missing)}]")
+        if self.type_mismatches:
+            parts.append(f"type_mismatches=[{', '.join(self.type_mismatches)}]")
+        return "; ".join(parts)
+
+
+# SQL type keyword → Python types that are acceptable
+_SQL_TYPE_EXPECT: dict[str, tuple[str, tuple[type, ...]]] = {
+    "text": ("str", (str,)),
+    "varchar": ("str", (str,)),
+    "char": ("str", (str,)),
+    "int": ("int", (int,)),
+    "integer": ("int", (int,)),
+    "bigint": ("int", (int,)),
+    "smallint": ("int", (int,)),
+    "float": ("number", (int, float)),
+    "double": ("number", (int, float)),
+    "real": ("number", (int, float)),
+    "numeric": ("number", (int, float, Decimal)),
+    "decimal": ("number", (int, float, Decimal)),
+    "boolean": ("bool", (bool,)),
+    "bool": ("bool", (bool,)),
+    "date": ("str", (str,)),
+    "timestamp": ("str", (str,)),
+}
+
+
 class SchemaMapper:
     """Maps a Couchbase document to a sequence of :class:`SqlOperation` objects
     using a mapping definition produced by the ``schema.html`` UI.
@@ -388,6 +448,7 @@ class SchemaMapper:
         self.source: dict = mapping.get("source", {})
         self.match: dict = self.source.get("match", {})
         self.tables: list[dict] = mapping.get("tables", [])
+        ic("SchemaMapper.__init__", mapping.get("name"), self.match)
 
     @classmethod
     def from_file(cls, path: str | Path) -> SchemaMapper:
@@ -418,6 +479,7 @@ class SchemaMapper:
         an index accessor for functions that return lists (e.g. ``split``).
         """
         if not self.match:
+            ic("matches", True)
             return True
 
         value = self.match.get("value")
@@ -425,19 +487,29 @@ class SchemaMapper:
 
         if expression is not None:
             resolved = evaluate_expression(doc, expression)
-            return resolved == value
+            result = resolved == value
+            ic("matches", result)
+            return result
 
         field = self.match.get("field")
         if field is None:
+            ic("matches", True)
             return True
-        return doc.get(field) == value
+        result = doc.get(field) == value
+        ic("matches", result)
+        return result
 
     # ------------------------------------------------------------------ #
     # Document → SQL operations
     # ------------------------------------------------------------------ #
 
-    def map_document(self, doc: dict, *, is_delete: bool = False) -> list[SqlOperation]:
+    def map_document(
+        self, doc: dict, *, is_delete: bool = False
+    ) -> tuple[list[SqlOperation], MappingDiagnostics]:
         """Map a single document to a list of :class:`SqlOperation`.
+
+        Returns ``(ops, diagnostics)`` where *diagnostics* contains any
+        missing-field or type-mismatch warnings discovered during mapping.
 
         For **upserts** the order is parents first, then children.
         For **deletes** the order is children first, then parents.
@@ -446,6 +518,8 @@ class SchemaMapper:
         ``True``.  Child tables with ``replace_strategy: "delete_insert"``
         receive a ``DELETE`` before the ``INSERT`` rows.
         """
+        ic("map_document", doc.get("_id"), is_delete, len(self.tables))
+
         parent_tables: list[dict] = []
         child_tables: list[dict] = []
 
@@ -455,9 +529,11 @@ class SchemaMapper:
             else:
                 parent_tables.append(tbl)
 
+        diag = MappingDiagnostics()
+
         if is_delete:
-            return self._map_delete(doc, parent_tables, child_tables)
-        return self._map_upsert(doc, parent_tables, child_tables)
+            return self._map_delete(doc, parent_tables, child_tables), diag
+        return self._map_upsert(doc, parent_tables, child_tables, diag), diag
 
     # ---- upsert ---------------------------------------------------------
 
@@ -466,12 +542,13 @@ class SchemaMapper:
         doc: dict,
         parent_tables: list[dict],
         child_tables: list[dict],
+        diag: MappingDiagnostics,
     ) -> list[SqlOperation]:
         ops: list[SqlOperation] = []
 
         # Parents first
         for tbl in parent_tables:
-            ops.append(self._build_upsert(tbl, doc))
+            ops.append(self._build_upsert(tbl, doc, diag))
 
         # Children
         for tbl in child_tables:
@@ -504,10 +581,10 @@ class SchemaMapper:
                     )
 
                 for item in items:
-                    row = self._resolve_row(tbl, item, doc)
+                    row = self._resolve_row(tbl, item, doc, diag)
                     ops.append(SqlOperation("INSERT", tbl["name"], data=row))
             else:
-                ops.append(self._build_upsert(tbl, doc))
+                ops.append(self._build_upsert(tbl, doc, diag))
 
         return ops
 
@@ -561,30 +638,53 @@ class SchemaMapper:
 
     # ---- helpers --------------------------------------------------------
 
-    def _build_upsert(self, tbl: dict, doc: dict) -> SqlOperation:
+    def _build_upsert(
+        self, tbl: dict, doc: dict, diag: MappingDiagnostics
+    ) -> SqlOperation:
         pk = tbl.get("primary_key", "id")
-        row = self._resolve_row(tbl, doc, doc)
+        row = self._resolve_row(tbl, doc, doc, diag)
         return SqlOperation("UPSERT", tbl["name"], data=row, conflict_column=pk)
 
-    def _resolve_row(self, tbl: dict, item: Any, parent_doc: dict) -> dict[str, Any]:
+    def _resolve_row(
+        self, tbl: dict, item: Any, parent_doc: dict, diag: MappingDiagnostics
+    ) -> dict[str, Any]:
         """Resolve all columns for a table row.
 
         For array-expanded children, paths are resolved against *item* first;
         if ``None`` the path is retried against *parent_doc* (so that
         ``$._id`` can reference the parent document).
+
+        Missing values and type mismatches are recorded in *diag*.
         """
+        table_name: str = tbl.get("name", "?")
         columns: dict[str, str | dict] = tbl.get("columns", {})
         row: dict[str, Any] = {}
         for col_name, col_def in columns.items():
             value = resolve_column(item, col_def)
             if value is None and item is not parent_doc:
                 value = resolve_column(parent_doc, col_def)
+
+            # --- diagnostics: missing field ---
+            if value is None:
+                diag.add_missing(table_name, col_name)
+
+            # --- diagnostics: type mismatch ---
+            if value is not None and isinstance(col_def, dict):
+                sql_type = col_def.get("type", "").lower().split("(")[0].strip()
+                if sql_type in _SQL_TYPE_EXPECT:
+                    expected_label, expected_types = _SQL_TYPE_EXPECT[sql_type]
+                    if not isinstance(value, expected_types):
+                        actual = type(value).__name__
+                        diag.add_type_mismatch(
+                            table_name, col_name, expected_label, actual
+                        )
+
             # Sanitize float inf/nan – PostgreSQL integer/numeric columns reject them
             if isinstance(value, float) and (math.isinf(value) or math.isnan(value)):
-                logger.warning(
-                    "Column %r has non-finite value %r – replacing with None",
-                    col_name,
-                    value,
+                log_event(
+                    logger, "warn", "MAPPING",
+                    "non-finite float value – replacing with None",
+                    error_detail=f"column={col_name!r} value={value!r}",
                 )
                 value = None
             row[col_name] = value

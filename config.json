@@ -18,7 +18,7 @@
     "feed_type": "longpoll",
     "poll_interval_seconds": 10,
     "active_only": true,
-    "include_docs": true,
+    "include_docs": false,
     "since": "0",
     "channels": [],
     "limit": 0,

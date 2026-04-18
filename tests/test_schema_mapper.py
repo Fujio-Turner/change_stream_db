@@ -386,7 +386,7 @@ class TestSchemaMapperMapDocument(unittest.TestCase):
         }
         mapper = SchemaMapper(mapping)
         doc = {"_id": "c1", "name": "Alice"}
-        ops = mapper.map_document(doc)
+        ops, _diag = mapper.map_document(doc)
         self.assertEqual(len(ops), 1)
         self.assertEqual(ops[0].op_type, "UPSERT")
         self.assertEqual(ops[0].table, "customers")
@@ -405,7 +405,7 @@ class TestSchemaMapperMapDocument(unittest.TestCase):
         }
         mapper = SchemaMapper(mapping)
         doc = {"_id": "c1", "name": "Alice"}
-        ops = mapper.map_document(doc, is_delete=True)
+        ops, _diag = mapper.map_document(doc, is_delete=True)
         self.assertEqual(len(ops), 1)
         self.assertEqual(ops[0].op_type, "DELETE")
         self.assertEqual(ops[0].where, {"id": "c1"})
@@ -413,7 +413,7 @@ class TestSchemaMapperMapDocument(unittest.TestCase):
     def test_child_table_source_array_expands(self):
         mapper = SchemaMapper(_load_orders_mapping())
         doc = _sample_order_doc()
-        ops = mapper.map_document(doc)
+        ops, _diag = mapper.map_document(doc)
 
         # 1 UPSERT for orders parent
         # 1 DELETE for order_items (delete_insert strategy)
@@ -432,7 +432,7 @@ class TestSchemaMapperMapDocument(unittest.TestCase):
     def test_delete_insert_strategy_generates_delete_before_inserts(self):
         mapper = SchemaMapper(_load_orders_mapping())
         doc = _sample_order_doc()
-        ops = mapper.map_document(doc)
+        ops, _diag = mapper.map_document(doc)
 
         # Find indices of the order_items ops
         item_ops = [(i, o) for i, o in enumerate(ops) if o.table == "order_items"]
@@ -455,7 +455,7 @@ class TestSchemaMapperMapDocument(unittest.TestCase):
             ],
         }
         mapper = SchemaMapper(mapping)
-        ops = mapper.map_document({"_id": "x"}, is_delete=True)
+        ops, _diag = mapper.map_document({"_id": "x"}, is_delete=True)
         self.assertEqual(len(ops), 0)
 
     def test_delete_child_on_delete_ignore(self):
@@ -478,7 +478,7 @@ class TestSchemaMapperMapDocument(unittest.TestCase):
             ],
         }
         mapper = SchemaMapper(mapping)
-        ops = mapper.map_document({"_id": "x"}, is_delete=True)
+        ops, _diag = mapper.map_document({"_id": "x"}, is_delete=True)
         # Only the parent DELETE should be present
         self.assertEqual(len(ops), 1)
         self.assertEqual(ops[0].table, "parent_tbl")
@@ -486,7 +486,7 @@ class TestSchemaMapperMapDocument(unittest.TestCase):
     def test_array_child_rows_resolve_item_then_parent(self):
         mapper = SchemaMapper(_load_orders_mapping())
         doc = _sample_order_doc()
-        ops = mapper.map_document(doc)
+        ops, _diag = mapper.map_document(doc)
 
         inserts = [o for o in ops if o.op_type == "INSERT"]
         # order_doc_id should come from the parent doc's _id
@@ -499,7 +499,7 @@ class TestSchemaMapperMapDocument(unittest.TestCase):
     def test_upsert_with_orders_mapping_applies_transforms(self):
         mapper = SchemaMapper(_load_orders_mapping())
         doc = _sample_order_doc()
-        ops = mapper.map_document(doc)
+        ops, _diag = mapper.map_document(doc)
 
         parent_op = [o for o in ops if o.table == "orders"][0]
         # order_date should be transformed via to_date()

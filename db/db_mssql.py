@@ -10,9 +10,16 @@ MSSQL-specific SQL:
   - Identifiers are bracket-quoted ([col])
 """
 
+import asyncio
 import logging
 
 from db.db_base import BaseOutputForwarder
+from pipeline_logging import log_event
+
+try:
+    from icecream import ic
+except ImportError:
+    ic = lambda *a, **kw: None  # noqa: E731
 
 logger = logging.getLogger("changes_worker")
 
@@ -81,6 +88,7 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
 
         self._dsn = self._build_dsn()
         self._pool: "aioodbc.Pool | None" = None
+        self._pool_lock = asyncio.Lock()
 
         self._init_metrics()
 
@@ -99,30 +107,31 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
     # ── Pool lifecycle ──────────────────────────────────────────────────
 
     async def _connect_pool(self) -> None:
+        ic("_connect_pool", self._host, self._port, self._database)
         self._pool = await aioodbc.create_pool(
             dsn=self._dsn,
             minsize=self._pool_min,
             maxsize=self._pool_max,
         )
-        logger.info(
-            "MSSQL pool created: %s:%d/%s (pool %d–%d)",
-            self._host,
-            self._port,
-            self._database,
-            self._pool_min,
-            self._pool_max,
+        log_event(
+            logger, "info", "OUTPUT",
+            "MSSQL pool created",
+            host=self._host, port=self._port, db_name=self._database,
         )
 
     async def _close_pool(self) -> None:
-        if self._pool:
-            self._pool.close()
-            await self._pool.wait_closed()
-            logger.info("MSSQL pool closed")
+        ic("_close_pool")
+        pool, self._pool = self._pool, None
+        if pool:
+            pool.close()
+            await pool.wait_closed()
+            log_event(logger, "info", "OUTPUT", "MSSQL pool closed")
 
     async def _reconnect_pool(self) -> None:
-        await self._close_pool()
-        await self._connect_pool()
-        self._load_mappers()
+        ic("_reconnect_pool")
+        async with self._pool_lock:
+            await self._close_pool()
+            await self._connect_pool()
 
     # ── MSSQL SQL generation helpers ────────────────────────────────────
 
@@ -185,13 +194,24 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
     # ── SQL execution ───────────────────────────────────────────────────
 
     async def _execute_ops(self, ops: list) -> None:
-        async with self._pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                for op in ops:
-                    sql, params = self._op_to_mssql_sql(op)
-                    logger.debug("SQL: %s | params=%s", sql, params)
-                    await cur.execute(sql, *params)
-            await conn.commit()
+        ic("_execute_ops", len(ops))
+        pool = self._pool
+        if pool is None:
+            raise ConnectionError("MSSQL pool is not connected")
+        async with pool.acquire() as conn:
+            try:
+                async with conn.cursor() as cur:
+                    for op in ops:
+                        sql, params = self._op_to_mssql_sql(op)
+                        log_event(
+                            logger, "debug", "OUTPUT", "SQL exec",
+                            operation=op.op_type,
+                        )
+                        await cur.execute(sql, *params)
+                await conn.commit()
+            except Exception:
+                await conn.rollback()
+                raise
 
     # ── Error classification ────────────────────────────────────────────
 
@@ -232,14 +252,17 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
     # ── Health check ────────────────────────────────────────────────────
 
     async def _test_connection(self) -> None:
-        async with self._pool.acquire() as conn:
+        pool = self._pool
+        if pool is None:
+            raise ConnectionError("MSSQL pool is not connected")
+        async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("SELECT 1")
-        logger.info(
-            "MSSQL reachable: %s:%d/%s",
-            self._host,
-            self._port,
-            self._database,
+        ic("_test_connection: OK", self._host, self._port, self._database)
+        log_event(
+            logger, "info", "OUTPUT",
+            "MSSQL reachable",
+            host=self._host, port=self._port, db_name=self._database,
         )
 
 
@@ -294,118 +317,119 @@ async def introspect_tables(ms_cfg: dict) -> list[dict]:
 
     try:
         cur = await conn.cursor()
-
-        # Get all tables
-        await cur.execute(
-            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
-            "WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' "
-            "ORDER BY TABLE_NAME",
-            schema,
-        )
-        table_rows = await cur.fetchall()
-
-        result = []
-        for (table_name,) in table_rows:
-            # Get columns
+        try:
+            # Get all tables
             await cur.execute(
-                "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, "
-                "COLUMN_DEFAULT, CHARACTER_MAXIMUM_LENGTH, "
-                "NUMERIC_PRECISION, NUMERIC_SCALE "
-                "FROM INFORMATION_SCHEMA.COLUMNS "
-                "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? "
-                "ORDER BY ORDINAL_POSITION",
+                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
+                "WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' "
+                "ORDER BY TABLE_NAME",
                 schema,
-                table_name,
             )
-            col_rows = await cur.fetchall()
+            table_rows = await cur.fetchall()
 
-            columns = []
-            for (
-                col_name,
-                data_type,
-                is_nullable,
-                default_val,
-                char_max_len,
-                num_prec,
-                num_scale,
-            ) in col_rows:
-                display_type = data_type
-                if char_max_len is not None:
-                    if char_max_len == -1:
-                        display_type += "(max)"
-                    else:
-                        display_type += f"({char_max_len})"
-                elif num_prec is not None and data_type in (
-                    "numeric",
-                    "decimal",
-                ):
-                    display_type += f"({num_prec},{num_scale or 0})"
+            result = []
+            for (table_name,) in table_rows:
+                # Get columns
+                await cur.execute(
+                    "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, "
+                    "COLUMN_DEFAULT, CHARACTER_MAXIMUM_LENGTH, "
+                    "NUMERIC_PRECISION, NUMERIC_SCALE "
+                    "FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? "
+                    "ORDER BY ORDINAL_POSITION",
+                    schema,
+                    table_name,
+                )
+                col_rows = await cur.fetchall()
 
-                columns.append(
+                columns = []
+                for (
+                    col_name,
+                    data_type,
+                    is_nullable,
+                    default_val,
+                    char_max_len,
+                    num_prec,
+                    num_scale,
+                ) in col_rows:
+                    display_type = data_type
+                    if char_max_len is not None:
+                        if char_max_len == -1:
+                            display_type += "(max)"
+                        else:
+                            display_type += f"({char_max_len})"
+                    elif num_prec is not None and data_type in (
+                        "numeric",
+                        "decimal",
+                    ):
+                        display_type += f"({num_prec},{num_scale or 0})"
+
+                    columns.append(
+                        {
+                            "name": col_name,
+                            "type": data_type,
+                            "display_type": display_type,
+                            "nullable": is_nullable == "YES",
+                            "default": default_val,
+                        }
+                    )
+
+                # Get primary key columns
+                await cur.execute(
+                    "SELECT kcu.COLUMN_NAME "
+                    "FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc "
+                    "JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu "
+                    "  ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME "
+                    "  AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA "
+                    "WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ? "
+                    "  AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY' "
+                    "ORDER BY kcu.ORDINAL_POSITION",
+                    schema,
+                    table_name,
+                )
+                pk_rows = await cur.fetchall()
+                pk_cols = [r[0] for r in pk_rows]
+
+                # Get foreign keys
+                await cur.execute(
+                    "SELECT ccu.COLUMN_NAME, "
+                    "  kcu2.TABLE_NAME AS REFERENCES_TABLE, "
+                    "  kcu2.COLUMN_NAME AS REFERENCES_COLUMN "
+                    "FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc "
+                    "JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ccu "
+                    "  ON rc.CONSTRAINT_NAME = ccu.CONSTRAINT_NAME "
+                    "  AND rc.CONSTRAINT_SCHEMA = ccu.TABLE_SCHEMA "
+                    "JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu2 "
+                    "  ON rc.UNIQUE_CONSTRAINT_NAME = kcu2.CONSTRAINT_NAME "
+                    "  AND rc.UNIQUE_CONSTRAINT_SCHEMA = kcu2.TABLE_SCHEMA "
+                    "  AND ccu.ORDINAL_POSITION = kcu2.ORDINAL_POSITION "
+                    "WHERE ccu.TABLE_SCHEMA = ? AND ccu.TABLE_NAME = ?",
+                    schema,
+                    table_name,
+                )
+                fk_rows = await cur.fetchall()
+                fks = [
                     {
-                        "name": col_name,
-                        "type": data_type,
-                        "display_type": display_type,
-                        "nullable": is_nullable == "YES",
-                        "default": default_val,
+                        "column": r[0],
+                        "references_table": r[1],
+                        "references_column": r[2],
+                    }
+                    for r in fk_rows
+                ]
+
+                result.append(
+                    {
+                        "table_name": table_name,
+                        "schema": schema,
+                        "columns": columns,
+                        "primary_key": pk_cols,
+                        "foreign_keys": fks,
                     }
                 )
 
-            # Get primary key columns
-            await cur.execute(
-                "SELECT kcu.COLUMN_NAME "
-                "FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc "
-                "JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu "
-                "  ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME "
-                "  AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA "
-                "WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ? "
-                "  AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY' "
-                "ORDER BY kcu.ORDINAL_POSITION",
-                schema,
-                table_name,
-            )
-            pk_rows = await cur.fetchall()
-            pk_cols = [r[0] for r in pk_rows]
-
-            # Get foreign keys
-            await cur.execute(
-                "SELECT ccu.COLUMN_NAME, "
-                "  kcu2.TABLE_NAME AS REFERENCES_TABLE, "
-                "  kcu2.COLUMN_NAME AS REFERENCES_COLUMN "
-                "FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc "
-                "JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ccu "
-                "  ON rc.CONSTRAINT_NAME = ccu.CONSTRAINT_NAME "
-                "  AND rc.CONSTRAINT_SCHEMA = ccu.TABLE_SCHEMA "
-                "JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu2 "
-                "  ON rc.UNIQUE_CONSTRAINT_NAME = kcu2.CONSTRAINT_NAME "
-                "  AND rc.UNIQUE_CONSTRAINT_SCHEMA = kcu2.TABLE_SCHEMA "
-                "  AND ccu.ORDINAL_POSITION = kcu2.ORDINAL_POSITION "
-                "WHERE ccu.TABLE_SCHEMA = ? AND ccu.TABLE_NAME = ?",
-                schema,
-                table_name,
-            )
-            fk_rows = await cur.fetchall()
-            fks = [
-                {
-                    "column": r[0],
-                    "references_table": r[1],
-                    "references_column": r[2],
-                }
-                for r in fk_rows
-            ]
-
-            result.append(
-                {
-                    "table_name": table_name,
-                    "schema": schema,
-                    "columns": columns,
-                    "primary_key": pk_cols,
-                    "foreign_keys": fks,
-                }
-            )
-
-        await cur.close()
-        return result
+            return result
+        finally:
+            await cur.close()
     finally:
         await conn.close()
 

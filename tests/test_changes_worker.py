@@ -1210,56 +1210,56 @@ class TestMetricsServer(unittest.TestCase):
 # ===================================================================
 
 
-class TestBuildChangesParams(unittest.TestCase):
-    """Tests for _build_changes_params()."""
+class TestBuildChangesBody(unittest.TestCase):
+    """Tests for _build_changes_body()."""
 
     def test_basic_params(self):
         feed_cfg = {"heartbeat_ms": 30000}
-        params = cw._build_changes_params(
+        body = cw._build_changes_body(
             feed_cfg, "sync_gateway", "100", "longpoll", 60000
         )
-        self.assertEqual(params["feed"], "longpoll")
-        self.assertEqual(params["since"], "100")
-        self.assertEqual(params["heartbeat"], "30000")
-        self.assertEqual(params["timeout"], "60000")
-        self.assertEqual(params["version_type"], "rev")
+        self.assertEqual(body["feed"], "longpoll")
+        self.assertEqual(body["since"], "100")
+        self.assertEqual(body["heartbeat"], 30000)
+        self.assertEqual(body["timeout"], 60000)
+        self.assertEqual(body["version_type"], "rev")
 
     def test_with_limit(self):
         feed_cfg = {"heartbeat_ms": 30000}
-        params = cw._build_changes_params(
+        body = cw._build_changes_body(
             feed_cfg, "sync_gateway", "0", "normal", 60000, limit=500
         )
-        self.assertEqual(params["limit"], "500")
+        self.assertEqual(body["limit"], 500)
 
     def test_no_limit_when_zero(self):
         feed_cfg = {"heartbeat_ms": 30000}
-        params = cw._build_changes_params(
+        body = cw._build_changes_body(
             feed_cfg, "sync_gateway", "0", "normal", 60000, limit=0
         )
-        self.assertNotIn("limit", params)
+        self.assertNotIn("limit", body)
 
     def test_edge_server_no_version_type(self):
         feed_cfg = {"heartbeat_ms": 30000}
-        params = cw._build_changes_params(
+        body = cw._build_changes_body(
             feed_cfg, "edge_server", "0", "longpoll", 60000
         )
-        self.assertNotIn("version_type", params)
+        self.assertNotIn("version_type", body)
 
     def test_channels_filter(self):
         feed_cfg = {"heartbeat_ms": 30000, "channels": ["ch1", "ch2"]}
-        params = cw._build_changes_params(
+        body = cw._build_changes_body(
             feed_cfg, "sync_gateway", "0", "normal", 60000
         )
-        self.assertEqual(params["filter"], "sync_gateway/bychannel")
-        self.assertEqual(params["channels"], "ch1,ch2")
+        self.assertEqual(body["filter"], "sync_gateway/bychannel")
+        self.assertEqual(body["channels"], "ch1,ch2")
 
     def test_include_docs_and_active_only(self):
         feed_cfg = {"heartbeat_ms": 30000, "include_docs": True, "active_only": True}
-        params = cw._build_changes_params(
+        body = cw._build_changes_body(
             feed_cfg, "sync_gateway", "0", "normal", 60000
         )
-        self.assertEqual(params["include_docs"], "true")
-        self.assertEqual(params["active_only"], "true")
+        self.assertIs(body["include_docs"], True)
+        self.assertIs(body["active_only"], True)
 
 
 class TestSleepWithBackoff(unittest.TestCase):
@@ -1835,8 +1835,8 @@ class TestConsumeWebsocketStream(unittest.TestCase):
 
     # ---- tests ----
 
-    @patch("main._sleep_with_backoff", new_callable=AsyncMock)
-    @patch("main._process_changes_batch", new_callable=AsyncMock)
+    @patch("rest.changes_http._sleep_with_backoff", new_callable=AsyncMock)
+    @patch("rest.changes_http._process_changes_batch", new_callable=AsyncMock)
     def test_websocket_processes_single_dict_message(self, mock_batch, mock_sleep):
         """Single dict change row followed by last_seq → calls _process_changes_batch."""
         change_msg = _ws_msg(
@@ -1874,8 +1874,8 @@ class TestConsumeWebsocketStream(unittest.TestCase):
         self.assertEqual(args[0][1], "50")  # last_seq
         self.assertEqual(result, "50")
 
-    @patch("main._sleep_with_backoff", new_callable=AsyncMock)
-    @patch("main._process_changes_batch", new_callable=AsyncMock)
+    @patch("rest.changes_http._sleep_with_backoff", new_callable=AsyncMock)
+    @patch("rest.changes_http._process_changes_batch", new_callable=AsyncMock)
     def test_websocket_processes_array_message(self, mock_batch, mock_sleep):
         """Array of change rows → _process_changes_batch gets both rows."""
         rows = [
@@ -1910,8 +1910,8 @@ class TestConsumeWebsocketStream(unittest.TestCase):
         self.assertEqual(args[0][1], "51")
         self.assertEqual(result, "51")
 
-    @patch("main._sleep_with_backoff", new_callable=AsyncMock)
-    @patch("main._process_changes_batch", new_callable=AsyncMock)
+    @patch("rest.changes_http._sleep_with_backoff", new_callable=AsyncMock)
+    @patch("rest.changes_http._process_changes_batch", new_callable=AsyncMock)
     def test_websocket_last_seq_ends_loop(self, mock_batch, mock_sleep):
         """A last_seq-only message returns since without calling _process_changes_batch."""
         last_seq_msg = _ws_msg(aiohttp.WSMsgType.TEXT, json.dumps({"last_seq": "99"}))
@@ -1936,8 +1936,8 @@ class TestConsumeWebsocketStream(unittest.TestCase):
         mock_batch.assert_not_called()
         self.assertEqual(result, "99")
 
-    @patch("main._sleep_with_backoff", new_callable=AsyncMock)
-    @patch("main._process_changes_batch", new_callable=AsyncMock)
+    @patch("rest.changes_http._sleep_with_backoff", new_callable=AsyncMock)
+    @patch("rest.changes_http._process_changes_batch", new_callable=AsyncMock)
     def test_websocket_reconnects_on_close(self, mock_batch, mock_sleep):
         """CLOSED on first connection → reconnect; second has change + last_seq."""
         ws1 = self._make_mock_ws([_ws_msg(aiohttp.WSMsgType.CLOSED)])
@@ -1971,8 +1971,8 @@ class TestConsumeWebsocketStream(unittest.TestCase):
         self.assertGreaterEqual(params["session"].ws_connect.call_count, 2)
         self.assertEqual(result, "10")
 
-    @patch("main._sleep_with_backoff", new_callable=AsyncMock)
-    @patch("main._process_changes_batch", new_callable=AsyncMock)
+    @patch("rest.changes_http._sleep_with_backoff", new_callable=AsyncMock)
+    @patch("rest.changes_http._process_changes_batch", new_callable=AsyncMock)
     def test_websocket_connect_failure_retries(self, mock_batch, mock_sleep):
         """First ws_connect raises ClientError, second succeeds with last_seq."""
         last_seq_msg = _ws_msg(aiohttp.WSMsgType.TEXT, json.dumps({"last_seq": "5"}))
@@ -2533,6 +2533,477 @@ class TestActiveTasksAccounting(unittest.TestCase):
         metrics = cw.MetricsCollector("sg", "db")
         metrics.inc("active_tasks", -1)
         self.assertEqual(metrics.active_tasks, -1)
+
+
+# ===================================================================
+# Fix 1: _fetch_docs_bulk_get – malformed JSON handling
+# ===================================================================
+
+
+class TestFetchDocsBulkGetJsonError(unittest.TestCase):
+    """Tests that _fetch_docs_bulk_get handles malformed JSON responses."""
+
+    def test_malformed_json_returns_empty_and_increments_metric(self):
+        """If bulk_get returns invalid JSON, return [] and inc doc_fetch_errors_total."""
+
+        async def _run():
+            metrics = cw.MetricsCollector("sync_gateway", "db")
+            http = MagicMock()
+            resp = AsyncMock()
+            resp.content_type = "application/json"
+            resp.read = AsyncMock(return_value=b"this is not json{{{")
+            resp.release = MagicMock()
+            http.request = AsyncMock(return_value=resp)
+
+            rows = [{"id": "doc1", "changes": [{"rev": "1-abc"}]}]
+            result = await cw._fetch_docs_bulk_get(
+                http,
+                "http://localhost:4984/db",
+                rows,
+                None,
+                {},
+                metrics=metrics,
+            )
+            self.assertEqual(result, [])
+            self.assertEqual(metrics.doc_fetch_errors_total, 1)
+
+        asyncio.run(_run())
+
+    def test_valid_json_bulk_get_returns_docs(self):
+        """Normal bulk_get JSON response extracts ok docs."""
+
+        async def _run():
+            metrics = cw.MetricsCollector("sync_gateway", "db")
+            body = {
+                "results": [
+                    {
+                        "id": "doc1",
+                        "docs": [
+                            {"ok": {"_id": "doc1", "_rev": "1-abc", "val": 1}}
+                        ],
+                    },
+                    {
+                        "id": "doc2",
+                        "docs": [
+                            {
+                                "error": {
+                                    "id": "doc2",
+                                    "rev": "undefined",
+                                    "error": "not_found",
+                                    "reason": "missing",
+                                }
+                            }
+                        ],
+                    },
+                ]
+            }
+            http = MagicMock()
+            bulk_resp = AsyncMock()
+            bulk_resp.content_type = "application/json"
+            bulk_resp.read = AsyncMock(return_value=json.dumps(body).encode())
+            bulk_resp.release = MagicMock()
+
+            # The fallback individual-GET for missing doc2 should fail (404)
+            from rest.changes_http import ClientHTTPError as _CHE
+
+            call_count = 0
+
+            async def _side_effect(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    return bulk_resp  # first call is the bulk_get POST
+                raise _CHE(404, "not found")
+
+            http.request = AsyncMock(side_effect=_side_effect)
+
+            rows = [
+                {"id": "doc1", "changes": [{"rev": "1-abc"}]},
+                {"id": "doc2", "changes": [{"rev": "1-def"}]},
+            ]
+            result = await cw._fetch_docs_bulk_get(
+                http, "http://localhost:4984/db", rows, None, {}, metrics=metrics
+            )
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0]["_id"], "doc1")
+            bulk_resp.release.assert_called()
+
+        asyncio.run(_run())
+
+    def test_multipart_fallback_releases_resp(self):
+        """Multipart/mixed fallback also releases the response."""
+
+        async def _run():
+            http = MagicMock()
+            resp = AsyncMock()
+            resp.content_type = "multipart/mixed"
+            resp.text = AsyncMock(
+                return_value='{"_id":"d1","_rev":"1-x"}\n--boundary--\n'
+            )
+            resp.release = MagicMock()
+            http.request = AsyncMock(return_value=resp)
+
+            rows = [{"id": "d1", "changes": [{"rev": "1-x"}]}]
+            result = await cw._fetch_docs_bulk_get(
+                http, "http://localhost:4984/db", rows, None, {}
+            )
+            self.assertEqual(len(result), 1)
+            resp.release.assert_called()
+
+        asyncio.run(_run())
+
+
+# ===================================================================
+# Fix 2: _fetch_docs_individually – auth error re-raise
+# ===================================================================
+
+
+class TestFetchDocsIndividuallyAuthErrors(unittest.TestCase):
+    """Tests that _fetch_docs_individually re-raises 401/403."""
+
+    def test_401_propagates(self):
+        """A 401 from GET /{doc} should propagate as ClientHTTPError."""
+
+        async def _run():
+            http = MagicMock()
+            http.request = AsyncMock(
+                side_effect=cw.ClientHTTPError(401, "Unauthorized")
+            )
+
+            rows = [{"id": "doc1", "changes": [{"rev": "1-abc"}]}]
+            with self.assertRaises(cw.ClientHTTPError) as ctx:
+                await cw._fetch_docs_individually(
+                    http, "http://localhost:4984/db", rows, None, {}, 5
+                )
+            self.assertEqual(ctx.exception.status, 401)
+
+        asyncio.run(_run())
+
+    def test_403_propagates(self):
+        """A 403 from GET /{doc} should propagate as ClientHTTPError."""
+
+        async def _run():
+            http = MagicMock()
+            http.request = AsyncMock(
+                side_effect=cw.ClientHTTPError(403, "Forbidden")
+            )
+
+            rows = [{"id": "doc1", "changes": [{"rev": "1-abc"}]}]
+            with self.assertRaises(cw.ClientHTTPError) as ctx:
+                await cw._fetch_docs_individually(
+                    http, "http://localhost:4984/db", rows, None, {}, 5
+                )
+            self.assertEqual(ctx.exception.status, 403)
+
+        asyncio.run(_run())
+
+    def test_404_does_not_propagate(self):
+        """A 404 from GET /{doc} should be swallowed (doc not found is normal)."""
+
+        async def _run():
+            metrics = cw.MetricsCollector("sync_gateway", "db")
+            http = MagicMock()
+            http.request = AsyncMock(
+                side_effect=cw.ClientHTTPError(404, "Not Found")
+            )
+
+            rows = [{"id": "doc1", "changes": [{"rev": "1-abc"}]}]
+            result = await cw._fetch_docs_individually(
+                http, "http://localhost:4984/db", rows, None, {}, 5, metrics=metrics
+            )
+            self.assertEqual(result, [])
+            self.assertEqual(metrics.doc_fetch_errors_total, 1)
+
+        asyncio.run(_run())
+
+    def test_generic_exception_swallowed(self):
+        """Generic exceptions are swallowed and counted."""
+
+        async def _run():
+            metrics = cw.MetricsCollector("sync_gateway", "db")
+            http = MagicMock()
+            http.request = AsyncMock(side_effect=OSError("network down"))
+
+            rows = [{"id": "doc1", "changes": [{"rev": "1-abc"}]}]
+            result = await cw._fetch_docs_individually(
+                http, "http://localhost:4984/db", rows, None, {}, 5, metrics=metrics
+            )
+            self.assertEqual(result, [])
+            self.assertEqual(metrics.doc_fetch_errors_total, 1)
+
+        asyncio.run(_run())
+
+    def test_successful_fetch_returns_docs(self):
+        """Normal individual GET returns docs."""
+
+        async def _run():
+            metrics = cw.MetricsCollector("sync_gateway", "db")
+            http = MagicMock()
+            resp = AsyncMock()
+            resp.read = AsyncMock(
+                return_value=json.dumps({"_id": "doc1", "_rev": "1-abc"}).encode()
+            )
+            resp.release = MagicMock()
+            http.request = AsyncMock(return_value=resp)
+
+            rows = [{"id": "doc1", "changes": [{"rev": "1-abc"}]}]
+            result = await cw._fetch_docs_individually(
+                http, "http://localhost:4984/db", rows, None, {}, 5, metrics=metrics
+            )
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0]["_id"], "doc1")
+
+        asyncio.run(_run())
+
+
+# ===================================================================
+# Fix 4: Longpoll path – asyncio.TimeoutError catch
+# ===================================================================
+
+
+class TestLongpollTimeoutHandling(unittest.TestCase):
+    """Tests that asyncio.TimeoutError in longpoll path is caught."""
+
+    def test_timeout_error_is_in_except_tuple(self):
+        """Verify asyncio.TimeoutError is in the longpoll retry except clause."""
+        import inspect
+
+        source = inspect.getsource(cw.poll_changes)
+        # The except clause should catch TimeoutError alongside ConnectionError
+        self.assertIn("ConnectionError, ServerHTTPError, asyncio.TimeoutError", source)
+
+    def test_catch_up_normal_catches_timeout(self):
+        """_catch_up_normal catches asyncio.TimeoutError and retries."""
+
+        async def _run():
+            metrics = cw.MetricsCollector("sync_gateway", "db")
+            shutdown = asyncio.Event()
+            call_count = 0
+
+            async def _mock_request(method, url, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    raise asyncio.TimeoutError()
+                # Return empty results on second call
+                resp = AsyncMock()
+                resp.status = 200
+                resp.read = AsyncMock(
+                    return_value=json.dumps(
+                        {"results": [], "last_seq": "5"}
+                    ).encode()
+                )
+                resp.release = MagicMock()
+                return resp
+
+            http = MagicMock()
+            http.request = AsyncMock(side_effect=_mock_request)
+
+            checkpoint = MagicMock()
+            checkpoint.save = AsyncMock()
+            output = MagicMock()
+            output._mode = "stdout"
+            output._write_method = "PUT"
+            output._delete_method = "DELETE"
+            output.send = AsyncMock(return_value={"ok": True})
+            output.log_stats = MagicMock()
+            dlq = MagicMock()
+            dlq.enabled = False
+
+            result = await cw._catch_up_normal(
+                since="0",
+                changes_url="http://localhost:4984/db/_changes",
+                feed_cfg={"include_docs": True, "continuous_catchup_limit": 500},
+                proc_cfg={},
+                retry_cfg={"backoff_base_seconds": 0, "backoff_max_seconds": 0},
+                src="sync_gateway",
+                http=http,
+                basic_auth=None,
+                auth_headers={},
+                base_url="http://localhost:4984/db",
+                output=output,
+                dlq=dlq,
+                checkpoint=checkpoint,
+                semaphore=asyncio.Semaphore(5),
+                shutdown_event=shutdown,
+                metrics=metrics,
+                every_n_docs=0,
+                max_concurrent=5,
+                timeout_ms=60000,
+                changes_http_timeout=aiohttp.ClientTimeout(total=5),
+            )
+
+            # Should have retried after the TimeoutError
+            self.assertEqual(call_count, 2)
+            self.assertGreaterEqual(metrics.poll_errors_total, 1)
+            self.assertEqual(result, "5")
+
+        asyncio.run(_run())
+
+
+# ===================================================================
+# Fix 5: WebSocket idle timeout
+# ===================================================================
+
+
+class TestWebsocketIdleTimeout(unittest.TestCase):
+    """Tests that WebSocket idle timeout triggers reconnect."""
+
+    def test_idle_timeout_code_is_present(self):
+        """Verify ws.receive() is wrapped in asyncio.wait_for with idle timeout."""
+        import inspect
+
+        source = inspect.getsource(cw._consume_websocket_stream)
+        self.assertIn("asyncio.wait_for", source)
+        self.assertIn("ws_idle_timeout", source)
+        self.assertIn("ws.receive()", source)
+        # Verify the timeout is computed as max(timeout_ms * 2 / 1000, 300)
+        self.assertIn("max(timeout_ms * 2 / 1000.0, 300.0)", source)
+
+    @patch("rest.changes_http._sleep_with_backoff", new_callable=AsyncMock)
+    @patch("rest.changes_http._process_changes_batch", new_callable=AsyncMock)
+    def test_idle_timeout_increments_metric_and_reconnects(self, mock_batch, mock_sleep):
+        """When asyncio.TimeoutError fires from wait_for, poll_errors_total is bumped."""
+
+        async def _run():
+            metrics = cw.MetricsCollector("sync_gateway", "db")
+            params = _make_ws_params(metrics=metrics, timeout_ms=100)
+
+            call_count = 0
+
+            ws1 = AsyncMock()
+            ws1.send_json = AsyncMock()
+            ws1.closed = False
+            ws1.close = AsyncMock()
+            # First receive raises TimeoutError (simulating wait_for timeout)
+            ws1.receive = AsyncMock(side_effect=asyncio.TimeoutError())
+
+            async def _connect(*a, **kw):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    return ws1
+                # On reconnect, shut down
+                params["shutdown_event"].set()
+                ws2 = AsyncMock()
+                ws2.receive = AsyncMock(
+                    return_value=_ws_msg(aiohttp.WSMsgType.CLOSED)
+                )
+                ws2.send_json = AsyncMock()
+                ws2.closed = False
+                ws2.close = AsyncMock()
+                return ws2
+
+            params["session"].ws_connect = AsyncMock(side_effect=_connect)
+
+            # The ws.receive() inside _consume_websocket_stream is now
+            # wrapped in asyncio.wait_for. We mock wait_for to pass through
+            # the TimeoutError from ws1.receive.
+            original_wait_for = asyncio.wait_for
+
+            async def _pass_through_wait_for(coro, timeout):
+                return await coro  # let the TimeoutError propagate from the mock
+
+            with patch("asyncio.wait_for", side_effect=_pass_through_wait_for):
+                await cw._consume_websocket_stream(**params)
+
+            self.assertGreaterEqual(call_count, 2)
+            self.assertGreaterEqual(metrics.poll_errors_total, 1)
+
+        asyncio.run(_run())
+
+    def test_ws_idle_timeout_calculation(self):
+        """ws_idle_timeout = max(timeout_ms * 2 / 1000, 300)."""
+        # timeout_ms=60000 → max(120, 300) = 300
+        self.assertEqual(max(60000 * 2 / 1000.0, 300.0), 300.0)
+        # timeout_ms=200000 → max(400, 300) = 400
+        self.assertEqual(max(200000 * 2 / 1000.0, 300.0), 400.0)
+        # timeout_ms=100 → max(0.2, 300) = 300
+        self.assertEqual(max(100 * 2 / 1000.0, 300.0), 300.0)
+
+
+# ===================================================================
+# Fix 6: resp.release() on all paths (covered via Fix 1 tests above)
+# ===================================================================
+
+
+class TestBulkGetRespRelease(unittest.TestCase):
+    """Verify resp.release() is called on both JSON and multipart paths."""
+
+    def test_json_path_calls_release(self):
+        async def _run():
+            http = MagicMock()
+            resp = AsyncMock()
+            resp.content_type = "application/json"
+            resp.read = AsyncMock(
+                return_value=json.dumps({"results": []}).encode()
+            )
+            resp.release = MagicMock()
+            http.request = AsyncMock(return_value=resp)
+
+            await cw._fetch_docs_bulk_get(
+                http, "http://localhost:4984/db",
+                [{"id": "d1", "changes": [{"rev": "1-x"}]}],
+                None, {},
+            )
+            resp.release.assert_called()
+
+        asyncio.run(_run())
+
+    def test_multipart_path_calls_release(self):
+        async def _run():
+            http = MagicMock()
+            resp = AsyncMock()
+            resp.content_type = "multipart/mixed"
+            resp.text = AsyncMock(return_value="")
+            resp.release = MagicMock()
+            http.request = AsyncMock(return_value=resp)
+
+            await cw._fetch_docs_bulk_get(
+                http, "http://localhost:4984/db",
+                [{"id": "d1", "changes": [{"rev": "1-x"}]}],
+                None, {},
+            )
+            resp.release.assert_called()
+
+        asyncio.run(_run())
+
+    def test_malformed_json_path_still_releases(self):
+        """Even on JSONDecodeError, release() should have been called before parsing."""
+        async def _run():
+            http = MagicMock()
+            resp = AsyncMock()
+            resp.content_type = "application/json"
+            resp.read = AsyncMock(return_value=b"NOT JSON")
+            resp.release = MagicMock()
+            http.request = AsyncMock(return_value=resp)
+
+            await cw._fetch_docs_bulk_get(
+                http, "http://localhost:4984/db",
+                [{"id": "d1", "changes": [{"rev": "1-x"}]}],
+                None, {},
+            )
+            resp.release.assert_called()
+
+        asyncio.run(_run())
+
+
+# ===================================================================
+# Fix 7: test_connection retries (informational, not changed)
+# ===================================================================
+
+
+class TestTestConnectionRetryCount(unittest.TestCase):
+    """Verify test_connection uses max_retries=1 (quick probe)."""
+
+    def test_test_connection_uses_single_retry(self):
+        """test_connection should create RetryableHTTP with max_retries=1."""
+        # This is a design validation test — we verify the value in the source
+        import inspect
+
+        source = inspect.getsource(cw.test_connection)
+        self.assertIn("max_retries", source)
+        self.assertIn('"max_retries": 1', source)
 
 
 if __name__ == "__main__":

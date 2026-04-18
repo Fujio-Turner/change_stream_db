@@ -10,9 +10,16 @@ MySQL-specific SQL:
   - Identifiers are back-tick quoted (`col`)
 """
 
+import asyncio
 import logging
 
+try:
+    from icecream import ic
+except ImportError:
+    ic = lambda *a, **kw: None  # noqa: E731
+
 from db.db_base import BaseOutputForwarder
+from pipeline_logging import log_event
 
 logger = logging.getLogger("changes_worker")
 
@@ -71,6 +78,7 @@ class MySQLOutputForwarder(BaseOutputForwarder):
         self._ssl = my_cfg.get("ssl", False)
 
         self._pool: "aiomysql.Pool | None" = None
+        self._pool_lock = asyncio.Lock()
 
         self._init_metrics()
 
@@ -85,6 +93,7 @@ class MySQLOutputForwarder(BaseOutputForwarder):
             ssl_ctx.check_hostname = False
             ssl_ctx.verify_mode = _ssl.CERT_NONE
 
+        ic("_connect_pool", self._host, self._port, self._database)
         self._pool = await aiomysql.create_pool(
             host=self._host,
             port=self._port,
@@ -97,25 +106,27 @@ class MySQLOutputForwarder(BaseOutputForwarder):
             ssl=ssl_ctx,
             autocommit=False,
         )
-        logger.info(
-            "MySQL pool created: %s:%d/%s (pool %d–%d)",
-            self._host,
-            self._port,
-            self._database,
-            self._pool_min,
-            self._pool_max,
+        log_event(
+            logger, "info", "OUTPUT",
+            "MySQL pool created",
+            host=self._host,
+            port=self._port,
+            db_name=self._database,
         )
 
     async def _close_pool(self) -> None:
-        if self._pool:
-            self._pool.close()
-            await self._pool.wait_closed()
-            logger.info("MySQL pool closed")
+        ic("_close_pool")
+        pool, self._pool = self._pool, None
+        if pool:
+            pool.close()
+            await pool.wait_closed()
+            log_event(logger, "info", "OUTPUT", "MySQL pool closed")
 
     async def _reconnect_pool(self) -> None:
-        await self._close_pool()
-        await self._connect_pool()
-        self._load_mappers()
+        ic("_reconnect_pool")
+        async with self._pool_lock:
+            await self._close_pool()
+            await self._connect_pool()
 
     # ── MySQL SQL generation helpers ────────────────────────────────────
 
@@ -165,13 +176,25 @@ class MySQLOutputForwarder(BaseOutputForwarder):
     # ── SQL execution ───────────────────────────────────────────────────
 
     async def _execute_ops(self, ops: list) -> None:
-        async with self._pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                for op in ops:
-                    sql, params = self._op_to_mysql_sql(op)
-                    logger.debug("SQL: %s | params=%s", sql, params)
-                    await cur.execute(sql, params)
-            await conn.commit()
+        pool = self._pool
+        if pool is None:
+            raise ConnectionError("MySQL pool is not connected")
+        ic("_execute_ops", len(ops))
+        async with pool.acquire() as conn:
+            try:
+                async with conn.cursor() as cur:
+                    for op in ops:
+                        sql, params = self._op_to_mysql_sql(op)
+                        log_event(
+                            logger, "debug", "OUTPUT",
+                            "SQL exec",
+                            operation=op.op_type,
+                        )
+                        await cur.execute(sql, params)
+                await conn.commit()
+            except Exception:
+                await conn.rollback()
+                raise
 
     # ── Error classification ────────────────────────────────────────────
 
@@ -212,14 +235,19 @@ class MySQLOutputForwarder(BaseOutputForwarder):
     # ── Health check ────────────────────────────────────────────────────
 
     async def _test_connection(self) -> None:
-        async with self._pool.acquire() as conn:
+        pool = self._pool
+        if pool is None:
+            raise ConnectionError("MySQL pool is not connected")
+        async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("SELECT 1")
-        logger.info(
-            "MySQL reachable: %s:%d/%s",
-            self._host,
-            self._port,
-            self._database,
+        ic("_test_connection: OK", self._host, self._port, self._database)
+        log_event(
+            logger, "info", "OUTPUT",
+            "MySQL reachable",
+            host=self._host,
+            port=self._port,
+            db_name=self._database,
         )
 
 
@@ -256,94 +284,95 @@ async def introspect_tables(my_cfg: dict) -> list[dict]:
     try:
         database = my_cfg.get("database", "")
         cur = await conn.cursor()
-
-        # Get all tables
-        await cur.execute(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = %s AND table_type = 'BASE TABLE' "
-            "ORDER BY table_name",
-            (database,),
-        )
-        table_rows = await cur.fetchall()
-
-        result = []
-        for (table_name,) in table_rows:
-            # Get columns
+        try:
+            # Get all tables
             await cur.execute(
-                "SELECT column_name, data_type, column_type, is_nullable, "
-                "column_default, character_maximum_length, "
-                "numeric_precision, numeric_scale "
-                "FROM information_schema.columns "
-                "WHERE table_schema = %s AND table_name = %s "
-                "ORDER BY ordinal_position",
-                (database, table_name),
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = %s AND table_type = 'BASE TABLE' "
+                "ORDER BY table_name",
+                (database,),
             )
-            col_rows = await cur.fetchall()
+            table_rows = await cur.fetchall()
 
-            columns = []
-            for (
-                col_name,
-                data_type,
-                column_type,
-                is_nullable,
-                default_val,
-                char_max_len,
-                num_prec,
-                num_scale,
-            ) in col_rows:
-                columns.append(
+            result = []
+            for (table_name,) in table_rows:
+                # Get columns
+                await cur.execute(
+                    "SELECT column_name, data_type, column_type, is_nullable, "
+                    "column_default, character_maximum_length, "
+                    "numeric_precision, numeric_scale "
+                    "FROM information_schema.columns "
+                    "WHERE table_schema = %s AND table_name = %s "
+                    "ORDER BY ordinal_position",
+                    (database, table_name),
+                )
+                col_rows = await cur.fetchall()
+
+                columns = []
+                for (
+                    col_name,
+                    data_type,
+                    column_type,
+                    is_nullable,
+                    default_val,
+                    char_max_len,
+                    num_prec,
+                    num_scale,
+                ) in col_rows:
+                    columns.append(
+                        {
+                            "name": col_name,
+                            "type": data_type,
+                            "display_type": column_type,
+                            "nullable": is_nullable == "YES",
+                            "default": default_val,
+                        }
+                    )
+
+                # Get primary key columns
+                await cur.execute(
+                    "SELECT column_name "
+                    "FROM information_schema.key_column_usage "
+                    "WHERE table_schema = %s AND table_name = %s "
+                    "AND constraint_name = 'PRIMARY' "
+                    "ORDER BY ordinal_position",
+                    (database, table_name),
+                )
+                pk_rows = await cur.fetchall()
+                pk_cols = [r[0] for r in pk_rows]
+
+                # Get foreign keys
+                await cur.execute(
+                    "SELECT column_name, referenced_table_name, "
+                    "referenced_column_name "
+                    "FROM information_schema.key_column_usage "
+                    "WHERE table_schema = %s AND table_name = %s "
+                    "AND referenced_table_name IS NOT NULL",
+                    (database, table_name),
+                )
+                fk_rows = await cur.fetchall()
+                fks = [
                     {
-                        "name": col_name,
-                        "type": data_type,
-                        "display_type": column_type,
-                        "nullable": is_nullable == "YES",
-                        "default": default_val,
+                        "column": r[0],
+                        "references_table": r[1],
+                        "references_column": r[2],
+                    }
+                    for r in fk_rows
+                ]
+
+                result.append(
+                    {
+                        "table_name": table_name,
+                        "schema": database,
+                        "columns": columns,
+                        "primary_key": pk_cols,
+                        "foreign_keys": fks,
                     }
                 )
 
-            # Get primary key columns
-            await cur.execute(
-                "SELECT column_name "
-                "FROM information_schema.key_column_usage "
-                "WHERE table_schema = %s AND table_name = %s "
-                "AND constraint_name = 'PRIMARY' "
-                "ORDER BY ordinal_position",
-                (database, table_name),
-            )
-            pk_rows = await cur.fetchall()
-            pk_cols = [r[0] for r in pk_rows]
-
-            # Get foreign keys
-            await cur.execute(
-                "SELECT column_name, referenced_table_name, "
-                "referenced_column_name "
-                "FROM information_schema.key_column_usage "
-                "WHERE table_schema = %s AND table_name = %s "
-                "AND referenced_table_name IS NOT NULL",
-                (database, table_name),
-            )
-            fk_rows = await cur.fetchall()
-            fks = [
-                {
-                    "column": r[0],
-                    "references_table": r[1],
-                    "references_column": r[2],
-                }
-                for r in fk_rows
-            ]
-
-            result.append(
-                {
-                    "table_name": table_name,
-                    "schema": database,
-                    "columns": columns,
-                    "primary_key": pk_cols,
-                    "foreign_keys": fks,
-                }
-            )
-
-        await cur.close()
-        return result
+            return result
+        finally:
+            await cur.close()
     finally:
         conn.close()
 
