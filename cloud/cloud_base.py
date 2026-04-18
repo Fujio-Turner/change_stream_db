@@ -241,8 +241,13 @@ class BaseCloudForwarder(abc.ABC):
         self._resp_times: deque[float] = deque(maxlen=10_000)
         self._lock = asyncio.Lock()
 
-        ic("BaseCloudForwarder init", self._key_prefix, self._key_template,
-           self._batch_enabled, self._dry_run)
+        ic(
+            "BaseCloudForwarder init",
+            self._key_prefix,
+            self._key_template,
+            self._batch_enabled,
+            self._dry_run,
+        )
 
     def _init_metrics(self) -> None:
         """Call from subclass __init__ after the provider property is available."""
@@ -285,16 +290,25 @@ class BaseCloudForwarder(abc.ABC):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            ic("connect: bucket test failed", self._provider,
-               type(exc).__name__, str(exc))
-            log_event(logger, "error", "OUTPUT",
-                      "cloud bucket/container not accessible",
-                      mode=self._provider,
-                      error_detail=f"{type(exc).__name__}: {exc}")
+            ic(
+                "connect: bucket test failed",
+                self._provider,
+                type(exc).__name__,
+                str(exc),
+            )
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "cloud bucket/container not accessible",
+                mode=self._provider,
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
             await self._close_client()
             raise
-        log_event(logger, "info", "OUTPUT", "cloud client connected",
-                  mode=self._provider)
+        log_event(
+            logger, "info", "OUTPUT", "cloud client connected", mode=self._provider
+        )
 
     async def close(self) -> None:
         """Close the cloud client, flush pending batch, and unregister metrics."""
@@ -305,10 +319,14 @@ class BaseCloudForwarder(abc.ABC):
                 await self._flush_batch()
             except Exception as exc:
                 ic("close: batch flush failed", type(exc).__name__, str(exc))
-                log_event(logger, "warn", "OUTPUT",
-                          "failed to flush batch buffer on close",
-                          mode=self._provider,
-                          error_detail=f"{type(exc).__name__}: {exc}")
+                log_event(
+                    logger,
+                    "warn",
+                    "OUTPUT",
+                    "failed to flush batch buffer on close",
+                    mode=self._provider,
+                    error_detail=f"{type(exc).__name__}: {exc}",
+                )
         # Cancel batch timer
         if self._batch_timer_task and not self._batch_timer_task.done():
             self._batch_timer_task.cancel()
@@ -321,14 +339,14 @@ class BaseCloudForwarder(abc.ABC):
         finally:
             if self._metrics:
                 self._metrics.unregister()
-        log_event(logger, "info", "OUTPUT", "cloud client closed",
-                  mode=self._provider)
+        log_event(logger, "info", "OUTPUT", "cloud client closed", mode=self._provider)
 
     # ── Object operations (subclass hooks) ──────────────────────────────
 
     @abc.abstractmethod
-    async def _upload_object(self, key: str, body: bytes,
-                             content_type: str, metadata: dict) -> dict:
+    async def _upload_object(
+        self, key: str, body: bytes, content_type: str, metadata: dict
+    ) -> dict:
         """Upload a single object. Return response info dict."""
 
     @abc.abstractmethod
@@ -357,16 +375,22 @@ class BaseCloudForwarder(abc.ABC):
         try:
             await self._test_bucket()
             ic("test_reachable: OK", self._provider)
-            log_event(logger, "info", "OUTPUT", "cloud store reachable",
-                      mode=self._provider)
+            log_event(
+                logger, "info", "OUTPUT", "cloud store reachable", mode=self._provider
+            )
             return True
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             ic("test_reachable: FAIL", self._provider, type(exc).__name__, str(exc))
-            log_event(logger, "error", "OUTPUT", "cloud store unreachable",
-                      mode=self._provider,
-                      error_detail=f"{type(exc).__name__}: {exc}")
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "cloud store unreachable",
+                mode=self._provider,
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
             return False
 
     # ── Key rendering ───────────────────────────────────────────────────
@@ -424,9 +448,14 @@ class BaseCloudForwarder(abc.ABC):
 
         if self._dry_run:
             action = "DELETE" if is_delete else "PUT"
-            log_event(logger, "info", "OUTPUT",
-                      "[DRY RUN] %s %s" % (action, key),
-                      doc_id=doc_id, mode=self._provider)
+            log_event(
+                logger,
+                "info",
+                "OUTPUT",
+                "[DRY RUN] %s %s" % (action, key),
+                doc_id=doc_id,
+                mode=self._provider,
+            )
             return {"ok": True, "doc_id": doc_id, "key": key, "dry_run": True}
 
         # Batch mode: accumulate docs and flush when threshold is hit
@@ -446,8 +475,10 @@ class BaseCloudForwarder(abc.ABC):
             self._batch_buffer.append(body)
             self._batch_bytes += body_len
 
-            if (len(self._batch_buffer) >= self._batch_max_docs
-                    or self._batch_bytes >= self._batch_max_bytes):
+            if (
+                len(self._batch_buffer) >= self._batch_max_docs
+                or self._batch_bytes >= self._batch_max_bytes
+            ):
                 flush_needed = True
 
             # Start timer on first doc in buffer
@@ -480,10 +511,14 @@ class BaseCloudForwarder(abc.ABC):
             pass
         except Exception as exc:
             ic("batch_timer: flush failed", type(exc).__name__, str(exc))
-            log_event(logger, "error", "OUTPUT",
-                      "batch timer flush failed",
-                      mode=self._provider,
-                      error_detail=f"{type(exc).__name__}: {exc}")
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "batch timer flush failed",
+                mode=self._provider,
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
 
     async def _flush_batch(self) -> dict:
         """Flush the batch buffer as a single NDJSON upload."""
@@ -512,9 +547,15 @@ class BaseCloudForwarder(abc.ABC):
         }
 
         ic("flush_batch", batch_key, len(items), len(ndjson_body))
-        log_event(logger, "debug", "OUTPUT", "flushing batch",
-                  mode=self._provider, batch_size=len(items),
-                  bytes=len(ndjson_body))
+        log_event(
+            logger,
+            "debug",
+            "OUTPUT",
+            "flushing batch",
+            mode=self._provider,
+            batch_size=len(items),
+            bytes=len(ndjson_body),
+        )
 
         t_start = time.monotonic()
         last_exc: Exception | None = None
@@ -522,8 +563,10 @@ class BaseCloudForwarder(abc.ABC):
         for attempt in range(1, self._max_retries + 1):
             try:
                 await self._upload_object(
-                    batch_key, ndjson_body,
-                    "application/x-ndjson", metadata,
+                    batch_key,
+                    ndjson_body,
+                    "application/x-ndjson",
+                    metadata,
                 )
                 elapsed_ms = (time.monotonic() - t_start) * 1000
                 async with self._lock:
@@ -533,10 +576,16 @@ class BaseCloudForwarder(abc.ABC):
                     self._metrics.inc("batches_flushed_total")
                     self._metrics.record_output_response_time(elapsed_ms / 1000)
                 ic("flush_batch: OK", batch_key, len(items), round(elapsed_ms, 1))
-                log_event(logger, "info", "OUTPUT", "batch uploaded",
-                          mode=self._provider, batch_size=len(items),
-                          bytes=len(ndjson_body),
-                          elapsed_ms=round(elapsed_ms, 1))
+                log_event(
+                    logger,
+                    "info",
+                    "OUTPUT",
+                    "batch uploaded",
+                    mode=self._provider,
+                    batch_size=len(items),
+                    bytes=len(ndjson_body),
+                    elapsed_ms=round(elapsed_ms, 1),
+                )
                 return {
                     "ok": True,
                     "key": batch_key,
@@ -549,20 +598,37 @@ class BaseCloudForwarder(abc.ABC):
             except Exception as exc:
                 last_exc = exc
                 if not self._is_transient(exc):
-                    ic("flush_batch: permanent error", batch_key,
-                       type(exc).__name__, str(exc))
-                    log_event(logger, "error", "OUTPUT",
-                              "batch upload permanent error",
-                              mode=self._provider,
-                              batch_size=len(items),
-                              error_detail=f"{type(exc).__name__}: {exc}")
+                    ic(
+                        "flush_batch: permanent error",
+                        batch_key,
+                        type(exc).__name__,
+                        str(exc),
+                    )
+                    log_event(
+                        logger,
+                        "error",
+                        "OUTPUT",
+                        "batch upload permanent error",
+                        mode=self._provider,
+                        batch_size=len(items),
+                        error_detail=f"{type(exc).__name__}: {exc}",
+                    )
                     break
-                ic("flush_batch: transient error, retry", attempt,
-                   self._max_retries, type(exc).__name__)
-                log_event(logger, "warn", "OUTPUT",
-                          "batch upload transient error",
-                          mode=self._provider, attempt=attempt,
-                          error_detail=f"{type(exc).__name__}: {exc}")
+                ic(
+                    "flush_batch: transient error, retry",
+                    attempt,
+                    self._max_retries,
+                    type(exc).__name__,
+                )
+                log_event(
+                    logger,
+                    "warn",
+                    "OUTPUT",
+                    "batch upload transient error",
+                    mode=self._provider,
+                    attempt=attempt,
+                    error_detail=f"{type(exc).__name__}: {exc}",
+                )
                 if attempt < self._max_retries:
                     delay = min(
                         self._backoff_base * (2 ** (attempt - 1)),
@@ -574,13 +640,17 @@ class BaseCloudForwarder(abc.ABC):
         if self._metrics:
             self._metrics.inc("output_errors_total")
             self._metrics.inc("batch_errors_total")
-        log_event(logger, "error", "OUTPUT",
-                  "batch upload failed after retries",
-                  mode=self._provider, batch_size=len(items),
-                  error_detail=(
-                      f"{type(last_exc).__name__}: {last_exc}"
-                      if last_exc else "unknown"
-                  ))
+        log_event(
+            logger,
+            "error",
+            "OUTPUT",
+            "batch upload failed after retries",
+            mode=self._provider,
+            batch_size=len(items),
+            error_detail=(
+                f"{type(last_exc).__name__}: {last_exc}" if last_exc else "unknown"
+            ),
+        )
         return {
             "ok": False,
             "key": batch_key,
@@ -588,8 +658,9 @@ class BaseCloudForwarder(abc.ABC):
             "error": str(last_exc)[:500] if last_exc else "unknown",
         }
 
-    async def _send_with_retry(self, doc: dict, doc_id: str,
-                               key: str, is_delete: bool) -> dict:
+    async def _send_with_retry(
+        self, doc: dict, doc_id: str, key: str, is_delete: bool
+    ) -> dict:
         """Upload or delete a single object with retry + backoff."""
         t_start = time.monotonic()
         last_exc: Exception | None = None
@@ -605,9 +676,7 @@ class BaseCloudForwarder(abc.ABC):
                     rev = doc.get("_rev", doc.get("rev", ""))
                     if rev:
                         metadata["rev"] = rev
-                    await self._upload_object(
-                        key, body, self._content_type, metadata
-                    )
+                    await self._upload_object(key, body, self._content_type, metadata)
                     action = "PUT"
 
                 # Success
@@ -625,12 +694,17 @@ class BaseCloudForwarder(abc.ABC):
                     self._metrics.record_output_response_time(elapsed_ms / 1000)
 
                 ic("send: OK", doc_id, action, key, round(elapsed_ms, 1))
-                log_event(logger, "debug", "OUTPUT", "cloud %s" % action,
-                          operation=action,
-                          doc_id=doc_id,
-                          elapsed_ms=round(elapsed_ms, 1),
-                          mode=self._provider,
-                          http_method=action)
+                log_event(
+                    logger,
+                    "debug",
+                    "OUTPUT",
+                    "cloud %s" % action,
+                    operation=action,
+                    doc_id=doc_id,
+                    elapsed_ms=round(elapsed_ms, 1),
+                    mode=self._provider,
+                    http_method=action,
+                )
                 return {
                     "ok": True,
                     "doc_id": doc_id,
@@ -651,12 +725,22 @@ class BaseCloudForwarder(abc.ABC):
                         self._metrics.inc("output_requests_total")
                         self._metrics.inc("output_errors_total")
                         self._metrics.inc("permanent_errors_total")
-                    ic("send: permanent error", doc_id, eclass,
-                       type(exc).__name__, str(exc))
-                    log_event(logger, "error", "OUTPUT",
-                              "permanent error",
-                              doc_id=doc_id, mode=self._provider,
-                              error_detail=f"{type(exc).__name__}: {exc}")
+                    ic(
+                        "send: permanent error",
+                        doc_id,
+                        eclass,
+                        type(exc).__name__,
+                        str(exc),
+                    )
+                    log_event(
+                        logger,
+                        "error",
+                        "OUTPUT",
+                        "permanent error",
+                        doc_id=doc_id,
+                        mode=self._provider,
+                        error_detail=f"{type(exc).__name__}: {exc}",
+                    )
 
                     if self._halt_on_failure:
                         from rest import OutputEndpointDown
@@ -679,13 +763,17 @@ class BaseCloudForwarder(abc.ABC):
                     self._metrics.inc("transient_errors_total")
                     self._metrics.inc("retries_total")
 
-                ic("send: transient error", doc_id, eclass, attempt,
-                   self._max_retries)
-                log_event(logger, "warn", "OUTPUT",
-                          "transient error – retrying",
-                          doc_id=doc_id, mode=self._provider,
-                          attempt=attempt,
-                          error_detail=f"{type(exc).__name__}: {exc}")
+                ic("send: transient error", doc_id, eclass, attempt, self._max_retries)
+                log_event(
+                    logger,
+                    "warn",
+                    "OUTPUT",
+                    "transient error – retrying",
+                    doc_id=doc_id,
+                    mode=self._provider,
+                    attempt=attempt,
+                    error_detail=f"{type(exc).__name__}: {exc}",
+                )
 
                 if attempt < self._max_retries:
                     delay = min(
@@ -702,14 +790,18 @@ class BaseCloudForwarder(abc.ABC):
             self._metrics.inc("output_errors_total")
             self._metrics.inc("retry_exhausted_total")
         ic("send: retries exhausted", doc_id, eclass, self._max_retries)
-        log_event(logger, "error", "OUTPUT",
-                  "retries exhausted",
-                  doc_id=doc_id, mode=self._provider,
-                  attempt=self._max_retries,
-                  error_detail=(
-                      f"{type(last_exc).__name__}: {last_exc}"
-                      if last_exc else "unknown"
-                  ))
+        log_event(
+            logger,
+            "error",
+            "OUTPUT",
+            "retries exhausted",
+            doc_id=doc_id,
+            mode=self._provider,
+            attempt=self._max_retries,
+            error_detail=(
+                f"{type(last_exc).__name__}: {last_exc}" if last_exc else "unknown"
+            ),
+        )
 
         if self._halt_on_failure:
             from rest import OutputEndpointDown
@@ -737,7 +829,11 @@ class BaseCloudForwarder(abc.ABC):
         avg = sum(self._resp_times) / n
         lo = min(self._resp_times)
         hi = max(self._resp_times)
-        log_event(logger, "info", "OUTPUT",
-                  "%s stats: %d ops | avg=%.1fms | min=%.1fms | max=%.1fms"
-                  % (self._provider.upper(), n, avg, lo, hi),
-                  mode=self._provider)
+        log_event(
+            logger,
+            "info",
+            "OUTPUT",
+            "%s stats: %d ops | avg=%.1fms | min=%.1fms | max=%.1fms"
+            % (self._provider.upper(), n, avg, lo, hi),
+            mode=self._provider,
+        )

@@ -110,7 +110,9 @@ class OracleOutputForwarder(BaseOutputForwarder):
             max=self._pool_max,
         )
         log_event(
-            logger, "info", "OUTPUT",
+            logger,
+            "info",
+            "OUTPUT",
             "Oracle pool created",
             host=self._dsn,
             mode="db",
@@ -201,7 +203,9 @@ class OracleOutputForwarder(BaseOutputForwarder):
                     for op in ops:
                         sql, params = self._op_to_oracle_sql(op)
                         log_event(
-                            logger, "debug", "OUTPUT",
+                            logger,
+                            "debug",
+                            "OUTPUT",
                             "executing SQL",
                             operation=op.op_type,
                             mode="db",
@@ -259,7 +263,9 @@ class OracleOutputForwarder(BaseOutputForwarder):
                 await cur.execute("SELECT 1 FROM DUAL")
         ic("_test_connection: OK", self._dsn)
         log_event(
-            logger, "info", "OUTPUT",
+            logger,
+            "info",
+            "OUTPUT",
             "Oracle reachable",
             host=self._dsn,
             mode="db",

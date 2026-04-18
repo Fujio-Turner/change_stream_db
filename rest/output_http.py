@@ -112,7 +112,9 @@ def serialize_doc(doc: dict, fmt: str) -> tuple[bytes | str, str]:
 
     if fmt not in CONTENT_TYPES:
         log_event(
-            logger, "error", "OUTPUT",
+            logger,
+            "error",
+            "OUTPUT",
             "unknown serialization format",
             error_detail=f"output_format={fmt}, valid={VALID_OUTPUT_FORMATS}",
         )
@@ -131,7 +133,9 @@ def serialize_doc(doc: dict, fmt: str) -> tuple[bytes | str, str]:
 
         if fmt == "msgpack":
             if msgpack is None:
-                raise RuntimeError("msgpack library not installed – pip install msgpack")
+                raise RuntimeError(
+                    "msgpack library not installed – pip install msgpack"
+                )
             return msgpack.packb(doc, default=str), CONTENT_TYPES["msgpack"]
 
         if fmt == "cbor":
@@ -156,7 +160,9 @@ def serialize_doc(doc: dict, fmt: str) -> tuple[bytes | str, str]:
     except (TypeError, ValueError, OverflowError) as exc:
         doc_id = doc.get("_id", doc.get("id", "unknown"))
         log_event(
-            logger, "error", "OUTPUT",
+            logger,
+            "error",
+            "OUTPUT",
             "serialization failed",
             doc_id=doc_id,
             error_detail=f"{type(exc).__name__}: {exc}",
@@ -303,7 +309,9 @@ class OutputForwarder:
             except (OSError, TypeError, ValueError) as exc:
                 ic("send: stdout serialization/write error", exc)
                 log_event(
-                    logger, "error", "OUTPUT",
+                    logger,
+                    "error",
+                    "OUTPUT",
                     "stdout write failed",
                     doc_id=doc.get("_id", doc.get("id", "unknown")),
                     error_detail=f"{type(exc).__name__}: {exc}",
@@ -337,7 +345,9 @@ class OutputForwarder:
         except (ValueError, TypeError, RuntimeError) as exc:
             ic("send: serialization failed", doc_id, exc)
             log_event(
-                logger, "error", "OUTPUT",
+                logger,
+                "error",
+                "OUTPUT",
                 "serialization failed – cannot send",
                 doc_id=doc_id,
                 error_detail=f"{type(exc).__name__}: {exc}",
@@ -677,7 +687,12 @@ class OutputForwarder:
 
         except (ConnectionError, aiohttp.ClientError) as exc:
             elapsed_ms = (time.monotonic() - t_start) * 1000
-            ic("send: generic connection/client error", doc_id, type(exc).__name__, str(exc))
+            ic(
+                "send: generic connection/client error",
+                doc_id,
+                type(exc).__name__,
+                str(exc),
+            )
             await self._record_time(elapsed_ms)
             if self._metrics:
                 self._metrics.inc("output_errors_total")
@@ -754,7 +769,9 @@ class OutputForwarder:
         except aiohttp.ClientConnectorError as exc:
             ic("test_reachable: connection failed", type(exc).__name__, str(exc))
             log_event(
-                logger, "error", "HTTP",
+                logger,
+                "error",
+                "HTTP",
                 "output endpoint unreachable (DNS / refused / unreachable)",
                 url=self._target_url,
                 error_detail=f"{type(exc).__name__}: {exc}",
@@ -763,7 +780,9 @@ class OutputForwarder:
         except aiohttp.ClientSSLError as exc:
             ic("test_reachable: SSL error", str(exc))
             log_event(
-                logger, "error", "HTTP",
+                logger,
+                "error",
+                "HTTP",
                 "output endpoint SSL/TLS error",
                 url=self._target_url,
                 error_detail=f"{type(exc).__name__}: {exc}",
@@ -772,7 +791,9 @@ class OutputForwarder:
         except asyncio.TimeoutError:
             ic("test_reachable: timeout", probe_url)
             log_event(
-                logger, "error", "HTTP",
+                logger,
+                "error",
+                "HTTP",
                 "output endpoint timed out",
                 url=self._target_url,
                 error_detail=f"timeout after {self._hc_timeout}s",
@@ -781,7 +802,9 @@ class OutputForwarder:
         except (ConnectionError, aiohttp.ClientError, OSError) as exc:
             ic("test_reachable: error", type(exc).__name__, str(exc))
             log_event(
-                logger, "error", "HTTP",
+                logger,
+                "error",
+                "HTTP",
                 "output endpoint unreachable",
                 url=self._target_url,
                 error_detail=f"{type(exc).__name__}: {exc}",
@@ -875,7 +898,9 @@ class OutputForwarder:
             if self._metrics:
                 self._metrics.inc("health_probe_failures_total")
             log_event(
-                logger, "warn", "HTTP",
+                logger,
+                "warn",
+                "HTTP",
                 "health check timed out",
                 url=self._hc_url,
                 error_detail=f"timeout after {self._hc_timeout}s",
@@ -886,7 +911,9 @@ class OutputForwarder:
             if self._metrics:
                 self._metrics.inc("health_probe_failures_total")
             log_event(
-                logger, "warn", "HTTP",
+                logger,
+                "warn",
+                "HTTP",
                 "health check connection failed",
                 url=self._hc_url,
                 error_detail=f"{type(exc).__name__}: {exc}",
@@ -897,7 +924,9 @@ class OutputForwarder:
             if self._metrics:
                 self._metrics.inc("health_probe_failures_total")
             log_event(
-                logger, "warn", "HTTP",
+                logger,
+                "warn",
+                "HTTP",
                 "health check SSL/TLS error",
                 url=self._hc_url,
                 error_detail=f"{type(exc).__name__}: {exc}",
@@ -908,7 +937,9 @@ class OutputForwarder:
             if self._metrics:
                 self._metrics.inc("health_probe_failures_total")
             log_event(
-                logger, "warn", "HTTP",
+                logger,
+                "warn",
+                "HTTP",
                 "health check failed",
                 url=self._hc_url,
                 error_detail=f"{type(exc).__name__}: {exc}",
@@ -1005,7 +1036,9 @@ class DeadLetterQueue:
         except OSError as exc:
             ic("DLQ.write: file write failed", self._path, exc)
             log_event(
-                logger, "error", "DLQ",
+                logger,
+                "error",
+                "DLQ",
                 "failed to write DLQ entry to file",
                 doc_id=result.get("doc_id"),
                 seq=str(seq),

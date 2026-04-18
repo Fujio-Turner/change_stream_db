@@ -88,8 +88,14 @@ class S3OutputForwarder(BaseCloudForwarder):
         )
         self._init_metrics()
 
-        ic("S3OutputForwarder init", self._bucket, self._region,
-           self._endpoint_url, self._storage_class, self._sse)
+        ic(
+            "S3OutputForwarder init",
+            self._bucket,
+            self._region,
+            self._endpoint_url,
+            self._storage_class,
+            self._sse,
+        )
 
     @property
     def _provider(self) -> str:
@@ -103,9 +109,7 @@ class S3OutputForwarder(BaseCloudForwarder):
     async def _create_client(self) -> None:
         """Create the boto3 S3 client in a thread (boto3 is sync)."""
         loop = asyncio.get_event_loop()
-        self._client = await loop.run_in_executor(
-            self._executor, self._build_client
-        )
+        self._client = await loop.run_in_executor(self._executor, self._build_client)
         ic("_create_client: OK", self._bucket, self._region)
 
     def _build_client(self):
@@ -146,8 +150,9 @@ class S3OutputForwarder(BaseCloudForwarder):
 
     # ── Object operations ───────────────────────────────────────────────
 
-    async def _upload_object(self, key: str, body: bytes,
-                             content_type: str, metadata: dict) -> dict:
+    async def _upload_object(
+        self, key: str, body: bytes, content_type: str, metadata: dict
+    ) -> dict:
         """Upload a single object to S3."""
         loop = asyncio.get_event_loop()
         put_kwargs = {
@@ -187,9 +192,7 @@ class S3OutputForwarder(BaseCloudForwarder):
         ic("_delete_object", key)
         resp = await loop.run_in_executor(
             self._executor,
-            functools.partial(
-                self._client.delete_object, Bucket=self._bucket, Key=key
-            ),
+            functools.partial(self._client.delete_object, Bucket=self._bucket, Key=key),
         )
         return {
             "status": resp.get("ResponseMetadata", {}).get("HTTPStatusCode", 204),
@@ -205,9 +208,7 @@ class S3OutputForwarder(BaseCloudForwarder):
             functools.partial(self._client.head_bucket, Bucket=self._bucket),
         )
         ic("_test_bucket: OK", self._bucket)
-        log_event(logger, "info", "OUTPUT",
-                  "S3 bucket accessible",
-                  mode="s3")
+        log_event(logger, "info", "OUTPUT", "S3 bucket accessible", mode="s3")
         return True
 
     # ── Error classification ────────────────────────────────────────────
@@ -233,13 +234,11 @@ class S3OutputForwarder(BaseCloudForwarder):
                 return True
         if ClientError and isinstance(exc, ClientError):
             code = exc.response.get("Error", {}).get("Code", "")
-            status = exc.response.get("ResponseMetadata", {}).get(
-                "HTTPStatusCode", 0
-            )
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
             # S3-specific transient error codes
             if code in (
                 "RequestTimeout",
-                "SlowDown",           # S3 rate limiting (503)
+                "SlowDown",  # S3 rate limiting (503)
                 "InternalError",
                 "ServiceUnavailable",
                 "RequestTimeTooSkewed",
@@ -272,15 +271,15 @@ class S3OutputForwarder(BaseCloudForwarder):
             return "auth"
         if ClientError and isinstance(exc, ClientError):
             code = exc.response.get("Error", {}).get("Code", "")
-            status = exc.response.get("ResponseMetadata", {}).get(
-                "HTTPStatusCode", 0
-            )
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
             if code in ("AccessDenied", "AllAccessDisabled"):
                 return "access_denied"
             if code in ("NoSuchBucket", "NoSuchKey", "NotFound"):
                 return "not_found"
             if code in (
-                "InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken",
+                "InvalidAccessKeyId",
+                "SignatureDoesNotMatch",
+                "ExpiredToken",
             ):
                 return "auth"
             if code in ("SlowDown", "RequestTimeout") or status == 429:

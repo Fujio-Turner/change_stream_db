@@ -949,14 +949,25 @@ def _auto_map(src_fields: list, table_defs: list) -> dict:
     ]
 
     FALSE_FRIENDS = [
-        ("id", "uuid"), ("created", "updated"), ("start", "end"),
-        ("first", "last"), ("source", "target"), ("min", "max"),
-        ("from", "to"), ("width", "height"), ("latitude", "longitude"),
+        ("id", "uuid"),
+        ("created", "updated"),
+        ("start", "end"),
+        ("first", "last"),
+        ("source", "target"),
+        ("min", "max"),
+        ("from", "to"),
+        ("width", "height"),
+        ("latitude", "longitude"),
     ]
 
     # Sniff patterns for data profiling
     SNIFF_PATTERNS = [
-        ("uuid", re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)),
+        (
+            "uuid",
+            re.compile(
+                r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I
+            ),
+        ),
         ("iso_date", re.compile(r"^\d{4}-\d{2}-\d{2}")),
         ("email", re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")),
         ("url", re.compile(r"^https?://", re.I)),
@@ -1039,7 +1050,11 @@ def _auto_map(src_fields: list, table_defs: list) -> dict:
                 return 1.3 if (sample and re.match(r"\d{4}-\d{2}", sample)) else 0.6
             return 0.3
         if json_type == "number":
-            return 1.0 if re.search(r"int|numeric|decimal|float|double|real|serial|money", st) else 0.3
+            return (
+                1.0
+                if re.search(r"int|numeric|decimal|float|double|real|serial|money", st)
+                else 0.3
+            )
         if json_type == "boolean":
             return 1.2 if "bool" in st else (0.7 if re.search(r"int|bit", st) else 0.3)
         return 0.3
@@ -1097,7 +1112,14 @@ def _auto_map(src_fields: list, table_defs: list) -> dict:
         segments = path.split(".")
         leaf = segments[-1].replace("[]", "") if segments else ""
         if leaf:
-            fields.append({"path": path, "leaf": leaf, "type": f.get("type", "string"), "sample": f.get("sample", "")})
+            fields.append(
+                {
+                    "path": path,
+                    "leaf": leaf,
+                    "type": f.get("type", "string"),
+                    "sample": f.get("sample", ""),
+                }
+            )
 
     result = {}
     for tbl in table_defs:
@@ -1116,7 +1138,9 @@ def _auto_map(src_fields: list, table_defs: list) -> dict:
                 ff = false_friend_penalty(col_name, fld["leaf"])
                 total = 0.45 * best_name + 0.2 * tc + sniff + sem + path_ctx + ff
                 if total >= 0.4:
-                    candidates.append({"col": col_name, "path": fld["path"], "score": round(total, 4)})
+                    candidates.append(
+                        {"col": col_name, "path": fld["path"], "score": round(total, 4)}
+                    )
 
         candidates.sort(key=lambda c: c["score"], reverse=True)
         used_cols: set[str] = set()
@@ -1337,7 +1361,9 @@ async def _explain_ops(ops: list[dict]) -> list[dict]:
         return [{"ok": None, "error": "Could not load config"}] * len(ops)
 
     if engine != "postgres":
-        return [{"ok": None, "error": f"EXPLAIN not supported for engine: {engine}"}] * len(ops)
+        return [
+            {"ok": None, "error": f"EXPLAIN not supported for engine: {engine}"}
+        ] * len(ops)
 
     try:
         import asyncpg

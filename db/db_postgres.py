@@ -101,7 +101,9 @@ class PostgresOutputForwarder(BaseOutputForwarder):
             ssl=ssl_ctx if self._ssl else None,
         )
         log_event(
-            logger, "info", "OUTPUT",
+            logger,
+            "info",
+            "OUTPUT",
             "PostgreSQL pool created",
             host=self._host,
             port=self._port,
@@ -114,7 +116,9 @@ class PostgresOutputForwarder(BaseOutputForwarder):
         if pool:
             await pool.close()
             log_event(
-                logger, "info", "OUTPUT",
+                logger,
+                "info",
+                "OUTPUT",
                 "PostgreSQL pool closed",
                 host=self._host,
                 port=self._port,
@@ -140,7 +144,9 @@ class PostgresOutputForwarder(BaseOutputForwarder):
                     sql, params = op.to_sql()
                     doc_id = getattr(op, "doc_id", None)
                     log_event(
-                        logger, "debug", "OUTPUT",
+                        logger,
+                        "debug",
+                        "OUTPUT",
                         "SQL exec",
                         operation=getattr(op, "operation", None),
                         doc_id=doc_id,
@@ -207,7 +213,9 @@ class PostgresOutputForwarder(BaseOutputForwarder):
             await conn.fetchval("SELECT 1")
         ic("_test_connection: OK", self._host, self._port)
         log_event(
-            logger, "info", "OUTPUT",
+            logger,
+            "info",
+            "OUTPUT",
             "PostgreSQL reachable",
             host=self._host,
             port=self._port,

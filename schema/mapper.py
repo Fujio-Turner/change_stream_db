@@ -204,9 +204,13 @@ def apply_transform(value: Any, transform: str) -> Any:
         return bool(re.search(pattern, str(value)))
 
     # Unrecognised transform – pass through unchanged
-    log_event(logger, "debug", "MAPPING",
-              "unrecognised transform – passing value through",
-              error_detail=transform)
+    log_event(
+        logger,
+        "debug",
+        "MAPPING",
+        "unrecognised transform – passing value through",
+        error_detail=transform,
+    )
     return value
 
 
@@ -707,7 +711,9 @@ class SchemaMapper:
             # Sanitize float inf/nan – PostgreSQL integer/numeric columns reject them
             if isinstance(value, float) and (math.isinf(value) or math.isnan(value)):
                 log_event(
-                    logger, "warn", "MAPPING",
+                    logger,
+                    "warn",
+                    "MAPPING",
                     "non-finite float value – replacing with None",
                     error_detail=f"column={col_name!r} value={value!r}",
                 )

@@ -107,7 +107,9 @@ class MySQLOutputForwarder(BaseOutputForwarder):
             autocommit=False,
         )
         log_event(
-            logger, "info", "OUTPUT",
+            logger,
+            "info",
+            "OUTPUT",
             "MySQL pool created",
             host=self._host,
             port=self._port,
@@ -186,7 +188,9 @@ class MySQLOutputForwarder(BaseOutputForwarder):
                     for op in ops:
                         sql, params = self._op_to_mysql_sql(op)
                         log_event(
-                            logger, "debug", "OUTPUT",
+                            logger,
+                            "debug",
+                            "OUTPUT",
                             "SQL exec",
                             operation=op.op_type,
                         )
@@ -243,7 +247,9 @@ class MySQLOutputForwarder(BaseOutputForwarder):
                 await cur.execute("SELECT 1")
         ic("_test_connection: OK", self._host, self._port, self._database)
         log_event(
-            logger, "info", "OUTPUT",
+            logger,
+            "info",
+            "OUTPUT",
             "MySQL reachable",
             host=self._host,
             port=self._port,

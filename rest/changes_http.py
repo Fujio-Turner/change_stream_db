@@ -13,6 +13,10 @@ import base64
 import json
 import logging
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from main import Checkpoint, MetricsCollector
 
 import aiohttp
 
@@ -378,9 +382,7 @@ async def _fetch_docs_bulk_get(
 
         # Determine which doc IDs are missing
         returned_ids = {doc.get("_id", "") for doc in results}
-        missing_rows = [
-            r for r in rows if r["id"] not in returned_ids
-        ]
+        missing_rows = [r for r in rows if r["id"] not in returned_ids]
 
         ic("bulk_get: fetching missing docs individually", len(missing_rows))
 
@@ -467,9 +469,7 @@ async def _fetch_docs_individually(
             except ClientHTTPError as exc:
                 if exc.status in (401, 403):
                     raise  # auth errors are non-retryable
-                logger.warning(
-                    "Failed to fetch doc %s: HTTP %d", doc_id, exc.status
-                )
+                logger.warning("Failed to fetch doc %s: HTTP %d", doc_id, exc.status)
                 if metrics:
                     metrics.inc("doc_fetch_errors_total")
             except Exception as exc:
@@ -946,7 +946,12 @@ async def _catch_up_normal(
 
     while not shutdown_event.is_set():
         body_payload = _build_changes_body(
-            feed_cfg, src, since, "normal", timeout_ms, limit=catchup_limit,
+            feed_cfg,
+            src,
+            since,
+            "normal",
+            timeout_ms,
+            limit=catchup_limit,
             active_only_override=True if initial_sync else None,
         )
         ic(changes_url, body_payload, since, "catch-up")
@@ -1292,9 +1297,7 @@ async def _consume_websocket_stream(
 
             while not shutdown_event.is_set():
                 try:
-                    msg = await asyncio.wait_for(
-                        ws.receive(), timeout=ws_idle_timeout
-                    )
+                    msg = await asyncio.wait_for(ws.receive(), timeout=ws_idle_timeout)
                 except asyncio.TimeoutError:
                     failure_count += 1
                     logger.warning(

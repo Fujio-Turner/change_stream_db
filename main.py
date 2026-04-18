@@ -1968,7 +1968,11 @@ async def poll_changes(
             # ── Polled mode (longpoll / normal / sse) ────────────────────────
             while not stop_event.is_set():
                 body_payload = _build_changes_body(
-                    feed_cfg, src, since, feed_type, timeout_ms,
+                    feed_cfg,
+                    src,
+                    since,
+                    feed_type,
+                    timeout_ms,
                     active_only_override=True if initial_sync else None,
                 )
                 # throttle_feed overrides limit – eat the feed one bite at a time

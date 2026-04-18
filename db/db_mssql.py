@@ -114,9 +114,13 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
             maxsize=self._pool_max,
         )
         log_event(
-            logger, "info", "OUTPUT",
+            logger,
+            "info",
+            "OUTPUT",
             "MSSQL pool created",
-            host=self._host, port=self._port, db_name=self._database,
+            host=self._host,
+            port=self._port,
+            db_name=self._database,
         )
 
     async def _close_pool(self) -> None:
@@ -204,7 +208,10 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
                     for op in ops:
                         sql, params = self._op_to_mssql_sql(op)
                         log_event(
-                            logger, "debug", "OUTPUT", "SQL exec",
+                            logger,
+                            "debug",
+                            "OUTPUT",
+                            "SQL exec",
                             operation=op.op_type,
                         )
                         await cur.execute(sql, *params)
@@ -260,9 +267,13 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
                 await cur.execute("SELECT 1")
         ic("_test_connection: OK", self._host, self._port, self._database)
         log_event(
-            logger, "info", "OUTPUT",
+            logger,
+            "info",
+            "OUTPUT",
             "MSSQL reachable",
-            host=self._host, port=self._port, db_name=self._database,
+            host=self._host,
+            port=self._port,
+            db_name=self._database,
         )
 
 

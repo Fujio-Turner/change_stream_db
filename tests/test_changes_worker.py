@@ -1240,24 +1240,18 @@ class TestBuildChangesBody(unittest.TestCase):
 
     def test_edge_server_no_version_type(self):
         feed_cfg = {"heartbeat_ms": 30000}
-        body = cw._build_changes_body(
-            feed_cfg, "edge_server", "0", "longpoll", 60000
-        )
+        body = cw._build_changes_body(feed_cfg, "edge_server", "0", "longpoll", 60000)
         self.assertNotIn("version_type", body)
 
     def test_channels_filter(self):
         feed_cfg = {"heartbeat_ms": 30000, "channels": ["ch1", "ch2"]}
-        body = cw._build_changes_body(
-            feed_cfg, "sync_gateway", "0", "normal", 60000
-        )
+        body = cw._build_changes_body(feed_cfg, "sync_gateway", "0", "normal", 60000)
         self.assertEqual(body["filter"], "sync_gateway/bychannel")
         self.assertEqual(body["channels"], "ch1,ch2")
 
     def test_include_docs_and_active_only(self):
         feed_cfg = {"heartbeat_ms": 30000, "include_docs": True, "active_only": True}
-        body = cw._build_changes_body(
-            feed_cfg, "sync_gateway", "0", "normal", 60000
-        )
+        body = cw._build_changes_body(feed_cfg, "sync_gateway", "0", "normal", 60000)
         self.assertIs(body["include_docs"], True)
         self.assertIs(body["active_only"], True)
 
@@ -2578,9 +2572,7 @@ class TestFetchDocsBulkGetJsonError(unittest.TestCase):
                 "results": [
                     {
                         "id": "doc1",
-                        "docs": [
-                            {"ok": {"_id": "doc1", "_rev": "1-abc", "val": 1}}
-                        ],
+                        "docs": [{"ok": {"_id": "doc1", "_rev": "1-abc", "val": 1}}],
                     },
                     {
                         "id": "doc2",
@@ -2684,9 +2676,7 @@ class TestFetchDocsIndividuallyAuthErrors(unittest.TestCase):
 
         async def _run():
             http = MagicMock()
-            http.request = AsyncMock(
-                side_effect=cw.ClientHTTPError(403, "Forbidden")
-            )
+            http.request = AsyncMock(side_effect=cw.ClientHTTPError(403, "Forbidden"))
 
             rows = [{"id": "doc1", "changes": [{"rev": "1-abc"}]}]
             with self.assertRaises(cw.ClientHTTPError) as ctx:
@@ -2703,9 +2693,7 @@ class TestFetchDocsIndividuallyAuthErrors(unittest.TestCase):
         async def _run():
             metrics = cw.MetricsCollector("sync_gateway", "db")
             http = MagicMock()
-            http.request = AsyncMock(
-                side_effect=cw.ClientHTTPError(404, "Not Found")
-            )
+            http.request = AsyncMock(side_effect=cw.ClientHTTPError(404, "Not Found"))
 
             rows = [{"id": "doc1", "changes": [{"rev": "1-abc"}]}]
             result = await cw._fetch_docs_individually(
@@ -2789,9 +2777,7 @@ class TestLongpollTimeoutHandling(unittest.TestCase):
                 resp = AsyncMock()
                 resp.status = 200
                 resp.read = AsyncMock(
-                    return_value=json.dumps(
-                        {"results": [], "last_seq": "5"}
-                    ).encode()
+                    return_value=json.dumps({"results": [], "last_seq": "5"}).encode()
                 )
                 resp.release = MagicMock()
                 return resp
@@ -2862,7 +2848,9 @@ class TestWebsocketIdleTimeout(unittest.TestCase):
 
     @patch("rest.changes_http._sleep_with_backoff", new_callable=AsyncMock)
     @patch("rest.changes_http._process_changes_batch", new_callable=AsyncMock)
-    def test_idle_timeout_increments_metric_and_reconnects(self, mock_batch, mock_sleep):
+    def test_idle_timeout_increments_metric_and_reconnects(
+        self, mock_batch, mock_sleep
+    ):
         """When asyncio.TimeoutError fires from wait_for, poll_errors_total is bumped."""
 
         async def _run():
@@ -2886,9 +2874,7 @@ class TestWebsocketIdleTimeout(unittest.TestCase):
                 # On reconnect, shut down
                 params["shutdown_event"].set()
                 ws2 = AsyncMock()
-                ws2.receive = AsyncMock(
-                    return_value=_ws_msg(aiohttp.WSMsgType.CLOSED)
-                )
+                ws2.receive = AsyncMock(return_value=_ws_msg(aiohttp.WSMsgType.CLOSED))
                 ws2.send_json = AsyncMock()
                 ws2.closed = False
                 ws2.close = AsyncMock()
@@ -2935,16 +2921,16 @@ class TestBulkGetRespRelease(unittest.TestCase):
             http = MagicMock()
             resp = AsyncMock()
             resp.content_type = "application/json"
-            resp.read = AsyncMock(
-                return_value=json.dumps({"results": []}).encode()
-            )
+            resp.read = AsyncMock(return_value=json.dumps({"results": []}).encode())
             resp.release = MagicMock()
             http.request = AsyncMock(return_value=resp)
 
             await cw._fetch_docs_bulk_get(
-                http, "http://localhost:4984/db",
+                http,
+                "http://localhost:4984/db",
                 [{"id": "d1", "changes": [{"rev": "1-x"}]}],
-                None, {},
+                None,
+                {},
             )
             resp.release.assert_called()
 
@@ -2960,9 +2946,11 @@ class TestBulkGetRespRelease(unittest.TestCase):
             http.request = AsyncMock(return_value=resp)
 
             await cw._fetch_docs_bulk_get(
-                http, "http://localhost:4984/db",
+                http,
+                "http://localhost:4984/db",
                 [{"id": "d1", "changes": [{"rev": "1-x"}]}],
-                None, {},
+                None,
+                {},
             )
             resp.release.assert_called()
 
@@ -2970,6 +2958,7 @@ class TestBulkGetRespRelease(unittest.TestCase):
 
     def test_malformed_json_path_still_releases(self):
         """Even on JSONDecodeError, release() should have been called before parsing."""
+
         async def _run():
             http = MagicMock()
             resp = AsyncMock()
@@ -2979,9 +2968,11 @@ class TestBulkGetRespRelease(unittest.TestCase):
             http.request = AsyncMock(return_value=resp)
 
             await cw._fetch_docs_bulk_get(
-                http, "http://localhost:4984/db",
+                http,
+                "http://localhost:4984/db",
                 [{"id": "d1", "changes": [{"rev": "1-x"}]}],
-                None, {},
+                None,
+                {},
             )
             resp.release.assert_called()
 
