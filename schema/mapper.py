@@ -13,6 +13,7 @@ import json
 import logging
 import math
 import re
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -417,6 +418,29 @@ class MappingDiagnostics:
         return "; ".join(parts)
 
 
+# ISO date/datetime regex patterns for auto-coercion
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ISO_DATETIME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?"
+    r"([Zz]|[+\-]\d{2}:\d{2})?$"
+)
+
+
+def _maybe_coerce_date(value: str) -> str | date | datetime:
+    """Convert ISO-format date/datetime strings to Python objects for asyncpg."""
+    if _ISO_DATE_RE.match(value):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return value
+    if _ISO_DATETIME_RE.match(value):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+    return value
+
+
 # SQL type keyword → Python types that are acceptable
 _SQL_TYPE_EXPECT: dict[str, tuple[str, tuple[type, ...]]] = {
     "text": ("str", (str,)),
@@ -433,8 +457,9 @@ _SQL_TYPE_EXPECT: dict[str, tuple[str, tuple[type, ...]]] = {
     "decimal": ("number", (int, float, Decimal)),
     "boolean": ("bool", (bool,)),
     "bool": ("bool", (bool,)),
-    "date": ("str", (str,)),
-    "timestamp": ("str", (str,)),
+    "date": ("date", (str, date)),
+    "timestamp": ("datetime", (str, datetime)),
+    "timestamptz": ("datetime", (str, datetime)),
 }
 
 
@@ -687,6 +712,11 @@ class SchemaMapper:
                     error_detail=f"column={col_name!r} value={value!r}",
                 )
                 value = None
+
+            # Coerce ISO-format date/datetime strings to Python objects for asyncpg
+            if isinstance(value, str) and value:
+                value = _maybe_coerce_date(value)
+
             row[col_name] = value
         return row
 

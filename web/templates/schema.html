@@ -9,6 +9,7 @@
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
   <script src="/static/js/tailwind.js"></script>
+  <script src="/static/js/ai-assist.js"></script>
   <script src="/static/js/echarts.min.js"></script>
   <script>
     (function(){
@@ -27,6 +28,46 @@
     .ac-item { padding: 4px 8px; cursor: pointer; }
     .ac-item:hover, .ac-item.active { background: oklch(var(--p) / 0.2); }
     .ac-cat { padding: 3px 8px; font-size: 10px; font-weight: 700; opacity: 0.5; text-transform: uppercase; }
+    /* Pipeline stage border accents (matching index.html) */
+    .border-source  { border-left: 3px solid var(--color-success); }
+    .border-process { border-left: 3px solid var(--color-info); }
+    .border-output  { border-left: 3px solid var(--color-warning); }
+    .drop-zone { border: 2px dashed oklch(var(--bc) / 0.25); border-radius: 0.75rem; padding: 0.75rem; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+    .drop-zone:hover, .drop-zone.drag-hover { border-color: oklch(var(--p)); background: oklch(var(--p) / 0.06); }
+    /* Step progress styling — uses DaisyUI step-success / step-error color classes */
+    /* Validation error styling */
+    .validate-err { border-color: oklch(var(--er)) !important; }
+    .val-alert { font-size: 12px; padding: 8px 12px; }
+    /* Validation indicator badges on inputs */
+    .val-indicator { position: relative; display: flex; width: 100%; }
+    .val-indicator .val-indicator-badge {
+      position: absolute; top: -12px; right: -12px; z-index: 10;
+      min-width: 28px; height: 28px; font-size: 13px; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 9999px; cursor: pointer;
+      background: #f59e0b; color: #000; border: 2px solid #d97706;
+      transition: transform 0.2s ease;
+    }
+    .val-indicator .val-indicator-badge:hover { transform: scale(1.25); }
+    .val-indicator .val-indicator-badge.val-badge-jump {
+      animation: valBadgeJump 0.5s ease;
+    }
+    @keyframes valBadgeJump {
+      0% { transform: scale(1); }
+      30% { transform: scale(1.5) translateY(-4px); }
+      60% { transform: scale(1.1); }
+      100% { transform: scale(1); }
+    }
+    /* Floating problems panel */
+    #validationProblemsPanel { position: sticky; bottom: 0; z-index: 50; }
+    #validationProblemsPanel .val-panel-item { cursor: pointer; transition: background 0.15s, box-shadow 0.15s; }
+    #validationProblemsPanel .val-panel-item:hover { background: oklch(var(--wa) / 0.25); box-shadow: 0 0 0 2px #f59e0b; }
+    .val-flash { animation: valFlash 1s ease-out; }
+    @keyframes valFlash { 0%,30% { box-shadow: 0 0 0 3px oklch(var(--wa) / 0.6); } 100% { box-shadow: none; } }
+    /* Straight timeline line fix */
+    #validateResultContent .timeline-middle { display: flex; align-items: center; justify-content: center; width: 28px; min-width: 28px; }
+    #validateResultContent .timeline-middle .badge { width: 28px; height: 28px; padding: 0; }
+    #validateResultContent .timeline-middle svg { width: 28px; height: 28px; }
   </style>
 </head>
 <body class="min-h-screen bg-base-200">
@@ -37,15 +78,12 @@
 
     <!-- Top action bar -->
     <div class="card bg-base-100 shadow-sm rounded-2xl">
-      <div class="card-body p-4 flex-row items-center gap-2 flex-wrap">
-        <div class="flex items-center gap-2">
-          <h2 class="font-semibold text-base">Mapping:</h2>
-          <input id="filenameInput" type="text" placeholder="filename.json" class="input input-bordered input-sm w-48" />
-        </div>
-        <button class="btn btn-success btn-sm" onclick="saveMapping()">Save</button>
-        <button class="btn btn-secondary btn-sm" onclick="downloadMapping()">Download</button>
+      <div class="card-body p-4 flex-row items-center gap-3 flex-wrap">
+        <!-- Save + Mapping name -->
+        <button class="btn btn-info btn-md text-base font-bold px-6" onclick="saveMapping()">Save Mapping</button>
+        <input id="filenameInput" type="text" placeholder="filename.json" class="input input-bordered input-sm w-48" />
         <div class="dropdown">
-          <label tabindex="0" class="btn btn-accent btn-sm">Sample Templates ▾</label>
+          <label tabindex="0" class="btn btn-ghost btn-sm">Sample Mappings ▾</label>
           <ul tabindex="0" class="dropdown-content menu p-2 shadow-lg bg-base-200 rounded-box w-56 z-50">
             <li class="menu-title text-xs opacity-50">Tables</li>
             <li><a onclick="loadTemplate('orders')">Orders</a></li>
@@ -57,22 +95,32 @@
             <li><a onclick="loadTemplate('sensors_json')">Sensors (JSON)</a></li>
           </ul>
         </div>
-        <div class="dropdown">
-          <label tabindex="0" class="btn btn-ghost btn-sm">Saved Files ▾</label>
-          <ul tabindex="0" class="dropdown-content menu p-2 shadow-lg bg-base-200 rounded-box w-64 z-50" id="fileListDropdown">
-            <li><a class="text-base-content/50">Loading...</a></li>
-          </ul>
+
+        <!-- Right-aligned group -->
+        <div class="flex items-center gap-2 ml-auto">
+          <span id="statusMsg" class="text-sm"></span>
+          <button class="btn btn-sm" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;" onclick="openAIAssist()">AI Mapping Assist</button>
+          <button class="btn btn-ghost btn-sm" onclick="downloadMapping()">Export Mapping</button>
+          <label class="btn btn-ghost btn-sm" onclick="document.getElementById('importFileInput').click()">Import Mapping</label>
+          <input type="file" id="importFileInput" accept=".json,application/json" class="hidden" onchange="importMappingFile(event)" />
         </div>
-        <button class="btn btn-info btn-sm" onclick="document.getElementById('dbImportModal').showModal()">Import from Database</button>
-        <button class="btn btn-warning btn-sm" onclick="document.getElementById('ddlModal').showModal()">Upload DDL</button>
-        <button class="btn btn-primary btn-sm" onclick="validateMapping()">Validate Mapping</button>
-        <button class="btn btn-sm" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;" onclick="openAIAssist()">AI Assist Me</button>
-        <span id="statusMsg" class="text-sm ml-auto"></span>
+      </div>
+    </div>
+
+    <!-- Progress Steps -->
+    <div class="card bg-base-100 shadow-sm rounded-2xl border-process">
+      <div class="card-body p-3">
+        <ul class="steps steps-horizontal w-full text-sm">
+          <li id="step1" class="step step-error" data-content="✕">Source Selected</li>
+          <li id="step2" class="step step-error" data-content="✕">Output Selected</li>
+          <li id="step3" class="step step-error" data-content="✕">Schema Mapped</li>
+          <li id="step4" class="step step-error" data-content="✕">Save Mapping</li>
+        </ul>
       </div>
     </div>
 
     <!-- Saved Mappings Table -->
-    <div class="card bg-base-100 shadow-sm rounded-2xl">
+    <div class="card bg-base-100 shadow-sm rounded-2xl border-process">
       <div class="card-body p-4">
         <div class="flex items-center gap-2 mb-2">
           <h3 class="font-semibold text-base">Saved Mappings</h3>
@@ -253,8 +301,63 @@ CREATE TABLE order_items (
 
       <!-- LEFT: Source JSON -->
       <div class="w-[45%] flex flex-col gap-4">
-        <div class="card bg-base-100 shadow-sm rounded-2xl flex-1 flex flex-col">
+        <div class="card bg-base-100 shadow-sm rounded-2xl flex-1 flex flex-col border-source">
           <div class="card-body p-4 flex-1 flex flex-col">
+            <h3 class="text-xs font-bold uppercase mb-2" style="color:var(--color-success)">Source</h3>
+
+            <!-- Source Connection (read-only from global config) -->
+            <div class="collapse collapse-arrow bg-base-200 rounded-xl mb-3">
+              <input type="checkbox" id="srcConnToggle" />
+              <div class="collapse-title py-2 px-3 min-h-0">
+                <div class="flex items-center gap-2">
+                  <h4 class="text-sm font-semibold">Source Connection</h4>
+                  <span class="badge badge-ghost badge-xs">from config.json</span>
+                </div>
+              </div>
+              <div class="collapse-content px-3 pb-3">
+                <div class="grid grid-cols-2 gap-2" id="srcConnFields">
+                  <div><label class="label label-text text-xs">Source Type</label><input id="srcTypeRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" readonly /></div>
+                  <div><label class="label label-text text-xs">URL</label><input id="srcUrlRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" readonly /></div>
+                  <div><label class="label label-text text-xs">Database</label><input id="srcDatabaseRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" readonly /></div>
+                  <div><label class="label label-text text-xs">Scope</label><input id="srcScopeRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" readonly /></div>
+                  <div><label class="label label-text text-xs">Collection</label><input id="srcCollectionRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" readonly /></div>
+                  <div><label class="label label-text text-xs">Feed Type</label><input id="srcFeedTypeRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" readonly /></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Source Match -->
+            <div class="card bg-base-200 rounded-xl mb-3">
+              <div class="card-body p-3">
+                <div class="flex items-center gap-2 mb-1">
+                  <h4 class="text-sm font-semibold">Source Match</h4>
+                  <div class="tooltip tooltip-right" data-tip="Match documents by field name or by expression. Expressions let you use string functions on any field (e.g. split($._id,&quot;::&quot;)[0] to extract a type prefix from the document key).">
+                    <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2 mb-2">
+                  <select id="matchMode" class="select select-bordered select-sm w-36" onchange="onMatchModeChange()">
+                    <option value="field">Field</option>
+                    <option value="expression">Expression</option>
+                  </select>
+                  <div id="matchModeHelpField" class="tooltip tooltip-right" data-tip="Field mode: match documents where a top-level field equals a value. Enter the field name (e.g. &quot;type&quot; or &quot;docType&quot;) and the expected value. Only documents where that field matches will be processed by this mapping.">
+                    <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                  </div>
+                  <div id="matchModeHelpExpr" class="tooltip tooltip-right hidden" data-tip="Expression mode: use string functions to extract a value from any field before matching. Useful when the type is embedded in the document key (e.g. _id = &quot;invoice::12345&quot;). Supported: split($._id,&quot;::&quot;)[0], lowercase(), uppercase(), left(), right(), substring(), contains(), startswith(), endswith(), regex_match().">
+                    <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                  </div>
+                </div>
+                <div id="matchFieldRow" class="flex gap-2">
+                  <input id="matchField" type="text" placeholder="field (e.g. type)" class="input input-bordered input-sm flex-1" oninput="onMappingChange()" />
+                  <input id="matchValue" type="text" placeholder="value (e.g. order)" class="input input-bordered input-sm flex-1" oninput="onMappingChange()" />
+                </div>
+                <div id="matchExprRow" class="flex gap-2 hidden">
+                  <input id="matchExpression" type="text" placeholder='expression e.g. split($._id,"::")[0]' class="input input-bordered input-sm flex-[2]" oninput="onMappingChange()" />
+                  <input id="matchExprValue" type="text" placeholder="value (e.g. invoice)" class="input input-bordered input-sm flex-1" oninput="onMappingChange()" />
+                </div>
+              </div>
+            </div>
+
             <div class="flex items-center gap-2 mb-3">
               <div class="tabs tabs-boxed">
                 <a class="tab tab-active" id="tabPaste" onclick="switchSourceTab('paste')">Paste JSON</a>
@@ -308,8 +411,32 @@ CREATE TABLE order_items (
 
       <!-- RIGHT: Target Output -->
       <div class="w-[55%] flex flex-col gap-4">
-        <div class="card bg-base-100 shadow-sm rounded-2xl flex-1 flex flex-col">
+        <div class="card bg-base-100 shadow-sm rounded-2xl flex-1 flex flex-col border-output">
           <div class="card-body p-4 flex-1 flex flex-col">
+            <h3 class="text-xs font-bold uppercase mb-2" style="color:var(--color-warning)">Output</h3>
+
+            <!-- Output Connection (read-only from global config) -->
+            <div class="collapse collapse-arrow bg-base-200 rounded-xl mb-3">
+              <input type="checkbox" id="outConnToggle" />
+              <div class="collapse-title py-2 px-3 min-h-0">
+                <div class="flex items-center gap-2">
+                  <h4 class="text-sm font-semibold">Output Connection</h4>
+                  <span class="badge badge-ghost badge-xs">from config.json</span>
+                </div>
+              </div>
+              <div class="collapse-content px-3 pb-3">
+                <div class="grid grid-cols-2 gap-2" id="outConnFields">
+                  <div><label class="label label-text text-xs">Output Mode</label><input id="outModeRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" readonly /></div>
+                  <div><label class="label label-text text-xs">Host</label><input id="outHostRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" readonly /></div>
+                  <div><label class="label label-text text-xs">Port</label><input id="outPortRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" readonly /></div>
+                  <div><label class="label label-text text-xs">Database</label><input id="outDatabaseRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" readonly /></div>
+                  <div><label class="label label-text text-xs">User</label><input id="outUserRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" readonly /></div>
+                  <div><label class="label label-text text-xs">Password</label><input id="outPasswordRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" value="••••••••" readonly /></div>
+                  <div><label class="label label-text text-xs">Schema</label><input id="outSchemaRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" readonly /></div>
+                  <div><label class="label label-text text-xs">SSL</label><input id="outSSLRO" type="text" class="input input-bordered input-sm w-full bg-base-300 cursor-default" readonly /></div>
+                </div>
+              </div>
+            </div>
 
             <!-- Output mode toggle -->
             <div class="flex items-center gap-3 mb-3">
@@ -320,153 +447,14 @@ CREATE TABLE order_items (
               </div>
             </div>
 
-            <!-- Source match (shared) -->
-            <div class="card bg-base-200 rounded-xl mb-3">
-              <div class="card-body p-3">
-                <div class="flex items-center gap-2 mb-1">
-                  <h4 class="text-sm font-semibold">Source Match</h4>
-                  <div class="tooltip tooltip-right" data-tip="Match documents by field name or by expression. Expressions let you use string functions on any field (e.g. split($._id,&quot;::&quot;)[0] to extract a type prefix from the document key).">
-                    <span class="badge badge-ghost badge-sm cursor-help">?</span>
-                  </div>
-                </div>
-                <div class="flex items-center gap-2 mb-2">
-                  <select id="matchMode" class="select select-bordered select-sm w-36" onchange="onMatchModeChange()">
-                    <option value="field">Field</option>
-                    <option value="expression">Expression</option>
-                  </select>
-                  <div id="matchModeHelpField" class="tooltip tooltip-right" data-tip="Field mode: match documents where a top-level field equals a value. Enter the field name (e.g. &quot;type&quot; or &quot;docType&quot;) and the expected value. Only documents where that field matches will be processed by this mapping.">
-                    <span class="badge badge-ghost badge-sm cursor-help">?</span>
-                  </div>
-                  <div id="matchModeHelpExpr" class="tooltip tooltip-right hidden" data-tip="Expression mode: use string functions to extract a value from any field before matching. Useful when the type is embedded in the document key (e.g. _id = &quot;invoice::12345&quot;). Supported: split($._id,&quot;::&quot;)[0], lowercase(), uppercase(), left(), right(), substring(), contains(), startswith(), endswith(), regex_match().">
-                    <span class="badge badge-ghost badge-sm cursor-help">?</span>
-                  </div>
-                </div>
-                <div id="matchFieldRow" class="flex gap-2">
-                  <input id="matchField" type="text" placeholder="field (e.g. type)" class="input input-bordered input-sm flex-1" oninput="onMappingChange()" />
-                  <input id="matchValue" type="text" placeholder="value (e.g. order)" class="input input-bordered input-sm flex-1" oninput="onMappingChange()" />
-                </div>
-                <div id="matchExprRow" class="flex gap-2 hidden">
-                  <input id="matchExpression" type="text" placeholder='expression e.g. split($._id,"::")[0]' class="input input-bordered input-sm flex-[2]" oninput="onMappingChange()" />
-                  <input id="matchExprValue" type="text" placeholder="value (e.g. invoice)" class="input input-bordered input-sm flex-1" oninput="onMappingChange()" />
-                </div>
-              </div>
-            </div>
-
-            <!-- Source Connection (collapsible) -->
-            <div class="collapse collapse-arrow bg-base-200 rounded-xl mb-3">
-              <input type="checkbox" id="srcConnToggle" />
-              <div class="collapse-title py-2 px-3 min-h-0">
-                <div class="flex items-center gap-2">
-                  <h4 class="text-sm font-semibold">Source Connection</h4>
-                  <div class="tooltip tooltip-right" data-tip="Optional per-mapping source override. If left blank, the global config.json connection is used. Useful when this mapping targets a different changes feed, database, scope, or collection.">
-                    <span class="badge badge-ghost badge-sm cursor-help">?</span>
-                  </div>
-                </div>
-              </div>
-              <div class="collapse-content px-3 pb-3">
-                <div class="grid grid-cols-2 gap-2">
-                  <div>
-                    <label class="label label-text text-xs">Source Type</label>
-                    <select id="srcType" class="select select-bordered select-sm w-full" oninput="onMappingChange()">
-                      <option value="">-- use global --</option>
-                      <option value="sync_gateway">Sync Gateway</option>
-                      <option value="app_services">App Services</option>
-                      <option value="edge_server">Edge Server</option>
-                      <option value="couchdb">CouchDB</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label class="label label-text text-xs">URL</label>
-                    <input id="srcUrl" type="text" class="input input-bordered input-sm w-full" placeholder="http://localhost:4984" oninput="onMappingChange()" />
-                  </div>
-                  <div>
-                    <label class="label label-text text-xs">Database</label>
-                    <input id="srcDatabase" type="text" class="input input-bordered input-sm w-full" placeholder="db" oninput="onMappingChange()" />
-                  </div>
-                  <div>
-                    <label class="label label-text text-xs">Scope</label>
-                    <input id="srcScope" type="text" class="input input-bordered input-sm w-full" placeholder="_default" oninput="onMappingChange()" />
-                  </div>
-                  <div>
-                    <label class="label label-text text-xs">Collection</label>
-                    <input id="srcCollection" type="text" class="input input-bordered input-sm w-full" placeholder="_default" oninput="onMappingChange()" />
-                  </div>
-                  <div>
-                    <label class="label label-text text-xs">Feed Type</label>
-                    <select id="srcFeedType" class="select select-bordered select-sm w-full" oninput="onMappingChange()">
-                      <option value="">-- use global --</option>
-                      <option value="longpoll">Long Poll</option>
-                      <option value="continuous">Continuous</option>
-                      <option value="normal">Normal</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Output Connection (collapsible) -->
-            <div class="collapse collapse-arrow bg-base-200 rounded-xl mb-3">
-              <input type="checkbox" id="outConnToggle" />
-              <div class="collapse-title py-2 px-3 min-h-0">
-                <div class="flex items-center gap-2">
-                  <h4 class="text-sm font-semibold">Output Connection</h4>
-                  <div class="tooltip tooltip-right" data-tip="Optional per-mapping output override. If left blank, the global config.json output is used. Lets each mapping write to a different database or target.">
-                    <span class="badge badge-ghost badge-sm cursor-help">?</span>
-                  </div>
-                </div>
-              </div>
-              <div class="collapse-content px-3 pb-3">
-                <div class="grid grid-cols-2 gap-2">
-                  <div>
-                    <label class="label label-text text-xs">Output Mode</label>
-                    <select id="outMode" class="select select-bordered select-sm w-full" oninput="onMappingChange()">
-                      <option value="">-- use global --</option>
-                      <option value="postgres">PostgreSQL</option>
-                      <option value="mysql">MySQL</option>
-                      <option value="mssql">MS SQL Server</option>
-                      <option value="oracle">Oracle</option>
-                      <option value="rest_api">REST API</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label class="label label-text text-xs">Host</label>
-                    <input id="outHost" type="text" class="input input-bordered input-sm w-full" placeholder="localhost" oninput="onMappingChange()" />
-                  </div>
-                  <div>
-                    <label class="label label-text text-xs">Port</label>
-                    <input id="outPort" type="number" class="input input-bordered input-sm w-full" placeholder="5432" oninput="onMappingChange()" />
-                  </div>
-                  <div>
-                    <label class="label label-text text-xs">Database</label>
-                    <input id="outDatabase" type="text" class="input input-bordered input-sm w-full" placeholder="mydb" oninput="onMappingChange()" />
-                  </div>
-                  <div>
-                    <label class="label label-text text-xs">User</label>
-                    <input id="outUser" type="text" class="input input-bordered input-sm w-full" placeholder="postgres" oninput="onMappingChange()" />
-                  </div>
-                  <div>
-                    <label class="label label-text text-xs">Password</label>
-                    <input id="outPassword" type="password" class="input input-bordered input-sm w-full" oninput="onMappingChange()" />
-                  </div>
-                  <div>
-                    <label class="label label-text text-xs">Schema</label>
-                    <input id="outSchema" type="text" class="input input-bordered input-sm w-full" placeholder="public" oninput="onMappingChange()" />
-                  </div>
-                  <div class="flex items-end">
-                    <label class="label cursor-pointer gap-2">
-                      <span class="label-text text-xs">SSL</span>
-                      <input id="outSSL" type="checkbox" class="checkbox checkbox-sm" oninput="onMappingChange()" />
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-
             <!-- TABLES mode -->
             <div id="tablesMode" class="flex-1 flex flex-col">
-              <div class="flex items-center gap-2 mb-3">
+              <div class="flex items-center gap-2 mb-3 flex-wrap">
                 <div class="tabs tabs-boxed flex-1" id="tableTabs"></div>
                 <button class="btn btn-primary btn-sm" onclick="addTable()">+ Table</button>
+                <button class="btn btn-info btn-sm" onclick="document.getElementById('dbImportModal').showModal()">Import from Database</button>
+                <button class="btn btn-warning btn-sm" onclick="document.getElementById('ddlModal').showModal()">Upload DDL</button>
+                <button class="btn btn-success btn-sm" onclick="autoMapColumns()" title="Automatically match source JSON fields to table columns by name">Auto-Map Columns</button>
               </div>
               <div id="tableEditor" class="flex-1 flex flex-col overflow-y-auto">
                 <p class="text-sm opacity-50 p-2">Click "+ Table" to add your first target table.</p>
@@ -561,6 +549,7 @@ else document.addEventListener('DOMContentLoaded', _attachThemeChartListener);
 var tables = [];
 var activeTableIdx = 0;
 var sourceFields = [];
+var columnTypes = {};  // { "table.column": "varchar(255)" } — DDL/introspected type info
 var currentFile = null;
 var outputMode = 'tables'; // 'tables' or 'json'
 var jsonFields = [];       // [{key, path, transform}] for JSON output mode
@@ -972,11 +961,12 @@ function renderSourceFields(fields) {
 // ── Source change handlers ───────────────────────────────────
 function onSourceChange() {
   var text = document.getElementById('sourceEditor').value.trim();
-  if (!text) { renderSourceFields([]); return; }
+  if (!text) { renderSourceFields([]); updateSteps(); return; }
   try {
     var obj = JSON.parse(text);
     renderSourceFields(extractPaths(obj));
   } catch (e) { renderSourceFields([]); }
+  updateSteps();
 }
 
 var _schemaFlavors = []; // parsed flavor entries from schema array
@@ -1180,11 +1170,20 @@ function removeTable(idx) {
 
 function renderTableTabs() {
   var el = document.getElementById('tableTabs');
+  var errs = _getTableErrorCounts();
   el.innerHTML = tables.map(function(t, i) {
-    return '<a class="tab' + (i === activeTableIdx ? ' tab-active' : '') + '" onclick="switchTable(' + i + ')">' +
-      t.name +
-      (tables.length > 1 ? ' <span class="text-error text-xs ml-1 cursor-pointer" onclick="event.stopPropagation(); removeTable(' + i + ')">&times;</span>' : '') +
-      '</a>';
+    var errCount = errs[i] || 0;
+    var indicator = errCount > 0
+      ? '<div class="indicator"><span class="indicator-item badge badge-error badge-xs">' + errCount + '</span>' +
+        '<a class="tab' + (i === activeTableIdx ? ' tab-active' : '') + '" onclick="switchTable(' + i + ')">' +
+          t.name +
+          (tables.length > 1 ? ' <span class="text-error text-xs ml-1 cursor-pointer" onclick="event.stopPropagation(); removeTable(' + i + ')">&times;</span>' : '') +
+        '</a></div>'
+      : '<a class="tab' + (i === activeTableIdx ? ' tab-active' : '') + '" onclick="switchTable(' + i + ')">' +
+          t.name +
+          (tables.length > 1 ? ' <span class="text-error text-xs ml-1 cursor-pointer" onclick="event.stopPropagation(); removeTable(' + i + ')">&times;</span>' : '') +
+        '</a>';
+    return indicator;
   }).join('');
 }
 
@@ -1253,7 +1252,7 @@ function renderTableEditor() {
         '<div class="tooltip tooltip-right" data-tip="For child tables: select the parent table and define the foreign key relationship. Source array is the JSON path to the array of child objects.">' +
           '<span class="badge badge-ghost badge-sm cursor-help">?</span></div></div>' +
       '<div class="grid grid-cols-2 gap-2">' +
-        '<div><label class="label label-text text-xs">Parent Table <div class="tooltip tooltip-bottom inline" data-tip="Set this for child tables. The parent table must exist in this mapping. Child rows are inserted/deleted relative to their parent."><span class="opacity-40 cursor-help">(?)</span></div></label><select id="tblParent" class="select select-bordered select-sm w-full" onchange="onMappingChange()">' + parentOptions + '</select></div>' +
+        '<div><label class="label label-text text-xs">Parent Table <div class="tooltip tooltip-bottom inline" data-tip="Set this for child tables. The parent table must exist in this mapping. Child rows are inserted/deleted relative to their parent."><span class="opacity-40 cursor-help">(?)</span></div></label><select id="tblParent" class="select select-bordered select-sm w-full" onchange="onParentTableChange()">' + parentOptions + '</select></div>' +
         '<div><label class="label label-text text-xs">Source Array <div class="tooltip tooltip-bottom inline" data-tip="JSON path to the array in the source document that contains child items (e.g. $.items). One row is inserted per array element."><span class="opacity-40 cursor-help">(?)</span></div></label><input id="tblSourceArray" type="text" class="input input-bordered input-sm w-full" placeholder="$.items" value="' + esc(t.source_array) + '" oninput="onMappingChange()"></div>' +
         '<div><label class="label label-text text-xs">FK Column <div class="tooltip tooltip-bottom inline" data-tip="The column name in this child table that references the parent. Used for DELETE cascading and linking rows (e.g. order_doc_id)."><span class="opacity-40 cursor-help">(?)</span></div></label><input id="tblFKCol" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.column) + '" oninput="onMappingChange()"></div>' +
         '<div><label class="label label-text text-xs">FK References <div class="tooltip tooltip-bottom inline" data-tip="The column name in the parent table that this FK points to. Usually the parent\'s primary key column (e.g. doc_id)."><span class="opacity-40 cursor-help">(?)</span></div></label><input id="tblFKRef" type="text" class="input input-bordered input-sm w-full" value="' + esc(t.foreign_key.references) + '" oninput="onMappingChange()"></div>' +
@@ -1274,23 +1273,44 @@ function renderTableEditor() {
           '<span class="badge badge-ghost badge-sm cursor-help">?</span></div>' +
         '<button class="btn btn-primary btn-xs ml-auto" onclick="addColumnRow()">+ Column</button></div>' +
       '<div id="columnRows" class="space-y-1">' +
-        '<div class="flex gap-1 mb-1"><span class="w-[22%] text-xs font-semibold opacity-60">Column Name</span><span class="w-[28%] text-xs font-semibold opacity-60">Source Path</span><span class="w-[25%] text-xs font-semibold opacity-60">Transform ▾</span><span class="w-[22%] text-xs font-semibold opacity-60">Transform (edit)</span><span class="w-[3%]"></span></div>' +
+        '<div class="flex gap-1 mb-1"><span class="w-[18%] text-xs font-semibold opacity-60">Column Name</span><span class="w-[40%] text-xs font-semibold opacity-60">Source Path</span><span class="w-[16%] text-xs font-semibold opacity-60">Transform ▾</span><span class="w-[18%] text-xs font-semibold opacity-60">Transform (edit)</span><span class="w-[4%]"></span></div>' +
         colRows +
       '</div>' +
     '</div></div>' +
+    '<div id="tableValidationErrors"></div>' +
     '</div>';
+  setTimeout(validateTableErrors, 0);
 }
 
 function colRow(name, colDef) {
   var path = typeof colDef === 'object' ? colDef.path : colDef;
   var transform = typeof colDef === 'object' ? (colDef.transform || '') : '';
   var isCustom = transform && TRANSFORMS.indexOf(transform) < 0;
-  return '<div class="col-row flex gap-1 items-center">' +
-    '<input type="text" class="col-name input input-bordered input-xs w-[22%] font-mono" value="' + esc(name) + '" oninput="onMappingChange()">' +
-    '<input type="text" class="col-path input input-bordered input-xs w-[28%] font-mono" value="' + esc(path) + '" oninput="onMappingChange()" ondrop="dropOnCol(event, this)" ondragover="event.preventDefault(); this.classList.add(\'drag-over\')" ondragleave="this.classList.remove(\'drag-over\')">' +
-    '<select class="col-transform-select select select-bordered select-xs w-[25%]" onchange="onTransformSelect(this)">' + transformOptions(isCustom ? '' : transform) + '</select>' +
-    '<input type="text" class="col-transform input input-bordered input-xs w-[22%] font-mono" value="' + esc(transform) + '" placeholder="editable" oninput="onMappingChange()">' +
-    '<button class="btn btn-ghost btn-xs text-error w-[3%]" onclick="this.parentElement.remove(); onMappingChange()">×</button>' +
+  // Confidence indicator for auto-mapped columns
+  var confKey = (tables[activeTableIdx] ? tables[activeTableIdx].name : '') + '.' + name;
+  var conf = _autoMapConfidence[confKey];
+  var confBadge = '';
+  var rowClass = 'col-row flex gap-1 items-center';
+  if (conf !== undefined && path) {
+    if (conf >= 0.8) {
+      confBadge = '<span class="badge badge-xs badge-success" title="High confidence: ' + (conf * 100).toFixed(0) + '%">✓</span>';
+    } else if (conf >= 0.6) {
+      confBadge = '<span class="badge badge-xs badge-warning" title="Medium confidence: ' + (conf * 100).toFixed(0) + '% — review recommended">⚠</span>';
+      rowClass += ' bg-warning/10';
+    } else {
+      confBadge = '<span class="badge badge-xs badge-error" title="Low confidence: ' + (conf * 100).toFixed(0) + '% — likely needs correction">?</span>';
+      rowClass += ' bg-error/10';
+    }
+  }
+  return '<div class="' + rowClass + '">' +
+    '<input type="text" class="col-name input input-bordered input-xs w-[18%] font-mono" value="' + esc(name) + '" oninput="onMappingChange()">' +
+    '<div class="w-[40%]">' +
+      '<input type="text" class="col-path input input-bordered input-xs w-full font-mono" value="' + esc(path) + '" oninput="onMappingChange()" ondrop="dropOnCol(event, this)" ondragover="event.preventDefault(); this.classList.add(\'drag-over\')" ondragleave="this.classList.remove(\'drag-over\')">' +
+    '</div>' +
+    confBadge +
+    '<select class="col-transform-select select select-bordered select-xs w-[16%]" onchange="onTransformSelect(this)">' + transformOptions(isCustom ? '' : transform) + '</select>' +
+    '<input type="text" class="col-transform input input-bordered input-xs w-[18%] font-mono" value="' + esc(transform) + '" placeholder="editable" oninput="onMappingChange()">' +
+    '<button class="btn btn-ghost btn-xs text-error w-[4%]" onclick="this.closest(\'.col-row\').remove(); onMappingChange()">×</button>' +
     '</div>';
 }
 
@@ -1323,6 +1343,39 @@ function dropOnCol(ev, el) {
   onMappingChange();
 }
 
+function onParentTableChange() {
+  var parentName = document.getElementById('tblParent').value.trim();
+  if (parentName) {
+    // Find parent table and auto-suggest FK fields
+    var parentTable = tables.find(function(t) { return t.name === parentName; });
+    var fkCol = document.getElementById('tblFKCol');
+    var fkRef = document.getElementById('tblFKRef');
+    var srcArr = document.getElementById('tblSourceArray');
+    var replaceStrat = document.getElementById('tblReplaceStrategy');
+    // Auto-fill FK References with parent's primary_key
+    if (parentTable && fkRef && !fkRef.value.trim()) {
+      fkRef.value = parentTable.primary_key || '';
+    }
+    // Auto-fill FK Column with a suggestion like "{parent_name}_doc_id" or "{parent_name}_{pk}"
+    if (parentTable && fkCol && !fkCol.value.trim()) {
+      var pk = parentTable.primary_key || 'doc_id';
+      fkCol.value = parentName + '_' + pk;
+    }
+    // Auto-fill Source Array from detected arrays in sourceFields
+    if (srcArr && !srcArr.value.trim()) {
+      var arrays = sourceFields.filter(function(f) { return f.type === 'array' && f.path !== '$.channels'; });
+      if (arrays.length === 1) {
+        srcArr.value = arrays[0].path;
+      }
+    }
+    // Auto-select delete_insert replace strategy
+    if (replaceStrat && !replaceStrat.value) {
+      replaceStrat.value = 'delete_insert';
+    }
+  }
+  onMappingChange();
+}
+
 function onTableNameChange() {
   var nameEl = document.getElementById('tblName');
   if (nameEl && tables[activeTableIdx]) {
@@ -1351,6 +1404,8 @@ function onMappingChange() {
   renderDiagram();
   if (activeDiagramTab === 'tree') renderTreeDiagram();
   updateCoverage();
+  updateSteps();
+  validateTableErrors();
 }
 
 // ── Coverage Stats ──────────────────────────────────────────
@@ -1471,40 +1526,7 @@ function buildMapping() {
   }
   var mapping = { source: { match: matchObj }, output_format: outputMode };
 
-  // Source connection override
-  var srcConn = {};
-  var st = document.getElementById('srcType').value;
-  if (st) srcConn.src = st;
-  var su = document.getElementById('srcUrl').value.trim();
-  if (su) srcConn.url = su;
-  var sd = document.getElementById('srcDatabase').value.trim();
-  if (sd) srcConn.database = sd;
-  var ss = document.getElementById('srcScope').value.trim();
-  if (ss) srcConn.scope = ss;
-  var sc = document.getElementById('srcCollection').value.trim();
-  if (sc) srcConn.collection = sc;
-  var sf = document.getElementById('srcFeedType').value;
-  if (sf) srcConn.feed_type = sf;
-  if (Object.keys(srcConn).length) mapping.source.connection = srcConn;
-
-  // Output connection override
-  var outConn = {};
-  var om = document.getElementById('outMode').value;
-  if (om) outConn.mode = om;
-  var oh = document.getElementById('outHost').value.trim();
-  if (oh) outConn.host = oh;
-  var op = document.getElementById('outPort').value.trim();
-  if (op) outConn.port = parseInt(op, 10);
-  var od = document.getElementById('outDatabase').value.trim();
-  if (od) outConn.database = od;
-  var ou = document.getElementById('outUser').value.trim();
-  if (ou) outConn.user = ou;
-  var ow = document.getElementById('outPassword').value;
-  if (ow) outConn.password = ow;
-  var os = document.getElementById('outSchema').value.trim();
-  if (os) outConn.schema = os;
-  if (document.getElementById('outSSL').checked) outConn.ssl = true;
-  if (Object.keys(outConn).length) mapping.output = outConn;
+  // Source/Output connections are read-only (from global config) — not saved per-mapping
 
   if (outputMode === 'json') {
     // Save JSON field rows from DOM
@@ -1923,9 +1945,11 @@ async function saveMapping() {
         body: JSON.stringify(meta, null, 2)
       });
     }
+    _lastSavedMapping = content;
     showStatus('Saved ' + filename, 'success');
     showRestartRequiredToast();
     loadFileList();
+    updateSteps();
   } catch (e) { showStatus('Save failed: ' + e.message, 'error'); }
 }
 
@@ -1938,8 +1962,68 @@ function downloadMapping() {
   URL.revokeObjectURL(a.href);
 }
 
+function importMappingFile(ev) {
+  var file = ev.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var mapping = JSON.parse(e.target.result);
+      // Set filename from imported file
+      var name = file.name;
+      document.getElementById('filenameInput').value = name;
+      currentFile = name;
+      // Re-use openFile's populate logic inline
+      if (mapping.source && mapping.source.match) {
+        var match = mapping.source.match;
+        if (match.expression) {
+          document.getElementById('matchMode').value = 'expression';
+          document.getElementById('matchExpression').value = match.expression || '';
+          document.getElementById('matchExprValue').value = match.value || '';
+          document.getElementById('matchField').value = '';
+          document.getElementById('matchValue').value = '';
+        } else {
+          document.getElementById('matchMode').value = 'field';
+          document.getElementById('matchField').value = match.field || '';
+          document.getElementById('matchValue').value = match.value || '';
+          document.getElementById('matchExpression').value = '';
+          document.getElementById('matchExprValue').value = '';
+        }
+        onMatchModeChange();
+      }
+      var mode = mapping.output_format || (mapping.mapping ? 'json' : 'tables');
+      switchOutputMode(mode);
+      if (mode === 'json') {
+        jsonFields = [];
+        var m = mapping.mapping || {};
+        Object.keys(m).forEach(function(k) {
+          var v = m[k];
+          if (typeof v === 'object') jsonFields.push({ key: k, path: v.path || '', transform: v.transform || '' });
+          else jsonFields.push({ key: k, path: v, transform: '' });
+        });
+        renderJsonFields();
+      } else {
+        tables = (mapping.tables || []).map(function(t) {
+          return { name: t.name || '', primary_key: t.primary_key || '', parent: t.parent || '',
+            foreign_key: t.foreign_key || { column: '', references: '' },
+            source_array: t.source_array || '', replace_strategy: t.replace_strategy || '',
+            on_delete: t.on_delete || 'delete', columns: Object.assign({}, t.columns || {}) };
+        });
+        activeTableIdx = 0;
+        renderTableTabs();
+        renderTableEditor();
+      }
+      onMappingChange();
+      showStatus('Imported ' + name, 'success');
+    } catch (err) {
+      showStatus('Invalid JSON file: ' + err.message, 'error');
+    }
+  };
+  reader.readAsText(file);
+  ev.target.value = '';
+}
+
 async function loadFileList(autoLoadFirst) {
-  var dropdown = document.getElementById('fileListDropdown');
   var tbody = document.getElementById('mappingsTableBody');
   var countBadge = document.getElementById('mappingCount');
   try {
@@ -1952,8 +2036,7 @@ async function loadFileList(autoLoadFirst) {
     countBadge.textContent = files.length;
 
     if (!files.length) {
-      dropdown.innerHTML = '<li><a class="text-base-content/50">No saved mappings</a></li>';
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center opacity-50">No saved mappings. Create one above and click Save.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center opacity-50">No saved mappings. Create one above and click Save Mapping.</td></tr>';
       return;
     }
 
@@ -1964,12 +2047,6 @@ async function loadFileList(autoLoadFirst) {
       if (aa !== ba) return ba - aa;
       return (b.updated_at || '').localeCompare(a.updated_at || '');
     });
-
-    // Populate dropdown
-    dropdown.innerHTML = files.map(function(f) {
-      var name = typeof f === 'string' ? f : f.name || f.filename;
-      return '<li class="flex"><a class="flex-1" onclick="openFile(\'' + esc(name) + '\')">' + esc(name) + '</a></li>';
-    }).join('');
 
     // Populate table
     tbody.innerHTML = files.map(function(f) {
@@ -2054,28 +2131,7 @@ async function openFile(name) {
       }
       onMatchModeChange();
     }
-    // Populate source connection
-    var srcConn = (mapping.source || {}).connection || {};
-    document.getElementById('srcType').value = srcConn.src || '';
-    document.getElementById('srcUrl').value = srcConn.url || '';
-    document.getElementById('srcDatabase').value = srcConn.database || '';
-    document.getElementById('srcScope').value = srcConn.scope || '';
-    document.getElementById('srcCollection').value = srcConn.collection || '';
-    document.getElementById('srcFeedType').value = srcConn.feed_type || '';
-    // Auto-expand if has values
-    if (Object.keys(srcConn).length) document.getElementById('srcConnToggle').checked = true;
-
-    // Populate output connection
-    var outConn = mapping.output || {};
-    document.getElementById('outMode').value = outConn.mode || '';
-    document.getElementById('outHost').value = outConn.host || '';
-    document.getElementById('outPort').value = outConn.port || '';
-    document.getElementById('outDatabase').value = outConn.database || '';
-    document.getElementById('outUser').value = outConn.user || '';
-    document.getElementById('outPassword').value = outConn.password || '';
-    document.getElementById('outSchema').value = outConn.schema || '';
-    document.getElementById('outSSL').checked = !!outConn.ssl;
-    if (Object.keys(outConn).length) document.getElementById('outConnToggle').checked = true;
+    // Source/Output connections are read-only from global config (populated by loadGlobalConfig)
 
     // Detect output mode
     var mode = mapping.output_format || (mapping.mapping ? 'json' : 'tables');
@@ -2120,6 +2176,7 @@ async function openFile(name) {
         }
       }
     } catch (e) { /* no sidecar – ignore */ }
+    _lastSavedMapping = JSON.stringify(buildMapping(), null, 2);
     onMappingChange();
     showStatus('Loaded ' + name, 'success');
     loadFileList();
@@ -2157,18 +2214,69 @@ async function validateMapping() {
     if (data.error) { showStatus('Validate error: ' + data.error, 'error'); return; }
     // Build result display
     var html = '<div class="space-y-3">';
-    html += '<div class="flex items-center gap-2"><span class="badge ' + (data.matches ? 'badge-success' : 'badge-error') + '">' + (data.matches ? '✓ Matches' : '✗ No Match') + '</span></div>';
+    var explainOk = data.explain_ok;
+    html += '<div class="flex items-center gap-2">' +
+      '<span class="badge ' + (data.matches ? 'badge-success' : 'badge-error') + '">' + (data.matches ? '✓ Matches' : '✗ No Match') + '</span>';
     if (data.ops && data.ops.length) {
-      html += '<div class="text-sm font-semibold mt-2">' + data.ops.length + ' SQL operation(s):</div>';
+      html += '<span class="text-sm opacity-60">' + data.ops.length + ' SQL operation(s)</span>';
+      if (explainOk === true) {
+        html += '<span class="badge badge-success badge-sm">EXPLAIN ✓ All Valid</span>';
+      } else if (explainOk === false) {
+        html += '<span class="badge badge-error badge-sm">EXPLAIN ✗ Errors Found</span>';
+      }
+    }
+    html += '</div>';
+    if (data.ops && data.ops.length) {
+      var svgCheck = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5 text-success"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" /></svg>';
+      var svgX = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5 text-error"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-3.536-3.536a.75.75 0 011.06 0L10 12.94l2.475-2.476a.75.75 0 111.06 1.06L11.06 14l2.476 2.475a.75.75 0 11-1.06 1.06L10 15.06l-2.475 2.476a.75.75 0 11-1.06-1.06L8.938 14l-2.476-2.475a.75.75 0 010-1.06z" clip-rule="evenodd" /></svg>';
+      var lineColor = explainOk === false ? 'bg-error' : 'bg-success';
+
+      html += '<ul class="timeline timeline-vertical timeline-compact">';
+      // BEGIN TRANSACTION
+      html += '<li>' +
+        '<div class="timeline-middle">' + svgCheck + '</div>' +
+        '<div class="timeline-end timeline-box bg-success/10 border-success/30 font-bold text-base-content">BEGIN TRANSACTION</div>' +
+        '<hr class="' + lineColor + '"/></li>';
       data.ops.forEach(function(op, i) {
-        html += '<div class="bg-base-200 rounded-lg p-3">';
-        html += '<div class="text-xs opacity-60 mb-1">#' + (i+1) + ' ' + op.type + ' → ' + op.table + '</div>';
-        html += '<pre class="text-xs font-mono whitespace-pre-wrap break-all">' + escapeHtml(op.sql) + '</pre>';
-        if (op.params && op.params.length) {
-          html += '<div class="text-xs opacity-60 mt-1">Params: ' + escapeHtml(JSON.stringify(op.params)) + '</div>';
+        var ex = op.explain || {};
+        var stepOk = ex.ok;
+        var opColor = op.type === 'DELETE' ? 'error' : (op.type === 'UPSERT' ? 'info' : 'primary');
+        var stepBorderClass = stepOk === false ? ' border-error' : (stepOk === true ? ' border-success/30' : '');
+        var explainHtml = '';
+        if (stepOk === true && ex.plan) {
+          explainHtml = '<details class="mt-1"><summary class="text-xs text-success cursor-pointer">✅ EXPLAIN OK — click to view plan</summary>' +
+            '<pre class="text-xs font-mono opacity-60 mt-1 whitespace-pre-wrap">' + escapeHtml(ex.plan.join('\n')) + '</pre></details>';
+        } else if (stepOk === false) {
+          var fixHtml = _explainFixSuggestion(ex.error || '', op);
+          explainHtml = '<div class="mt-1 text-xs text-error font-semibold">❌ EXPLAIN FAILED:</div>' +
+            '<pre class="text-xs font-mono text-error whitespace-pre-wrap break-all">' + escapeHtml(ex.error || 'Unknown error') + '</pre>' +
+            fixHtml;
+        } else if (ex.error) {
+          explainHtml = '<div class="mt-1 text-xs opacity-50">⚠️ ' + escapeHtml(ex.error) + '</div>';
         }
-        html += '</div>';
+
+        html += '<li><hr class="' + lineColor + '"/>' +
+          '<div class="timeline-middle"><span class="badge badge-' + (stepOk === false ? 'error' : opColor) + ' badge-sm font-bold">#' + (i+1) + '</span></div>' +
+          '<div class="timeline-end timeline-box' + stepBorderClass + '">' +
+            '<div class="text-xs font-semibold opacity-70 mb-1">' + escapeHtml(op.type) + ' → ' + escapeHtml(op.table) +
+              (stepOk === true ? ' <span class="badge badge-success badge-xs">✓</span>' : '') +
+              (stepOk === false ? ' <span class="badge badge-error badge-xs">✗</span>' : '') +
+            '</div>' +
+            '<pre class="text-xs font-mono whitespace-pre-wrap break-all">' + escapeHtml(op.sql) + '</pre>' +
+            (op.params && op.params.length ? '<div class="text-xs opacity-50 mt-1">Params: ' + escapeHtml(JSON.stringify(op.params)) + '</div>' : '') +
+            explainHtml +
+          '</div>' +
+          '<hr class="' + lineColor + '"/></li>';
       });
+      // COMMIT
+      var commitIcon = explainOk === false ? svgX : svgCheck;
+      var commitColor = explainOk === false ? 'error' : 'success';
+      html += '<li><hr class="' + lineColor + '"/>' +
+        '<div class="timeline-middle">' + commitIcon + '</div>' +
+        '<div class="timeline-end timeline-box bg-' + commitColor + '/10 border-' + commitColor + '/30 font-bold text-base-content">' +
+          (explainOk === false ? 'ROLLBACK — fix errors above' : 'COMMIT') +
+        '</div></li>';
+      html += '</ul>';
     } else if (data.matches) {
       html += '<div class="text-sm opacity-60">No SQL operations generated</div>';
     }
@@ -2182,6 +2290,125 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// Analyze a PostgreSQL EXPLAIN error and return fix-suggestion HTML
+function _explainFixSuggestion(error, op) {
+  var suggestions = [];
+  var tbl = op.table || '';
+  var err = error || '';
+
+  // 1. Column does not exist
+  var colMatch = err.match(/column "([^"]+)" (?:of relation "[^"]+" )?does not exist/i);
+  if (colMatch) {
+    var badCol = colMatch[1];
+    var hintMatch = err.match(/Perhaps you meant to reference the column "(?:[^"]*\.)?([^"]+)"/i);
+    var fix = '<div class="alert alert-info val-alert rounded-lg mt-2"><div class="flex flex-col gap-1">' +
+      '<span class="font-semibold">💡 How to fix:</span>' +
+      '<span>Column <code class="font-mono">"' + escapeHtml(badCol) + '"</code> does not exist in table <code class="font-mono">' + escapeHtml(tbl) + '</code>.</span>';
+    if (hintMatch) {
+      fix += '<span>PostgreSQL suggests: <code class="font-mono">"' + escapeHtml(hintMatch[1]) + '"</code></span>';
+      fix += '<span>Go to the <b>Column Mappings</b> or <b>FK Column</b> field and rename <code>' + escapeHtml(badCol) + '</code> → <code>' + escapeHtml(hintMatch[1]) + '</code>.</span>';
+    } else {
+      fix += '<span>Check your Column Mappings — the column name must match your PostgreSQL table schema exactly.</span>';
+    }
+    fix += '</div></div>';
+    suggestions.push(fix);
+  }
+
+  // 2. Relation (table) does not exist
+  var relMatch = err.match(/relation "([^"]+)" does not exist/i);
+  if (relMatch) {
+    suggestions.push(
+      '<div class="alert alert-info val-alert rounded-lg mt-2"><div class="flex flex-col gap-1">' +
+        '<span class="font-semibold">💡 How to fix:</span>' +
+        '<span>Table <code class="font-mono">"' + escapeHtml(relMatch[1]) + '"</code> does not exist in your database.</span>' +
+        '<span>Create the table first using the <b>DB Import</b> or <b>DDL Import</b> feature, or run <code>CREATE TABLE</code> manually.</span>' +
+      '</div></div>'
+    );
+  }
+
+  // 3. Type mismatch — str cannot be interpreted as integer
+  var intMatch = err.match(/invalid input for query argument \$(\d+):\s*'([^']*)'\s*\('str' object cannot be interpreted as an integer\)/i);
+  if (intMatch) {
+    var argNum = parseInt(intMatch[1]);
+    var argVal = intMatch[2];
+    var colName = _findColFromArgNum(op.sql, argNum);
+    suggestions.push(
+      '<div class="alert alert-info val-alert rounded-lg mt-2"><div class="flex flex-col gap-1">' +
+        '<span class="font-semibold">💡 How to fix:</span>' +
+        '<span>Argument $' + argNum + (colName ? ' (column <code class="font-mono">"' + escapeHtml(colName) + '"</code>)' : '') +
+          ' received string <code>"' + escapeHtml(argVal) + '"</code> but the DB column is INTEGER.</span>' +
+        '<span><b>Option A:</b> Remove this column from your mapping if the DB auto-generates it (e.g. SERIAL PK).</span>' +
+        '<span><b>Option B:</b> Change your source path to point to a numeric field.</span>' +
+        '<span><b>Option C:</b> Add a <code>to_int()</code> transform if the value can be converted.</span>' +
+      '</div></div>'
+    );
+  }
+
+  // 4. Date type mismatch — toordinal
+  var dateMatch = err.match(/invalid input for query argument \$(\d+):\s*'([^']*)'\s*\('str' object has no attribute 'toordinal'\)/i);
+  if (dateMatch) {
+    var dArgNum = parseInt(dateMatch[1]);
+    var dArgVal = dateMatch[2];
+    var dColName = _findColFromArgNum(op.sql, dArgNum);
+    suggestions.push(
+      '<div class="alert alert-info val-alert rounded-lg mt-2"><div class="flex flex-col gap-1">' +
+        '<span class="font-semibold">💡 How to fix:</span>' +
+        '<span>Argument $' + dArgNum + (dColName ? ' (column <code class="font-mono">"' + escapeHtml(dColName) + '"</code>)' : '') +
+          ' has date string <code>"' + escapeHtml(dArgVal) + '"</code> but PostgreSQL DATE columns need a native date object.</span>' +
+        '<span>Add a <code>to_date()</code> transform to this column in your mapping.</span>' +
+      '</div></div>'
+    );
+  }
+
+  // 5. Value too long
+  var longMatch = err.match(/value too long for type character varying\((\d+)\)/i);
+  if (longMatch) {
+    suggestions.push(
+      '<div class="alert alert-info val-alert rounded-lg mt-2"><div class="flex flex-col gap-1">' +
+        '<span class="font-semibold">💡 How to fix:</span>' +
+        '<span>A value exceeds the column\'s VARCHAR(' + longMatch[1] + ') limit.</span>' +
+        '<span><b>Option A:</b> Use a <code>truncate(' + longMatch[1] + ')</code> transform in your mapping.</span>' +
+        '<span><b>Option B:</b> ALTER the column in PostgreSQL to allow more characters.</span>' +
+      '</div></div>'
+    );
+  }
+
+  // 6. NOT NULL violation
+  if (/null value in column .* violates not-null constraint/i.test(err)) {
+    var nnMatch = err.match(/null value in column "([^"]+)"/i);
+    suggestions.push(
+      '<div class="alert alert-info val-alert rounded-lg mt-2"><div class="flex flex-col gap-1">' +
+        '<span class="font-semibold">💡 How to fix:</span>' +
+        '<span>Column <code class="font-mono">"' + escapeHtml(nnMatch ? nnMatch[1] : '?') + '"</code> cannot be NULL.</span>' +
+        '<span><b>Option A:</b> Map this column to a source path that always has a value.</span>' +
+        '<span><b>Option B:</b> Add a <code>coalesce(path, default_value)</code> transform to provide a fallback.</span>' +
+        '<span><b>Option C:</b> ALTER the column to allow NULLs.</span>' +
+      '</div></div>'
+    );
+  }
+
+  // Generic fallback if nothing matched
+  if (suggestions.length === 0) {
+    suggestions.push(
+      '<div class="alert alert-info val-alert rounded-lg mt-2"><div class="flex flex-col gap-1">' +
+        '<span class="font-semibold">💡 How to fix:</span>' +
+        '<span>Check that your table <code class="font-mono">"' + escapeHtml(tbl) + '"</code> exists in PostgreSQL and that all column names and data types match your mapping.</span>' +
+        '<span>Compare your <b>Column Mappings</b> names with the actual database schema.</span>' +
+      '</div></div>'
+    );
+  }
+
+  return suggestions.join('');
+}
+
+// Helper: given SQL like INSERT INTO "t" ("a", "b", "c") ... find the column name for $N
+function _findColFromArgNum(sql, argNum) {
+  var m = sql.match(/\(([^)]+)\)\s*VALUES/i);
+  if (!m) return null;
+  var cols = m[1].split(',').map(function(c) { return c.trim().replace(/"/g, ''); });
+  return (argNum >= 1 && argNum <= cols.length) ? cols[argNum - 1] : null;
+}
+
 function showRestartRequiredToast() {
   var container = document.getElementById('toastContainer');
   var id = 'restartRequiredToast';
@@ -2189,15 +2416,64 @@ function showRestartRequiredToast() {
   var el = document.createElement('div');
   el.id = id;
   el.className = 'alert alert-warning shadow-lg';
-  el.style.cssText = 'border-left:4px solid #f59e0b;cursor:pointer';
-  el.innerHTML = '<span>Changes saved but won\'t take effect until you <b>Restart</b> the worker.</span>' +
-    '<button class="btn btn-xs btn-ghost" onclick="this.parentElement.remove()">×</button>';
-  el.querySelector('span').addEventListener('click', function () {
-    var btn = document.getElementById('restartBtn');
-    if (btn) btn.click();
-    el.remove();
-  });
+  el.style.cssText = 'border-left:4px solid #f59e0b;max-width:420px';
+  el.innerHTML =
+    '<div class="flex flex-col gap-2 w-full">' +
+      '<span>Mapping saved. Restart the worker to apply changes?</span>' +
+      '<div class="flex gap-2">' +
+        '<button class="btn btn-sm btn-warning" id="restartNowBtn">Restart Now</button>' +
+        '<button class="btn btn-sm btn-ghost" onclick="document.getElementById(\'' + id + '\').remove()">Dismiss</button>' +
+      '</div>' +
+      '<div id="restartStatus" class="text-xs hidden"></div>' +
+    '</div>';
   container.appendChild(el);
+
+  document.getElementById('restartNowBtn').addEventListener('click', function() {
+    var btn = this;
+    var status = document.getElementById('restartStatus');
+    btn.classList.add('loading');
+    btn.textContent = 'Restarting...';
+    status.classList.remove('hidden');
+    status.textContent = '⏳ Sending restart signal...';
+
+    fetch('/api/restart', { method: 'POST' })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          btn.classList.remove('loading', 'btn-warning');
+          btn.classList.add('btn-disabled');
+          status.textContent = '🔄 Worker restarting — reloading mappings...';
+          // Poll worker status until ready
+          var attempts = 0;
+          var pollId = setInterval(function() {
+            attempts++;
+            status.textContent = '🔄 Waiting for worker... (' + attempts + 's)';
+            fetch('/api/worker-status').then(function(r) { return r.json(); }).then(function(s) {
+              if (s.state === 'running' || s.online === true || s.status === 'ok') {
+                clearInterval(pollId);
+                status.textContent = '✅ Worker is back online with updated mappings!';
+                btn.textContent = '✓ Done';
+                btn.classList.remove('btn-disabled');
+                btn.classList.add('btn-success');
+                setTimeout(function() { el.remove(); }, 3000);
+              }
+            }).catch(function() {});
+            if (attempts > 30) {
+              clearInterval(pollId);
+              status.textContent = '⚠️ Restart sent but worker took too long. Check logs.';
+              btn.classList.remove('loading');
+            }
+          }, 1000);
+        } else {
+          btn.classList.remove('loading');
+          status.textContent = '❌ Restart failed: ' + (data.error || 'unknown');
+        }
+      })
+      .catch(function(e) {
+        btn.classList.remove('loading');
+        status.textContent = '❌ Restart failed: ' + e.message;
+      });
+  });
 }
 
 function showStatus(msg, type) {
@@ -2307,7 +2583,7 @@ colRow = function(name, colDef) {
   // Wrap the col-path input with ac-wrap
   html = html.replace(
     /(<input[^>]*class="col-path[^"]*"[^>]*>)/,
-    '<div class="ac-wrap" style="width:28%">$1<div class="ac-list bg-base-200 shadow-lg border border-base-300"></div></div>'
+    '<div class="ac-wrap" style="width:100%">$1<div class="ac-list bg-base-200 shadow-lg border border-base-300"></div></div>'
   );
   // Remove width from the input since the wrapper now controls it
   html = html.replace(/col-path([^"]*) w-\[28%\]/, 'col-path$1 w-full');
@@ -2498,6 +2774,7 @@ function importSelectedTables() {
     var columns = {};
     t.columns.forEach(function(c) {
       columns[c.name] = '';
+      columnTypes[t.table_name + '.' + c.name] = c.type || c.display_type || '';
     });
 
     tables.push({
@@ -2518,6 +2795,8 @@ function importSelectedTables() {
   onMappingChange();
   document.getElementById('dbImportModal').close();
   showStatus('Imported ' + checks.length + ' table(s)', 'success');
+  // Auto-map columns if source fields are available
+  if (sourceFields.length) autoMapColumns();
 }
 
 async function parseDDL() {
@@ -2547,7 +2826,10 @@ async function parseDDL() {
     parsed.forEach(function(t) {
       var pk = (t.primary_key && t.primary_key.length) ? t.primary_key[0] : '';
       var columns = {};
-      t.columns.forEach(function(c) { columns[c.name] = ''; });
+      t.columns.forEach(function(c) {
+        columns[c.name] = '';
+        columnTypes[t.table_name + '.' + c.name] = c.type || c.display_type || '';
+      });
 
       tables.push({
         name: t.table_name,
@@ -2567,6 +2849,8 @@ async function parseDDL() {
     onMappingChange();
     document.getElementById('ddlModal').close();
     showStatus('Imported ' + parsed.length + ' table(s) from DDL', 'success');
+    // Auto-map columns if source fields are available
+    if (sourceFields.length) autoMapColumns();
   } catch (e) {
     status.textContent = 'Error: ' + e.message;
     status.className = 'text-sm mt-2 text-error';
@@ -2575,28 +2859,16 @@ async function parseDDL() {
 
 // ── AI Assist ────────────────────────────────────────────────
 function switchAITab(tab) {
-  document.getElementById('aiTabExport').classList.toggle('tab-active', tab === 'export');
-  document.getElementById('aiTabImport').classList.toggle('tab-active', tab === 'import');
-  var ep = document.getElementById('aiPanelExport');
-  var ip = document.getElementById('aiPanelImport');
-  if (tab === 'export') {
-    ep.classList.remove('hidden'); ep.classList.add('flex');
-    ip.classList.add('hidden'); ip.classList.remove('flex');
-  } else {
-    ep.classList.add('hidden'); ep.classList.remove('flex');
-    ip.classList.remove('hidden'); ip.classList.add('flex');
-  }
+  aiSwitchTab(tab, 'aiTabExport', 'aiTabImport', 'aiPanelExport', 'aiPanelImport');
 }
 
 function buildAIContext() {
   saveCurrentTableEdits();
 
-  // 1. Sample document
   var sampleText = document.getElementById('sourceEditor').value.trim();
   var sampleDoc = null;
   try { sampleDoc = JSON.parse(sampleText); } catch (e) {}
 
-  // 2. Current target tables/fields (if any exist)
   var targetTables = [];
   for (var i = 0; i < tables.length; i++) {
     var t = tables[i];
@@ -2617,7 +2889,6 @@ function buildAIContext() {
     });
   }
 
-  // 3. JSON field mappings (if in JSON mode)
   var jsonMappings = null;
   if (outputMode === 'json') {
     jsonMappings = [];
@@ -2630,178 +2901,22 @@ function buildAIContext() {
     }
   }
 
-  // 4. Available transform functions grouped by category
-  var transformsByCategory = {
-    'String': TRANSFORMS.slice(1, 22),
-    'Numeric': TRANSFORMS.slice(22, 33),
-    'Date / Time': TRANSFORMS.slice(33, 42),
-    'Array / Object': TRANSFORMS.slice(42, 46),
-    'Encoding / Hash': TRANSFORMS.slice(46, 54),
-    'Conditional': TRANSFORMS.slice(54)
-  };
-  // Clean empty strings
-  for (var cat in transformsByCategory) {
-    transformsByCategory[cat] = transformsByCategory[cat].filter(function(t) { return t; });
-  }
-
-  // 5. Source match config
   var matchField = document.getElementById('matchField').value.trim();
   var matchValue = document.getElementById('matchValue').value.trim();
 
-  // 6. Flatten source fields for reference
   var sourceFieldsList = sourceFields.map(function(f) {
-    return { path: f.path, type: f.type, sample_value: f.value };
+    return { path: f.path, type: f.type, sample_value: f.sample };
   });
 
-  var context = {
-    _instructions: [
-      'You are generating a Changes Worker schema mapping JSON.',
-      'Return ONLY valid JSON — no markdown, no code fences.',
-      'Include an "_explanation" field (array of strings) in your response explaining your reasoning for each mapping decision (see response_format).',
-      '',
-      '## How mappings work',
-      '',
-      'A mapping tells the Changes Worker how to transform a Couchbase/Sync Gateway document into SQL rows or a JSON object.',
-      '',
-      '### Tables mode (output_mode = "tables")',
-      '',
-      'The top-level object has:',
-      '  - "source": { "match": { "field": "<doc_field>", "value": "<value>" } } — only documents where this field equals this value are processed.',
-      '  - "tables": [ ... ] — an ordered array of table definitions.',
-      '',
-      'Each table object has these EXACT fields (use these field names, not alternatives):',
-      '  - "name" (string, REQUIRED): The SQL table name.',
-      '  - "primary_key" (string, REQUIRED): The column that serves as the primary key. Usually "doc_id" for the parent table.',
-      '  - "columns" (object, REQUIRED): Maps SQL column names to JSONPath expressions or transform objects.',
-      '  - "on_delete" (string): What to do when the source doc is deleted. Usually "delete".',
-      '  - "parent" (string): For child tables ONLY — the name of the parent table this child belongs to.',
-      '  - "foreign_key" (object): For child tables ONLY — { "column": "<child_fk_col>", "references": "<parent_pk_col>" }.',
-      '  - "source_array" (string): For child tables ONLY — JSONPath to the array in the parent doc that produces child rows (e.g. "$.items").',
-      '  - "replace_strategy" (string): For child tables — usually "delete_insert" (delete old child rows then insert new ones on update).',
-      '',
-      '### Column value formats',
-      '',
-      'Each column value can be:',
-      '  - A simple JSONPath string: "$.field_name" — extracts the value directly.',
-      '  - A transform object: { "path": "$.field_name", "transform": "uppercase()" } — extracts then transforms.',
-      '',
-      '### JSONPath rules',
-      '',
-      '  - Parent table columns use paths relative to the root document: "$._id", "$.status", "$.nested.field".',
-      '  - Child table columns use paths relative to each array element: "$.product_id", "$.qty" (NOT "$.items[].product_id").',
-      '  - The exception: a child column referencing a PARENT field (like a foreign key) still uses the root path: "$._id".',
-      '',
-      '### Parent / Child table relationships',
-      '',
-      '  - The FIRST table is typically the parent (no "parent", "foreign_key", or "source_array" fields).',
-      '  - Child tables MUST include "parent", "foreign_key", and "source_array".',
-      '  - Example: If the parent table "orders" has primary_key "doc_id" mapped to "$._id", and the child "order_items" iterates over "$.items",',
-      '    then order_items needs: "parent": "orders", "foreign_key": { "column": "order_doc_id", "references": "doc_id" }, "source_array": "$.items".',
-      '',
-      '### Nested objects',
-      '',
-      'When the source document contains a nested object like "address": { "city": "Austin", "state": "TX", "postalCodes": ["78764","78745"] }:',
-      '  - Access individual nested fields with dot notation: "$.address.city", "$.address.state".',
-      '  - To store the entire object as a JSON string in a single column, use: { "path": "$.address", "transform": "json_stringify()" }.',
-      '  - To access an array inside a nested object for a child table, use: "source_array": "$.address.postalCodes".',
-      '',
-      '### Simple (primitive) arrays',
-      '',
-      'When the source document contains an array of simple values like "sports": ["water", "land"] or "tags": ["vip", "active"]:',
-      '',
-      'Option A — Store as a JSON string in a single column (simplest):',
-      '  "sports_json": { "path": "$.sports", "transform": "json_stringify()" }',
-      '',
-      'Option B — Create a child table with one row per array element:',
-      '  {',
-      '    "name": "user_sports",',
-      '    "primary_key": "",',
-      '    "parent": "users",',
-      '    "foreign_key": { "column": "user_doc_id", "references": "doc_id" },',
-      '    "source_array": "$.sports",',
-      '    "replace_strategy": "delete_insert",',
-      '    "columns": {',
-      '      "user_doc_id": "$._id",',
-      '      "value": "$"',
-      '    },',
-      '    "on_delete": "delete"',
-      '  }',
-      '  Note: Use "$" (bare dollar sign) as the path when the array element IS the value itself (not an object).',
-      '',
-      'Choose Option A unless the target_tables already defines a separate child table for that array.',
-      '',
-      '### JSON mode (output_mode = "json")',
-      '',
-      'Instead of "tables", use "output_format": "json" and "mapping": { "targetKey": "$.source.path", ... }.',
-      '',
-      '### Transforms',
-      '',
-      'Use transforms from the available_transforms list. Common examples:',
-      '  - uppercase(), lowercase() — string case conversion',
-      '  - to_int(), to_float() — type conversion',
-      '  - to_date(), to_iso8601() — date parsing',
-      '  - trim() — remove whitespace',
-      '  - coalesce(,0) — default value if null',
-      'Only use a transform when the data type or format needs conversion. Do not add transforms unnecessarily.'
-    ].join('\n'),
-    output_mode: outputMode,
-    source_match: (matchField && matchValue) ? { field: matchField, value: matchValue } : null,
-    sample_document: sampleDoc || sampleText || '(no sample document provided — paste one in the Source JSON panel)',
-    source_fields: sourceFieldsList.length ? sourceFieldsList : '(paste a sample JSON to extract fields)',
-    target_tables: targetTables.length ? targetTables : '(no target tables defined yet — import from DB or add manually)',
-    current_json_mappings: jsonMappings,
-    available_transforms: transformsByCategory,
-    response_format: {
-      _note: 'Return a JSON object matching EXACTLY this structure. Use the exact field names shown — do NOT rename fields. Always include the _explanation field.',
-      tables_mode_example: {
-        _explanation: [
-          'Created parent table "orders" with doc_id as primary key mapped to $._id for unique document identification.',
-          'Mapped status, total, etc. directly — no transforms needed since the source types match the target columns.',
-          'Created child table "order_items" iterating over $.items array with foreign key back to orders.doc_id.',
-          'Used replace_strategy "delete_insert" so child rows are fully refreshed on each document update.'
-        ],
-        source: { match: { field: 'type', value: 'order' } },
-        tables: [
-          {
-            name: 'orders',
-            primary_key: 'doc_id',
-            columns: {
-              doc_id: '$._id',
-              rev: '$._rev',
-              status: '$.status',
-              total: '$.total'
-            },
-            on_delete: 'delete'
-          },
-          {
-            name: 'order_items',
-            primary_key: '',
-            parent: 'orders',
-            foreign_key: { column: 'order_doc_id', references: 'doc_id' },
-            source_array: '$.items',
-            replace_strategy: 'delete_insert',
-            columns: {
-              order_doc_id: '$._id',
-              product_id: '$.product_id',
-              qty: '$.qty',
-              price: '$.price'
-            },
-            on_delete: 'delete'
-          }
-        ]
-      },
-      json_mode_example: {
-        source: { match: { field: 'type', value: 'example' } },
-        output_format: 'json',
-        mapping: {
-          targetKey: '$.source.path',
-          transformedKey: { path: '$.raw_value', transform: 'to_int()' }
-        }
-      }
-    }
-  };
-
-  return context;
+  return aiBuildContext({
+    sampleDoc: sampleDoc || sampleText || null,
+    sourceFields: sourceFieldsList,
+    targetTables: targetTables,
+    outputMode: outputMode,
+    sourceMatch: (matchField && matchValue) ? { field: matchField, value: matchValue } : null,
+    jsonMappings: jsonMappings,
+    transforms: TRANSFORMS
+  });
 }
 
 function openAIAssist() {
@@ -2814,37 +2929,15 @@ function openAIAssist() {
 }
 
 function copyAIContext() {
-  var el = document.getElementById('aiContextOutput');
-  navigator.clipboard.writeText(el.value).then(function() {
-    showStatus('Copied AI context to clipboard', 'success');
-  }).catch(function() {
-    el.select();
-    document.execCommand('copy');
-    showStatus('Copied AI context to clipboard', 'success');
-  });
+  aiCopy('aiContextOutput', function() { showStatus('Copied AI context to clipboard', 'success'); });
 }
 
 function downloadAIContext() {
-  var content = document.getElementById('aiContextOutput').value;
-  var blob = new Blob([content], { type: 'application/json' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'ai_mapping_context.json';
-  a.click();
-  URL.revokeObjectURL(a.href);
+  aiDownload('aiContextOutput', 'ai_mapping_context.json');
 }
 
 function uploadAIResponse(event) {
-  var file = event.target.files[0];
-  if (!file) return;
-  var reader = new FileReader();
-  reader.onload = function(e) {
-    document.getElementById('aiResponseInput').value = e.target.result;
-    document.getElementById('aiImportStatus').textContent = 'Loaded ' + file.name;
-    document.getElementById('aiImportStatus').className = 'text-sm mt-2 text-success';
-  };
-  reader.readAsText(file);
-  event.target.value = '';
+  aiUploadFile(event, 'aiResponseInput', 'aiImportStatus');
 }
 
 function importAIResponse() {
@@ -2914,9 +3007,799 @@ function importAIResponse() {
   showStatus('Imported AI-generated mapping (' + mode + ' mode)', 'success');
 }
 
+// ── Progress Steps ───────────────────────────────────────────
+var _lastSavedMapping = null; // track last saved state
+
+function updateSteps() {
+  // Step 1: Source Selected — config has source connection info OR has JSON pasted/loaded OR schema entered
+  var srcText = document.getElementById('sourceEditor').value.trim();
+  var schemaText = document.getElementById('schemaEditor').value.trim();
+  var srcTypeVal = (document.getElementById('srcTypeRO').value || '').trim();
+  var srcUrlVal = (document.getElementById('srcUrlRO').value || '').trim();
+  var s1 = srcText.length > 2 || schemaText.length > 2 || (srcTypeVal.length > 0 && srcUrlVal.length > 0);
+
+  // Step 2: Output Selected — config has output connection info OR has at least one table with columns OR json fields
+  var outModeVal = (document.getElementById('outModeRO').value || '').trim();
+  var outHostVal = (document.getElementById('outHostRO').value || '').trim();
+  var s2 = outModeVal.length > 0 && outHostVal.length > 0;
+  if (!s2) {
+    if (outputMode === 'tables') {
+      s2 = tables.length > 0 && tables.some(function(t) { return Object.keys(t.columns).length > 0; });
+    } else {
+      var jfRows = document.querySelectorAll('.json-field-row');
+      jfRows.forEach(function(r) { if (r.querySelector('.jf-key').value.trim()) s2 = true; });
+    }
+  }
+
+  // Step 3: Schema Mapped — columns have source paths filled in, BUT check for validation errors
+  var s3 = false;
+  var s3HasErrors = false;
+  if (outputMode === 'tables') {
+    s3 = tables.length > 0 && tables.some(function(t) {
+      var cols = t.columns;
+      return Object.keys(cols).some(function(k) {
+        var v = cols[k];
+        return (typeof v === 'string' && v) || (typeof v === 'object' && v && v.path);
+      });
+    });
+    // Check if any table has validation errors
+    if (s3) {
+      for (var i = 0; i < tables.length; i++) {
+        if (_validateTable(tables[i]).length > 0) { s3HasErrors = true; break; }
+      }
+    }
+  } else {
+    var jfRows2 = document.querySelectorAll('.json-field-row');
+    jfRows2.forEach(function(r) {
+      if (r.querySelector('.jf-key').value.trim() && r.querySelector('.jf-path').value.trim()) s3 = true;
+    });
+  }
+
+  // Step 4: Saved — current mapping matches what was last saved AND no validation errors
+  var s4 = !!(_lastSavedMapping && currentFile) && !s3HasErrors;
+
+  var steps = [
+    { el: document.getElementById('step1'), done: s1, warn: false },
+    { el: document.getElementById('step2'), done: s2, warn: false },
+    { el: document.getElementById('step3'), done: s3, warn: s3HasErrors },
+    { el: document.getElementById('step4'), done: s4, warn: false }
+  ];
+  steps.forEach(function(s) {
+    s.el.classList.remove('step-success', 'step-error', 'step-warning');
+    if (s.warn) {
+      s.el.setAttribute('data-content', '!');
+      s.el.classList.add('step-warning');
+    } else {
+      s.el.setAttribute('data-content', s.done ? '✓' : '✕');
+      s.el.classList.add(s.done ? 'step-success' : 'step-error');
+    }
+  });
+}
+
+// ── Inline Table Validation ──────────────────────────────────
+
+// Validate a single table object (data only, no DOM).  Returns array of error strings.
+function _validateTable(t) {
+  var errors = [];
+  var hasParent = !!(t.parent && t.parent.trim());
+
+  if (hasParent) {
+    if (!t.source_array || !t.source_array.trim())
+      errors.push('source_array');
+    if (!t.foreign_key || !t.foreign_key.column || !t.foreign_key.column.trim())
+      errors.push('fk_column');
+    if (!t.foreign_key || !t.foreign_key.references || !t.foreign_key.references.trim())
+      errors.push('fk_references');
+    if (!t.replace_strategy)
+      errors.push('replace_strategy');
+  }
+
+  // FK column must match a column name in the table
+  if (hasParent && t.foreign_key && t.foreign_key.column && t.foreign_key.column.trim()) {
+    var fkc = t.foreign_key.column.trim();
+    var colKeys = Object.keys(t.columns || {});
+    if (colKeys.indexOf(fkc) < 0)
+      errors.push('fk_col_mismatch');
+  }
+
+  var sourceArrayPath = (t.source_array || '').trim();
+  var arrayPrefix = sourceArrayPath.replace(/^\$\.?/, '').replace(/\[\]$/, '');
+  var cols = t.columns || {};
+  Object.keys(cols).forEach(function(colName) {
+    if (!colName) return;
+    var v = cols[colName];
+    var colPath = typeof v === 'object' ? (v.path || '') : (v || '');
+    if (!colPath) { errors.push('col_empty:' + colName); return; }
+    if (colPath !== '$' && !colPath.startsWith('$.') && !colPath.startsWith('$['))
+      errors.push('col_invalid:' + colName);
+    if (hasParent && arrayPrefix && colPath.indexOf('.' + arrayPrefix + '[') >= 0)
+      errors.push('col_relative:' + colName);
+  });
+  return errors;
+}
+
+// Returns { 0: errorCount, 1: errorCount, ... } for all tables.
+function _getTableErrorCounts() {
+  var counts = {};
+  for (var i = 0; i < tables.length; i++) {
+    counts[i] = _validateTable(tables[i]).length;
+  }
+  return counts;
+}
+
+// Resolve a JSONPath against the current source editor document.
+// Returns the value or undefined if not found.
+function _resolveSourceValue(jsonPath) {
+  try {
+    var text = document.getElementById('sourceEditor').value.trim();
+    if (!text) return undefined;
+    var doc = JSON.parse(text);
+    if (!jsonPath || jsonPath === '$') return doc;
+    // Strip leading "$." and walk the object
+    var parts = jsonPath.replace(/^\$\.?/, '').split(/\./).filter(Boolean);
+    var cur = doc;
+    for (var i = 0; i < parts.length; i++) {
+      if (cur == null) return undefined;
+      // Handle array notation like items[]
+      var p = parts[i].replace(/\[\]$/, '');
+      cur = cur[p];
+    }
+    return cur;
+  } catch (e) { return undefined; }
+}
+
+// Validate active table's DOM inputs and show inline error hints.
+// Validation problem counter for numbering
+var _valProblems = [];
+
+function validateTableErrors() {
+  if (outputMode !== 'tables' || !tables.length) return;
+  var t = tables[activeTableIdx];
+  if (!t) return;
+
+  // Clear previous error styling and indicator badges
+  document.querySelectorAll('.validate-err').forEach(function(el) { el.classList.remove('validate-err'); });
+  document.querySelectorAll('.val-indicator-badge').forEach(function(el) { el.remove(); });
+  document.querySelectorAll('.val-indicator').forEach(function(el) {
+    var child = el.firstElementChild;
+    if (child) el.replaceWith(child);
+  });
+  var errContainer = document.getElementById('tableValidationErrors');
+  if (errContainer) errContainer.innerHTML = '';
+  _valProblems = [];
+
+  var hasParent = !!(t.parent && t.parent.trim());
+
+  // Find parent table info for suggestions
+  var parentTable = hasParent ? tables.find(function(pt) { return pt.name === t.parent; }) : null;
+  var parentPK = parentTable ? (parentTable.primary_key || 'doc_id') : 'doc_id';
+
+  // --- Parent / FK / source_array checks ---
+  if (hasParent) {
+    var srcArr = document.getElementById('tblSourceArray');
+    var fkCol = document.getElementById('tblFKCol');
+    var fkRef = document.getElementById('tblFKRef');
+    var replaceStrat = document.getElementById('tblReplaceStrategy');
+
+    if (srcArr && !srcArr.value.trim()) {
+      var detectedArrays = sourceFields.filter(function(f) { return f.type === 'array'; });
+      if (detectedArrays.length > 0) {
+        var arrBadges = detectedArrays.map(function(f) {
+          return '<span class="badge badge-info badge-sm cursor-pointer font-mono" onclick="document.getElementById(\'tblSourceArray\').value=\'' + f.path + '\'; onMappingChange();">' + f.path + '</span>';
+        }).join(' ');
+        _markFieldErrorHTML(srcArr, 'Required — pick from source JSON arrays:', arrBadges);
+      } else {
+        _markFieldError(srcArr, 'Required when parent is set. Enter the JSON path to the array (e.g. $.items).');
+      }
+    }
+    if (fkCol && !fkCol.value.trim()) {
+      var sugFKCol = t.parent + '_' + parentPK;
+      _markFieldErrorHTML(fkCol, 'Required — click to use:',
+        '<span class="badge badge-accent badge-sm cursor-pointer font-mono" onclick="document.getElementById(\'tblFKCol\').value=\'' + sugFKCol + '\'; onMappingChange();">(table col) ' + sugFKCol + '</span>');
+    }
+    if (fkRef && !fkRef.value.trim()) {
+      _markFieldErrorHTML(fkRef, 'Required — click to use parent PK:',
+        '<span class="badge badge-accent badge-sm cursor-pointer font-mono" onclick="document.getElementById(\'tblFKRef\').value=\'' + parentPK + '\'; onMappingChange();">(table PK) ' + parentPK + '</span>');
+    }
+    if (replaceStrat && !replaceStrat.value) {
+      _markFieldErrorHTML(replaceStrat, 'Recommended for child tables:',
+        '<span class="badge badge-accent badge-sm cursor-pointer" onclick="document.getElementById(\'tblReplaceStrategy\').value=\'delete_insert\'; onMappingChange();">click to set delete_insert</span>');
+    }
+
+    // --- FK column doesn't match any column name in this table ---
+    if (fkCol && fkCol.value.trim()) {
+      var fkColName = fkCol.value.trim();
+      var colNames = [];
+      document.querySelectorAll('.col-row .col-name').forEach(function(el) {
+        var v = el.value.trim(); if (v) colNames.push(v);
+      });
+      if (colNames.indexOf(fkColName) < 0) {
+        var closestCol = colNames.filter(function(c) {
+          return c.toLowerCase().indexOf('doc_id') >= 0 || c.toLowerCase().indexOf(t.parent) >= 0;
+        });
+        var sugBadges = closestCol.map(function(c) {
+          return '<span class="badge badge-info badge-sm cursor-pointer font-mono" onclick="document.getElementById(\'tblFKCol\').value=\'' + c + '\'; onMappingChange();">' + c + '</span>';
+        }).join(' ');
+        if (!sugBadges && colNames.length) {
+          sugBadges = colNames.map(function(c) {
+            return '<span class="badge badge-ghost badge-sm cursor-pointer font-mono" onclick="document.getElementById(\'tblFKCol\').value=\'' + c + '\'; onMappingChange();">' + c + '</span>';
+          }).join(' ');
+        }
+        _markFieldErrorHTML(fkCol, 'FK Column "' + fkColName + '" does not match any column in this table. Pick one:', sugBadges);
+      }
+    }
+  }
+
+  // --- Column path checks ---
+  var sourceArrayPath = (document.getElementById('tblSourceArray') ? document.getElementById('tblSourceArray').value.trim() : '') || (t.source_array || '');
+  var arrayPrefix = sourceArrayPath.replace(/^\$\.?/, '').replace(/\[\]$/, '');
+  var tablePK = t.primary_key || '';
+
+  document.querySelectorAll('.col-row').forEach(function(row) {
+    var nameInput = row.querySelector('.col-name');
+    var pathInput = row.querySelector('.col-path');
+    if (!nameInput || !pathInput) return;
+    var colName = nameInput.value.trim();
+    var colPath = pathInput.value.trim();
+    if (!colName) return;
+
+    // --- Empty path ---
+    if (!colPath) {
+      if (colName === tablePK) {
+        _markFieldErrorHTML(pathInput, 'Primary Key column — map to source doc ID or remove if DB auto-generates:',
+          '<span class="badge badge-info badge-sm cursor-pointer font-mono" onclick="this.closest(\'.val-panel-item\') && this.closest(\'.val-panel-item\').querySelector(\'.col-path\'); var r=document.querySelectorAll(\'.col-row\'); r.forEach(function(row){var n=row.querySelector(\'.col-name\'); if(n&&n.value.trim()===\'' + esc(colName) + '\'){row.querySelector(\'.col-path\').value=\'$._id\'; onMappingChange();}})">(json) $._id</span>');
+      } else {
+        _markFieldError(pathInput, 'Source path is empty. Use a JSONPath like $._id or $.field_name.');
+      }
+      return;
+    }
+
+    // --- Invalid JSONPath (doesn't start with $) ---
+    if (colPath !== '$' && !colPath.startsWith('$.') && !colPath.startsWith('$[')) {
+      var badges = [];
+      if (colName === tablePK) {
+        badges.push('<span class="badge badge-info badge-sm cursor-pointer font-mono" onclick="var rows=document.querySelectorAll(\'.col-row\'); rows.forEach(function(r){var n=r.querySelector(\'.col-name\'); if(n&&n.value.trim()===\'' + esc(colName) + '\'){r.querySelector(\'.col-path\').value=\'$._id\'; onMappingChange();}})">(json) $._id</span>');
+      }
+      var matchField = sourceFields.find(function(f) { return f.path === '$.' + colPath; });
+      if (matchField) {
+        badges.push('<span class="badge badge-info badge-sm cursor-pointer font-mono" onclick="var rows=document.querySelectorAll(\'.col-row\'); rows.forEach(function(r){var n=r.querySelector(\'.col-name\'); if(n&&n.value.trim()===\'' + esc(colName) + '\'){r.querySelector(\'.col-path\').value=\'' + matchField.path + '\'; onMappingChange();}})">(json) ' + matchField.path + '</span>');
+      }
+      if (badges.length > 0) {
+        _markFieldErrorHTML(pathInput, '"' + colPath + '" is not a valid path. Did you mean:', badges.join(' '));
+      } else {
+        _markFieldError(pathInput, '"' + colPath + '" is not a valid JSONPath. Paths must start with $ (e.g. $._id, $.status).');
+      }
+      return;
+    }
+
+    // --- Child table: column paths should be relative to array element ---
+    if (hasParent && arrayPrefix && colPath.indexOf('.' + arrayPrefix + '[') >= 0) {
+      var suggested = colPath.replace(new RegExp('\\$\\.' + arrayPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\[\\]\\.?'), '$.');
+      _markFieldErrorHTML(pathInput, 'Child paths must be relative to each array element. Click to fix:',
+        '<span class="badge badge-info badge-sm cursor-pointer font-mono" onclick="var rows=document.querySelectorAll(\'.col-row\'); rows.forEach(function(r){var n=r.querySelector(\'.col-name\'); if(n&&n.value.trim()===\'' + esc(colName) + '\'){r.querySelector(\'.col-path\').value=\'' + suggested + '\'; onMappingChange();}})">(json) ' + suggested + '</span>');
+      return;
+    }
+
+    // --- Date string without to_date transform → asyncpg will reject ---
+    var transformInput = row.querySelector('.col-transform');
+    var currentTransform = transformInput ? transformInput.value.trim() : '';
+    if (colPath.startsWith('$') && (!currentTransform || currentTransform.indexOf('to_date') < 0)) {
+      var sampleVal = _resolveSourceValue(colPath);
+      if (sampleVal !== undefined && typeof sampleVal === 'string' && /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?/.test(sampleVal)) {
+        var safeCN = esc(colName);
+        _markFieldErrorHTML(pathInput, 'Value "' + esc(sampleVal) + '" is a date string — PostgreSQL DATE columns need a native date object. Add to_date transform:',
+          '<span class="badge badge-info badge-sm cursor-pointer font-mono" onclick="var rows=document.querySelectorAll(\'.col-row\'); rows.forEach(function(r){var n=r.querySelector(\'.col-name\'); if(n&&n.value.trim()===\'' + safeCN + '\'){var ti=r.querySelector(\'.col-transform\'); if(ti) ti.value=\'to_date(\'+r.querySelector(\'.col-path\').value+\')\'; var sel=r.querySelector(\'.col-transform-select\'); if(sel) sel.value=\'\'; onMappingChange();}})">click to add to_date()</span>');
+      }
+    }
+
+    // --- String value mapped to an auto-increment/integer PK column ---
+    if (colPath.startsWith('$') && colName === tablePK) {
+      var pkSample = _resolveSourceValue(colPath);
+      if (pkSample !== undefined && typeof pkSample === 'string' && !/^\d+$/.test(pkSample)) {
+        // Check if this is a child table where pk "id" is likely a SERIAL
+        if (hasParent && (colName === 'id' || colName === 'pk')) {
+          _markFieldErrorHTML(pathInput, 'PK "' + esc(colName) + '" looks like a SERIAL/INTEGER but source value is "' + esc(String(pkSample)) + '". Remove this row if DB auto-generates, or change the PK:',
+            '<span class="badge badge-error badge-sm cursor-pointer font-mono" onclick="var rows=document.querySelectorAll(\'.col-row\'); rows.forEach(function(r){var n=r.querySelector(\'.col-name\'); if(n&&n.value.trim()===\'' + esc(colName) + '\'){r.remove(); onMappingChange();}})">remove row</span>');
+        }
+      }
+    }
+  });
+
+  // Build floating problems panel
+  _renderProblemsPanel();
+
+  // Refresh tab indicators (error counts may have changed)
+  renderTableTabs();
+}
+
+function _markFieldError(inputEl, message) {
+  inputEl.classList.add('validate-err');
+  _addValidationProblem(inputEl, message, '');
+}
+
+function _markFieldErrorHTML(inputEl, textMessage, badgesHTML) {
+  inputEl.classList.add('validate-err');
+  _addValidationProblem(inputEl, textMessage, badgesHTML);
+}
+
+function _addValidationProblem(inputEl, text, badgesHTML) {
+  var num = _valProblems.length + 1;
+  var fieldLabel = '';
+  var id = inputEl.id;
+  if (id) {
+    var labels = { tblSourceArray: 'Source Array', tblFKCol: 'FK Column', tblFKRef: 'FK References', tblReplaceStrategy: 'Replace Strategy' };
+    fieldLabel = labels[id] || id;
+  } else {
+    var row = inputEl.closest('.col-row');
+    if (row) {
+      var colName = row.querySelector('.col-name');
+      fieldLabel = colName ? 'Column "' + colName.value + '" → Source Path' : 'Source Path';
+    }
+  }
+
+  // Add numbered indicator badge on the input
+  var elId = 'val-input-' + num;
+  inputEl.setAttribute('data-val-num', num);
+  inputEl.id = inputEl.id || elId;
+  var targetId = inputEl.id;
+
+  var wrapper = document.createElement('div');
+  wrapper.className = 'val-indicator';
+  inputEl.parentNode.insertBefore(wrapper, inputEl);
+  wrapper.appendChild(inputEl);
+  var badge = document.createElement('span');
+  badge.className = 'val-indicator-badge';
+  badge.textContent = '#' + num;
+  badge.title = fieldLabel + ': ' + text;
+  badge.onclick = function() { _scrollToProblem(num); };
+  wrapper.appendChild(badge);
+
+  _valProblems.push({ num: num, label: fieldLabel, text: text, badges: badgesHTML, inputId: targetId });
+}
+
+function _scrollToProblem(num) {
+  var el = document.querySelector('[data-val-num="' + num + '"]');
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.remove('val-flash');
+  void el.offsetWidth;
+  el.classList.add('val-flash');
+  el.focus();
+}
+
+function _highlightBadge(num, on) {
+  var el = document.querySelector('[data-val-num="' + num + '"]');
+  if (!el) return;
+  var wrapper = el.closest('.val-indicator');
+  if (!wrapper) return;
+  var badge = wrapper.querySelector('.val-indicator-badge');
+  if (!badge) return;
+  if (on) {
+    badge.classList.remove('val-badge-jump');
+    void badge.offsetWidth;
+    badge.classList.add('val-badge-jump');
+  } else {
+    badge.classList.remove('val-badge-jump');
+  }
+}
+
+function _renderProblemsPanel() {
+  var container = document.getElementById('tableValidationErrors');
+  if (!container) return;
+  container.innerHTML = '';
+  if (_valProblems.length === 0) return;
+
+  var panelHTML = '<div id="validationProblemsPanel" class="card bg-base-100 shadow-lg rounded-xl border border-warning/40">' +
+    '<div class="card-body p-3">' +
+    '<div class="flex items-center gap-2 mb-2">' +
+      '<span class="badge badge-warning font-bold">' + _valProblems.length + '</span>' +
+      '<h4 class="text-sm font-semibold">Problems</h4>' +
+      '<span class="text-xs opacity-50">Click a number to jump to the field</span>' +
+      '<button class="btn btn-ghost btn-xs ml-auto" onclick="document.getElementById(\'validationProblemsPanel\').remove()">✕</button>' +
+    '</div>' +
+    '<div class="space-y-1">';
+
+  _valProblems.forEach(function(p) {
+    panelHTML += '<div class="val-panel-item alert alert-warning val-alert rounded-lg mb-0" onclick="_scrollToProblem(' + p.num + ')" onmouseenter="_highlightBadge(' + p.num + ',true)" onmouseleave="_highlightBadge(' + p.num + ',false)">' +
+      '<div class="flex items-center gap-2 flex-wrap w-full">' +
+        '<span class="badge badge-warning badge-sm font-bold cursor-pointer" title="Jump to field">#' + p.num + '</span>' +
+        '<span class="font-semibold">' + esc(p.label) + ':</span> ' +
+        '<span>' + esc(p.text) + '</span> ' +
+        (p.badges || '') +
+      '</div>' +
+    '</div>';
+  });
+
+  panelHTML += '</div></div></div>';
+  container.innerHTML = panelHTML;
+}
+
+// ── Auto-Map Columns (multi-signal scoring engine) ──────────
+
+// --- Utilities ---
+function _normTokens(name) {
+  var s = name.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
+  return s.split(/[^a-z0-9]+/).filter(function(t) { return t.length > 0; });
+}
+function _normCompact(name) { return _normTokens(name).join(''); }
+
+function _levenshtein(a, b) {
+  if (a === b) return 0;
+  var m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  var d = [];
+  for (var i = 0; i <= m; i++) d[i] = [i];
+  for (var j = 0; j <= n; j++) d[0][j] = j;
+  for (i = 1; i <= m; i++)
+    for (j = 1; j <= n; j++)
+      d[i][j] = Math.min(d[i-1][j]+1, d[i][j-1]+1, d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
+  return d[m][n];
+}
+
+// --- 1. Synonym Dictionary (semantic matching without ML) ---
+var _SYNONYMS = {
+  cost:['price','amount','fee','rate','charge'],
+  price:['cost','amount','fee','rate','charge'],
+  amount:['price','cost','total','sum','fee'],
+  total:['amount','sum','grand_total'],
+  vendor:['supplier','provider','merchant','seller'],
+  supplier:['vendor','provider','merchant'],
+  customer:['client','buyer','patron','account'],
+  client:['customer','buyer','patron'],
+  user:['account','member','person','owner'],
+  name:['title','label','display_name','full_name'],
+  description:['desc','summary','note','details','comment','memo'],
+  desc:['description','summary','note'],
+  created:['created_at','creation_date','date_created','inserted'],
+  updated:['updated_at','modified','modified_at','last_modified','changed'],
+  deleted:['removed','purged','is_deleted'],
+  id:['identifier','key','pk','ref'],
+  uuid:['guid','unique_id','external_id'],
+  email:['mail','email_address','e_mail'],
+  phone:['tel','telephone','mobile','cell','fax','contact_number'],
+  address:['addr','location','street_address'],
+  city:['town','municipality','locality'],
+  state:['province','region','territory'],
+  country:['nation','country_code'],
+  zip:['postal','postal_code','zipcode','postcode'],
+  qty:['quantity','count','num','units'],
+  quantity:['qty','count','num','units'],
+  status:['state','condition','flag'],
+  active:['enabled','is_active','live','on'],
+  discount:['rebate','reduction','markdown'],
+  category:['type','kind','class','group','tag'],
+  type:['kind','category','class'],
+  url:['uri','link','href','website','webpage'],
+  image:['img','photo','picture','thumbnail','avatar'],
+  start:['begin','from','start_date','start_time'],
+  end:['finish','to','end_date','end_time','until'],
+  first:['fname','first_name','given_name','forename'],
+  last:['lname','last_name','surname','family_name'],
+  product:['item','sku','goods','article'],
+  order:['purchase','transaction','booking','reservation'],
+  comment:['remark','feedback','review','note']
+};
+
+function _synonymScore(colName, fieldLeaf) {
+  var ct = _normTokens(colName);
+  var ft = _normTokens(fieldLeaf);
+  var best = 0;
+  ct.forEach(function(c) {
+    ft.forEach(function(f) {
+      if (c === f) { best = Math.max(best, 1.0); return; }
+      var syns = _SYNONYMS[c];
+      if (syns) {
+        for (var i = 0; i < syns.length; i++) {
+          var synToks = _normTokens(syns[i]);
+          if (synToks.indexOf(f) >= 0) { best = Math.max(best, 0.85); return; }
+        }
+      }
+    });
+  });
+  return best;
+}
+
+// --- 2. Data Profiling / Sniffing ---
+var _SNIFF_PATTERNS = [
+  { name: 'uuid',     re: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i },
+  { name: 'iso_date', re: /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?/ },
+  { name: 'email',    re: /^[^\s@]+@[^\s@]+\.[^\s@]+$/ },
+  { name: 'url',      re: /^https?:\/\//i },
+  { name: 'phone',    re: /^[+]?\d[\d\s\-().]{6,}$/ },
+  { name: 'ipv4',     re: /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/ },
+  { name: 'hex_color', re: /^#[0-9a-f]{3,8}$/i },
+  { name: 'currency', re: /^[$€£¥]\d/ },
+  { name: 'bool_str', re: /^(true|false|yes|no|on|off|0|1)$/i },
+  { name: 'json_obj', re: /^\{.*\}$/ }
+];
+// SQL type affinity for each sniffed format
+var _SNIFF_SQL_AFFINITY = {
+  uuid:     ['uuid','varchar','text','char'],
+  iso_date: ['date','timestamp','datetime','timestamptz'],
+  email:    ['varchar','text'],
+  url:      ['varchar','text'],
+  phone:    ['varchar','text'],
+  ipv4:     ['varchar','inet','text'],
+  currency: ['numeric','decimal','money','float'],
+  bool_str: ['boolean','bool','bit','smallint'],
+  json_obj: ['json','jsonb','text']
+};
+
+function _sniffValue(sample) {
+  if (!sample || typeof sample !== 'string') return null;
+  for (var i = 0; i < _SNIFF_PATTERNS.length; i++) {
+    if (_SNIFF_PATTERNS[i].re.test(sample)) return _SNIFF_PATTERNS[i].name;
+  }
+  return null;
+}
+
+function _sniffTypeBoost(sample, sqlType) {
+  if (!sqlType) return 0;
+  var fmt = _sniffValue(sample);
+  if (!fmt) return 0;
+  var affinities = _SNIFF_SQL_AFFINITY[fmt];
+  if (!affinities) return 0;
+  var st = sqlType.toLowerCase();
+  for (var i = 0; i < affinities.length; i++) {
+    if (st.indexOf(affinities[i]) >= 0) return 0.2;
+  }
+  // Mismatch penalty: sniffed as date but column is integer
+  if (fmt === 'iso_date' && /int|serial/i.test(st)) return -0.15;
+  if (fmt === 'uuid' && /int|serial|numeric/i.test(st)) return -0.15;
+  return 0;
+}
+
+// --- 3. Name Similarity (fuzzy + tokens + Levenshtein) ---
+function _nameSimilarity(colName, fieldLeaf) {
+  var colCompact = _normCompact(colName);
+  var fldCompact = _normCompact(fieldLeaf);
+  if (!colCompact || !fldCompact) return 0;
+  if (colCompact === fldCompact) return 1.0;
+  if (colCompact.indexOf(fldCompact) >= 0 || fldCompact.indexOf(colCompact) >= 0) {
+    var longer = Math.max(colCompact.length, fldCompact.length);
+    var shorter = Math.min(colCompact.length, fldCompact.length);
+    return 0.7 + 0.2 * (shorter / longer);
+  }
+  var colToks = _normTokens(colName);
+  var fldToks = _normTokens(fieldLeaf);
+  var overlap = 0;
+  colToks.forEach(function(ct) {
+    fldToks.forEach(function(ft) {
+      if (ct === ft) overlap++;
+      else if (ct.length > 2 && ft.length > 2 && (ct.indexOf(ft) >= 0 || ft.indexOf(ct) >= 0)) overlap += 0.5;
+    });
+  });
+  var tokenScore = overlap / Math.max(colToks.length, fldToks.length);
+  if (tokenScore > 0.3) return 0.5 + 0.4 * tokenScore;
+  var dist = _levenshtein(colCompact, fldCompact);
+  var maxLen = Math.max(colCompact.length, fldCompact.length);
+  return Math.max(0, 1 - (dist / maxLen));
+}
+
+// --- 4. Type Compatibility ---
+function _typeCompat(jsonType, sample, sqlType) {
+  if (!sqlType) return 0.5;
+  var st = sqlType.toLowerCase();
+  var score = 0.3;
+  if (jsonType === 'string') {
+    if (/varchar|text|char|json/i.test(st)) score = 0.8;
+    if (/date|timestamp|time/i.test(st)) score = (sample && /^\d{4}-\d{2}/.test(sample)) ? 1.3 : 0.6;
+  } else if (jsonType === 'number') {
+    if (/int|serial|bigint|smallint|numeric|decimal|float|double|real|money/i.test(st)) score = 1.0;
+    if (/varchar|text/i.test(st)) score = 0.4;
+  } else if (jsonType === 'boolean') {
+    if (/bool/i.test(st)) score = 1.2;
+    if (/int|smallint|bit/i.test(st)) score = 0.7;
+  }
+  return Math.min(score, 1.3);
+}
+
+// --- 5. Semantic Group Boost ---
+var _SEMANTIC_GROUPS = [
+  ['id','key','identifier','uuid','guid'],
+  ['date','time','timestamp','created','updated','modified','datetime'],
+  ['name','title','label','display'],
+  ['email','mail'],
+  ['phone','tel','mobile','fax'],
+  ['price','cost','amount','total','fee','rate'],
+  ['qty','quantity','count','num','number'],
+  ['status','state','flag','active','enabled'],
+  ['desc','description','note','notes','comment','summary'],
+  ['address','street','city','zip','postal','country','region'],
+  ['url','uri','link','href','website'],
+  ['type','kind','category','class']
+];
+
+function _semanticGroupBoost(colName, fieldLeaf) {
+  var colToks = _normTokens(colName);
+  var fldToks = _normTokens(fieldLeaf);
+  var boost = 0;
+  _SEMANTIC_GROUPS.forEach(function(group) {
+    var colHit = colToks.some(function(t) { return group.indexOf(t) >= 0; });
+    var fldHit = fldToks.some(function(t) { return group.indexOf(t) >= 0; });
+    if (colHit && fldHit) boost = Math.max(boost, 0.1);
+  });
+  return boost;
+}
+
+// --- 6. Structural Path Weighting ---
+// Disambiguate: shipping_address.city vs billing_address.city for ship_to_city vs bill_to_city
+function _pathContextScore(colName, fieldPath, tableName) {
+  var colToks = _normTokens(colName);
+  var pathSegments = fieldPath.replace(/\$\./,'').split('.');
+  if (pathSegments.length < 2) return 0; // no parent context
+  // parent tokens (everything except the leaf): 40% weight
+  var parentToks = [];
+  for (var i = 0; i < pathSegments.length - 1; i++) {
+    parentToks = parentToks.concat(_normTokens(pathSegments[i].replace(/\[\]/g, '')));
+  }
+  var score = 0;
+  colToks.forEach(function(ct) {
+    parentToks.forEach(function(pt) {
+      if (ct === pt) score += 0.12;
+      else if (ct.length > 2 && pt.length > 2 && (ct.indexOf(pt) >= 0 || pt.indexOf(ct) >= 0)) score += 0.06;
+      // synonym check on parent
+      var syns = _SYNONYMS[ct];
+      if (syns) {
+        for (var s = 0; s < syns.length; s++) {
+          if (_normTokens(syns[s]).indexOf(pt) >= 0) { score += 0.08; break; }
+        }
+      }
+    });
+  });
+  // Table name context bonus
+  var tableToks = _normTokens(tableName);
+  parentToks.forEach(function(pt) {
+    if (tableToks.indexOf(pt) >= 0) score += 0.05;
+  });
+  return Math.min(score, 0.25);
+}
+
+// --- 7. False Friends Penalty ---
+var _FALSE_FRIENDS = [
+  ['id', 'uuid'],        // internal vs external ID
+  ['created', 'updated'], // different timestamps
+  ['start', 'end'],
+  ['first', 'last'],
+  ['source', 'target'],
+  ['min', 'max'],
+  ['from', 'to'],
+  ['width', 'height'],
+  ['latitude', 'longitude']
+];
+
+function _falseFriendPenalty(colName, fieldLeaf) {
+  var ct = _normTokens(colName);
+  var ft = _normTokens(fieldLeaf);
+  for (var i = 0; i < _FALSE_FRIENDS.length; i++) {
+    var pair = _FALSE_FRIENDS[i];
+    var colHas0 = ct.indexOf(pair[0]) >= 0, colHas1 = ct.indexOf(pair[1]) >= 0;
+    var fldHas0 = ft.indexOf(pair[0]) >= 0, fldHas1 = ft.indexOf(pair[1]) >= 0;
+    // Penalty when one side has word A and other has word B
+    if ((colHas0 && fldHas1 && !fldHas0) || (colHas1 && fldHas0 && !fldHas1)) return -0.3;
+  }
+  return 0;
+}
+
+// --- Confidence tracking ---
+var _autoMapConfidence = {}; // { "table.col": score }
+
+// --- Main Auto-Map Function ---
+function autoMapColumns() {
+  if (!sourceFields.length || !tables.length) return;
+
+  var fields = [];
+  sourceFields.forEach(function(f) {
+    if (f.type === 'object' || f.type === 'array') return;
+    var segments = f.path.split('.');
+    var leaf = segments[segments.length - 1].replace(/\[\]/g, '');
+    fields.push({ path: f.path, leaf: leaf, type: f.type, sample: f.sample || '' });
+  });
+
+  var mapped = 0, lowConf = 0;
+  _autoMapConfidence = {};
+
+  tables.forEach(function(t) {
+    var unmapped = [];
+    Object.keys(t.columns).forEach(function(colName) {
+      var existing = t.columns[colName];
+      if (existing && (typeof existing === 'string' ? existing : existing.path)) return;
+      unmapped.push(colName);
+    });
+    if (!unmapped.length) return;
+
+    // Score every (column, field) pair with all signals
+    var candidates = [];
+    unmapped.forEach(function(colName) {
+      var sqlType = columnTypes[t.name + '.' + colName] || '';
+      fields.forEach(function(f) {
+        // Signal 1: Name similarity (fuzzy + Levenshtein)
+        var nameScore = _nameSimilarity(colName, f.leaf);
+        // Signal 2: Synonym dictionary
+        var synScore = _synonymScore(colName, f.leaf);
+        var bestName = Math.max(nameScore, synScore);
+        // Signal 3: Type compatibility
+        var typeScore = _typeCompat(f.type, f.sample, sqlType);
+        // Signal 4: Data sniffing boost/penalty
+        var sniffAdj = _sniffTypeBoost(f.sample, sqlType);
+        // Signal 5: Semantic group boost
+        var semBoost = _semanticGroupBoost(colName, f.leaf);
+        // Signal 6: Structural path context
+        var pathCtx = _pathContextScore(colName, f.path, t.name);
+        // Signal 7: False friends penalty
+        var ffPenalty = _falseFriendPenalty(colName, f.leaf);
+
+        var total = (0.45 * bestName) + (0.2 * typeScore) + sniffAdj + semBoost + pathCtx + ffPenalty;
+
+        if (total >= 0.4) {
+          candidates.push({ col: colName, path: f.path, score: total, leaf: f.leaf });
+        }
+      });
+    });
+
+    // Greedy assignment: best score first, no duplicates
+    candidates.sort(function(a, b) { return b.score - a.score; });
+    var usedCols = {}, usedPaths = {};
+    candidates.forEach(function(c) {
+      if (usedCols[c.col] || usedPaths[c.path]) return;
+      t.columns[c.col] = c.path;
+      usedCols[c.col] = true;
+      usedPaths[c.path] = true;
+      _autoMapConfidence[t.name + '.' + c.col] = c.score;
+      mapped++;
+      if (c.score < 0.7) lowConf++;
+    });
+  });
+
+  if (mapped > 0) {
+    activeTableIdx = 0;
+    renderTableTabs();
+    renderTableEditor();
+    onMappingChange();
+    var msg = 'Auto-mapped ' + mapped + ' column(s)';
+    if (lowConf > 0) msg += ' — ' + lowConf + ' low-confidence (review highlighted)';
+    showStatus(msg, lowConf > 0 ? 'warning' : 'success');
+  } else {
+    showStatus('No columns could be auto-mapped', 'warning');
+  }
+}
+
+// ── Load global config into read-only connection fields ──────
+async function loadGlobalConfig() {
+  try {
+    var res = await fetch('/api/config');
+    var cfg = await res.json();
+    // Source connection
+    var gw = cfg.gateway || {};
+    var cf = cfg.changes_feed || {};
+    var srcLabels = { sync_gateway: 'Sync Gateway', app_services: 'App Services', edge_server: 'Edge Server', couchdb: 'CouchDB' };
+    document.getElementById('srcTypeRO').value = srcLabels[gw.src] || gw.src || '';
+    document.getElementById('srcUrlRO').value = gw.url || '';
+    document.getElementById('srcDatabaseRO').value = gw.database || '';
+    document.getElementById('srcScopeRO').value = gw.scope || '_default';
+    document.getElementById('srcCollectionRO').value = gw.collection || '_default';
+    document.getElementById('srcFeedTypeRO').value = cf.feed_type || '';
+    // Output connection
+    var out = cfg.output || {};
+    var mode = out.mode || '';
+    document.getElementById('outModeRO').value = mode;
+    var db = out[mode] || {};
+    document.getElementById('outHostRO').value = db.host || '';
+    document.getElementById('outPortRO').value = db.port || '';
+    document.getElementById('outDatabaseRO').value = db.database || '';
+    document.getElementById('outUserRO').value = db.user || '';
+    document.getElementById('outPasswordRO').value = '••••••••';
+    document.getElementById('outSchemaRO').value = db.schema || '';
+    document.getElementById('outSSLRO').value = db.ssl ? 'Yes' : 'No';
+    updateSteps();
+  } catch (e) { /* config not available */ }
+}
+
 // ── Init ─────────────────────────────────────────────────────
 loadFileList(true);
 loadDbDrivers();
+loadGlobalConfig();
+updateSteps();
 </script>
 
   </main>
