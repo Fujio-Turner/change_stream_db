@@ -26,7 +26,8 @@
     "timeout_ms": 60000,
     "http_timeout_seconds": 300,
     "throttle_feed": 0,
-    "continuous_catchup_limit": 10000
+    "continuous_catchup_limit": 10000,
+    "optimize_initial_sync": false
   },
   "threads": 4,
   "processing": {

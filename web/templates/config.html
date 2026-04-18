@@ -198,6 +198,28 @@
           <label class="form-control w-full">
             <div class="label">
               <span class="label-text flex items-center gap-2">
+                Since
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="Starting sequence number for the _changes feed. &quot;0&quot; means start from the beginning (triggers initial sync mode). Leave as &quot;0&quot; to let the checkpoint system manage this automatically. &#10;&#10;Sync Gateway sequences can be integers (42), compound (123:100, 90::100), or distributed hashes (200-0). CouchDB uses integer or string sequences. Sequences are opaque — don't parse them, just pass them through.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
+            <input type="text" id="changes_feed_since" class="input input-bordered w-full" placeholder="0" />
+          </label>
+          <label class="form-control w-full">
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Limit
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="Maximum number of changes to return per _changes request during steady-state operation. 0 = no limit (default). &#10;&#10;During initial sync, this is controlled separately by the optimize_initial_sync and continuous_catchup_limit settings.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
+            <input type="number" id="changes_feed_limit" class="input input-bordered w-full" min="0" />
+          </label>
+          <label class="form-control w-full">
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
                 Throttle Feed
                 <div class="tooltip tooltip-right tooltip-wide" data-tip="Artificial delay in seconds inserted between _changes poll cycles. Use to reduce load on the source server when near-real-time processing is not required. 0 = no throttle (default).">
                   <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
@@ -207,9 +229,94 @@
             <input type="number" id="changes_feed_throttle_feed" class="input input-bordered w-full" min="0" />
           </label>
           <label class="form-control w-full">
-            <div class="label"><span class="label-text">HTTP Timeout (seconds)</span></div>
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Heartbeat (ms)
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="How often the server sends a heartbeat (empty line) to keep the connection alive during longpoll/continuous feeds. Default: 30000ms (30s). &#10;&#10;Edge Server has a minimum of 25,000ms.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
+            <input type="number" id="changes_feed_heartbeat_ms" class="input input-bordered w-full" min="0" />
+          </label>
+          <label class="form-control w-full">
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Timeout (ms)
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="Server-side timeout for longpoll requests in milliseconds. The server will return an empty response after this time if no new changes arrive. Default: 60000ms (60s). &#10;&#10;Edge Server has a maximum of 900,000ms (15 min).">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
+            <input type="number" id="changes_feed_timeout_ms" class="input input-bordered w-full" min="0" />
+          </label>
+          <label class="form-control w-full">
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                HTTP Timeout (seconds)
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="Client-side HTTP timeout for _changes requests. This is how long the worker waits for a response before giving up. Default: 300s (5 min). &#10;&#10;For the default initial sync (no chunking), this controls how large a feed can be pulled in one request. At ~5,000 seq/s, 300s covers ~1.5M entries. Increase for very large feeds.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
             <input type="number" id="changes_feed_http_timeout_seconds" class="input input-bordered w-full" min="0" />
           </label>
+        </div>
+      </div>
+
+      <!-- Initial Sync -->
+      <div class="collapse collapse-arrow bg-base-100 mb-2">
+        <input type="checkbox" />
+        <div class="collapse-title font-semibold flex items-center gap-2">
+          Initial Sync
+          <div class="tooltip tooltip-right tooltip-wide" data-tip="Controls how the worker handles the first-ever _changes pull (since=0). During initial sync the worker automatically uses active_only=true (Couchbase) or filters deletes (CouchDB), sets include_docs=false, and uses feed=normal to pull only the current state of live documents.">
+            <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+          </div>
+        </div>
+        <div class="collapse-content flex flex-col gap-3">
+          <div class="form-control">
+            <label class="label cursor-pointer justify-start gap-4">
+              <span class="label-text flex items-center gap-2">
+                Optimize Initial Sync (chunked)
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="OFF (default): The initial pull makes a single large _changes request with no limit. The response includes the true last_seq for the entire feed, giving a clean consistency boundary — any future mutation (including deletes) will have a higher sequence. This is the safest approach. &#10;&#10;ON: The initial pull pages through the feed in chunks using limit (set by Catchup Limit below). This is faster for very large feeds (millions of entries) that would otherwise timeout, but introduces a small consistency window where a document could be deleted between chunks and the delete would be missed. &#10;&#10;Example of the consistency gap: &#10;Page 1: _changes?since=0&amp;limit=4 → last_seq=82 (got docs A,B,C,D) &#10;Meanwhile doc B is deleted at seq=85 &#10;Page 2: _changes?since=82&amp;active_only=true → delete at 85 not sent &#10;Result: you never learn about the delete until the next steady-state cycle.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+              <input type="checkbox" id="changes_feed_optimize_initial_sync" class="toggle toggle-success" />
+            </label>
+          </div>
+          <label class="form-control w-full" id="catchup_limit_wrap">
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Catchup Limit
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="Page size for chunked initial sync and continuous mode catch-up. Default: 10,000. &#10;&#10;Sync Gateway's _changes index serves ~5,000 entries/second, so limit=5000 takes ~1s, limit=10000 takes ~2s. Going higher has diminishing returns; going lower adds HTTP round-trip overhead. &#10;&#10;This value is also used as the catch-up batch size when feed_type is continuous or websocket (the 2-phase catch-up before switching to the real-time stream).">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
+            <input type="number" id="changes_feed_continuous_catchup_limit" class="input input-bordered w-full" min="100" step="1000" />
+          </label>
+          <label class="form-control w-full">
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Get Batch Number
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="When include_docs=false (always the case during initial sync), documents are fetched separately via _bulk_get. This sets the batch size — how many documents are requested in each _bulk_get call. Default: 100. &#10;&#10;Higher values reduce the number of HTTP round-trips but increase per-request payload size. For Edge Server (which uses individual GET instead of _bulk_get), this controls the number of concurrent requests.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
+            <input type="number" id="processing_get_batch_number" class="input input-bordered w-full" min="1" />
+          </label>
+          <div class="bg-base-200 p-3 rounded-lg text-sm opacity-70">
+            <p class="font-semibold mb-1">How initial sync works:</p>
+            <ul class="list-disc list-inside space-y-1">
+              <li><strong>Couchbase</strong> (SG / App Services / Edge): <code>active_only=true</code> excludes deleted &amp; removed docs from the feed server-side.</li>
+              <li><strong>CouchDB</strong>: No <code>active_only</code> support — the worker filters out deleted/removed docs in the processing layer.</li>
+              <li><code>include_docs=false</code> — only <code>_id</code>, <code>_rev</code>, <code>_seq</code> are returned; full docs fetched via <code>_bulk_get</code> in batches.</li>
+              <li><code>feed=normal</code> — one-shot request (not longpoll blocking).</li>
+              <li>A crash-safe <code>initial_sync_done</code> flag is saved in the checkpoint. If interrupted, the worker resumes initial sync from the last checkpoint.</li>
+            </ul>
+          </div>
         </div>
       </div>
 
@@ -1283,8 +1390,15 @@
     document.getElementById('changes_feed_include_docs').checked = cfg.changes_feed?.include_docs || false;
     channelsTagify.removeAllTags();
     channelsTagify.addTags(cfg.changes_feed?.channels || []);
+    document.getElementById('changes_feed_since').value = cfg.changes_feed?.since ?? '0';
+    document.getElementById('changes_feed_limit').value = cfg.changes_feed?.limit ?? 0;
     document.getElementById('changes_feed_throttle_feed').value = cfg.changes_feed?.throttle_feed ?? 0;
+    document.getElementById('changes_feed_heartbeat_ms').value = cfg.changes_feed?.heartbeat_ms ?? 30000;
+    document.getElementById('changes_feed_timeout_ms').value = cfg.changes_feed?.timeout_ms ?? 60000;
     document.getElementById('changes_feed_http_timeout_seconds').value = cfg.changes_feed?.http_timeout_seconds ?? 300;
+    document.getElementById('changes_feed_optimize_initial_sync').checked = cfg.changes_feed?.optimize_initial_sync || false;
+    document.getElementById('changes_feed_continuous_catchup_limit').value = cfg.changes_feed?.continuous_catchup_limit ?? 10000;
+    document.getElementById('processing_get_batch_number').value = cfg.processing?.get_batch_number ?? 100;
 
     document.getElementById('threads').value = cfg.threads ?? 4;
 
@@ -1480,8 +1594,14 @@
         active_only: document.getElementById('changes_feed_active_only').checked,
         include_docs: document.getElementById('changes_feed_include_docs').checked,
         channels: channels,
+        since: document.getElementById('changes_feed_since').value || '0',
+        limit: parseInt(document.getElementById('changes_feed_limit').value) || 0,
         throttle_feed: parseInt(document.getElementById('changes_feed_throttle_feed').value) || 0,
-        http_timeout_seconds: parseInt(document.getElementById('changes_feed_http_timeout_seconds').value) || 300
+        heartbeat_ms: parseInt(document.getElementById('changes_feed_heartbeat_ms').value) || 30000,
+        timeout_ms: parseInt(document.getElementById('changes_feed_timeout_ms').value) || 60000,
+        http_timeout_seconds: parseInt(document.getElementById('changes_feed_http_timeout_seconds').value) || 300,
+        optimize_initial_sync: document.getElementById('changes_feed_optimize_initial_sync').checked,
+        continuous_catchup_limit: parseInt(document.getElementById('changes_feed_continuous_catchup_limit').value) || 10000
       },
       threads: parseInt(document.getElementById('threads').value) || 4,
       processing: {
@@ -1489,7 +1609,8 @@
         ignore_remove: document.getElementById('processing_ignore_remove').checked,
         sequential: document.getElementById('processing_sequential').checked,
         max_concurrent: parseInt(document.getElementById('processing_max_concurrent').value) || 20,
-        dry_run: document.getElementById('processing_dry_run').checked
+        dry_run: document.getElementById('processing_dry_run').checked,
+        get_batch_number: parseInt(document.getElementById('processing_get_batch_number').value) || 100
       },
       output: (function() {
         var mode = document.getElementById('output_mode').value;

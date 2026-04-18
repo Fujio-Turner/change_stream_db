@@ -1472,6 +1472,7 @@ class Checkpoint:
         self._seq: str = "0"
         self._rev: str | None = None  # SG doc _rev for updates
         self._internal: int = 0
+        self._initial_sync_done: bool = False
 
         # Build the deterministic UUID the same way CBL does:
         #   HASH(local_client_id + SG URL + channel_names)
@@ -1502,6 +1503,10 @@ class Checkpoint:
     def seq(self) -> str:
         return self._seq
 
+    @property
+    def initial_sync_done(self) -> bool:
+        return self._initial_sync_done
+
     # -- SG-backed load/save ---------------------------------------------------
 
     async def load(
@@ -1524,11 +1529,24 @@ class Checkpoint:
             self._seq = str(data.get("SGs_Seq", "0"))
             self._rev = data.get("_rev")
             self._internal = data.get("remote", data.get("local_internal", 0))
+            raw_isd = data.get("initial_sync_done", None)
+            if raw_isd is None:
+                self._initial_sync_done = self._seq != "0"
+            else:
+                self._initial_sync_done = bool(raw_isd)
             log_event(
                 logger,
                 "info",
                 "CHECKPOINT",
-                "loaded checkpoint from Sync Gateway",
+                "checkpoint loaded",
+                operation="SELECT",
+                storage="sg",
+            )
+            log_event(
+                logger,
+                "debug",
+                "CHECKPOINT",
+                "checkpoint detail",
                 operation="SELECT",
                 seq=self._seq,
                 doc_id=self._local_doc_id,
@@ -1597,6 +1615,7 @@ class Checkpoint:
                 "SGs_Seq": seq,
                 "time": int(time.time()),
                 "remote": self._internal,
+                "initial_sync_done": self._initial_sync_done,
             }
             if self._rev:
                 body["_rev"] = self._rev
@@ -1615,7 +1634,15 @@ class Checkpoint:
                     logger,
                     "info",
                     "CHECKPOINT",
-                    "saved checkpoint to Sync Gateway",
+                    "checkpoint saved",
+                    operation="UPDATE",
+                    storage="sg",
+                )
+                log_event(
+                    logger,
+                    "debug",
+                    "CHECKPOINT",
+                    "checkpoint save detail",
                     operation="UPDATE",
                     seq=seq,
                     doc_id=self._local_doc_id,
@@ -1642,6 +1669,11 @@ class Checkpoint:
             data = CBLStore().load_checkpoint(self._uuid)
             if data:
                 seq = data.get("SGs_Seq", "0")
+                raw_isd = data.get("initial_sync_done", None)
+                if raw_isd is None:
+                    self._initial_sync_done = seq != "0"
+                else:
+                    self._initial_sync_done = bool(raw_isd)
                 ic("checkpoint loaded from CBL", seq)
                 return seq
             return "0"
@@ -1649,6 +1681,11 @@ class Checkpoint:
         if self._fallback_path.exists():
             data = json.loads(self._fallback_path.read_text())
             seq = str(data.get("SGs_Seq", data.get("last_seq", "0")))
+            raw_isd = data.get("initial_sync_done", None)
+            if raw_isd is None:
+                self._initial_sync_done = seq != "0"
+            else:
+                self._initial_sync_done = bool(raw_isd)
             ic("checkpoint loaded from file", seq)
             return seq
         return "0"
@@ -1665,6 +1702,7 @@ class Checkpoint:
                     "SGs_Seq": seq,
                     "time": int(time.time()),
                     "remote": self._internal,
+                    "initial_sync_done": self._initial_sync_done,
                 }
             )
         )
@@ -1736,7 +1774,7 @@ async def poll_changes(
         http = RetryableHTTP(session, retry_cfg)
         if metrics:
             http.set_metrics(metrics)
-        http.set_shutdown_event(shutdown_event)
+        http.set_shutdown_event(stop_event)
 
         output_mode = out_cfg.get("mode", "stdout")
         db_output = None  # track DB forwarder for cleanup
@@ -1832,18 +1870,51 @@ async def poll_changes(
 
         throttle = feed_cfg.get("throttle_feed", 0)
 
-        # For Couchbase products: force active_only=true during the initial
-        # sync (since=0) so we only process the current state of documents,
-        # not historical deletes/removes.  After the initial sync completes
-        # we revert to the user's config setting.
-        initial_sync = since == "0" and src != "couchdb"
+        # Initial sync: when starting from since=0 (or resuming an
+        # interrupted initial pull), optimise the _changes feed:
+        #   Couchbase: active_only=true so deleted/removed are excluded
+        #   CouchDB:   no active_only support → ignore deletes in processing
+        # In both cases: include_docs=false.
+        #
+        # optimize_initial_sync=true  → chunked with limit (faster for
+        #   huge feeds but may miss deletes between chunks)
+        # optimize_initial_sync=false (default) → single large request,
+        #   no limit, long timeout — simpler and no consistency gap
+        requested_since = feed_cfg.get("since", "0")
+        initial_sync = (
+            requested_since == "0"
+            and not checkpoint.initial_sync_done
+        )
+        optimize_initial = feed_cfg.get("optimize_initial_sync", False)
         if initial_sync:
-            log_event(
-                logger,
-                "info",
-                "CHANGES",
-                "initial sync detected – forcing active_only=true to skip historical deletes",
-            )
+            if optimize_initial:
+                log_event(
+                    logger,
+                    "info",
+                    "CHANGES",
+                    "initial sync mode (optimized/chunked) – %s, "
+                    "include_docs=false, limit=%d"
+                    % (
+                        "active_only=true"
+                        if src != "couchdb"
+                        else "ignoring deletes/removes (CouchDB)",
+                        feed_cfg.get("continuous_catchup_limit", 10000),
+                    ),
+                )
+            else:
+                log_event(
+                    logger,
+                    "info",
+                    "CHANGES",
+                    "initial sync mode – %s, include_docs=false, "
+                    "single request (http_timeout=%ds)"
+                    % (
+                        "active_only=true"
+                        if src != "couchdb"
+                        else "ignoring deletes/removes (CouchDB)",
+                        feed_cfg.get("http_timeout_seconds", 300),
+                    ),
+                )
 
         # Source-specific feed type validation
         feed_type = feed_cfg.get("feed_type", "longpoll")
@@ -1896,6 +1967,25 @@ async def poll_changes(
             every_n_docs=every_n_docs,
             max_concurrent=max_concurrent,
             shutdown_cfg=shutdown_cfg,
+        )
+
+        # Log replication settings at startup
+        log_event(
+            logger,
+            "info",
+            "CHANGES",
+            "replication config: feed=%s, active_only=%s, include_docs=%s, "
+            "since=%s, initial_sync=%s, initial_sync_done=%s, "
+            "optimize_initial_sync=%s"
+            % (
+                feed_type,
+                feed_cfg.get("active_only", False),
+                feed_cfg.get("include_docs", False),
+                since,
+                initial_sync,
+                checkpoint.initial_sync_done,
+                optimize_initial,
+            ),
         )
 
         try:
@@ -1967,21 +2057,39 @@ async def poll_changes(
 
             # ── Polled mode (longpoll / normal / sse) ────────────────────────
             while not stop_event.is_set():
+                # During initial sync use feed=normal so the server
+                # returns immediately with a limited result set instead
+                # of blocking on longpoll.
+                effective_feed = "normal" if initial_sync else feed_type
                 body_payload = _build_changes_body(
                     feed_cfg,
                     src,
                     since,
-                    feed_type,
+                    effective_feed,
                     timeout_ms,
-                    active_only_override=True if initial_sync else None,
+                    active_only_override=(
+                        True if initial_sync and src != "couchdb" else None
+                    ),
+                    include_docs_override=False if initial_sync else None,
                 )
                 # throttle_feed overrides limit – eat the feed one bite at a time
                 if throttle > 0:
                     body_payload["limit"] = throttle
+                elif initial_sync and optimize_initial:
+                    # Chunked initial sync: page through the feed.
+                    body_payload["limit"] = feed_cfg.get(
+                        "continuous_catchup_limit", 10000
+                    )
                 elif feed_cfg.get("limit", 0) > 0:
                     body_payload["limit"] = feed_cfg["limit"]
 
                 ic(changes_url, body_payload, since)
+                log_event(
+                    logger,
+                    "info",
+                    "CHANGES",
+                    "polling _changes (since=%s, feed=%s)" % (since, feed_type),
+                )
 
                 try:
                     t0_changes = time.monotonic()
@@ -2023,6 +2131,7 @@ async def poll_changes(
                     results,
                     str(last_seq),
                     since,
+                    initial_sync=initial_sync,
                     **batch_kwargs,
                 )
 
@@ -2040,11 +2149,15 @@ async def poll_changes(
                 if not results:
                     if initial_sync:
                         initial_sync = False
+                        checkpoint._initial_sync_done = True
+                        await checkpoint.save(
+                            since, http, base_url, basic_auth, auth_headers
+                        )
                         log_event(
                             logger,
                             "info",
                             "CHANGES",
-                            "initial sync complete – reverting active_only to config value",
+                            "initial sync complete – reverting to config settings",
                         )
                     await _sleep_or_shutdown(
                         feed_cfg.get("poll_interval_seconds", 10), stop_event

@@ -2,6 +2,20 @@
 
 ---
 
+## v1.6.0 — 2026-04-18
+
+### New Features
+
+- **Optimised initial sync** — When starting from `since=0` (or resuming an interrupted initial pull), the `_changes` feed now uses `active_only=true` (Couchbase) or filters out deletes/removes (CouchDB), `include_docs=false`, and `feed=normal`. By default the worker makes a single large request with no limit (relying on `http_timeout_seconds`, default 300s / ~1.5M entries) to get the true `last_seq` and avoid a consistency gap where deletes between chunks could be missed. Set `optimize_initial_sync: true` to enable chunked paging with `continuous_catchup_limit` for feeds too large for a single request. After catch-up completes (0 results), the worker switches back to the user's configured feed settings.
+
+- **Crash-safe initial sync tracking** — A new `initial_sync_done` flag is persisted in the checkpoint document (SG `_local` doc, file fallback, and CBL). If the process is interrupted mid-initial-pull, it resumes in initial-sync mode from the last checkpoint instead of switching to normal mode prematurely. Legacy checkpoints (without the flag) are treated as already complete to avoid re-syncing.
+
+### Changes
+
+- **Logging levels rebalanced** — Checkpoint INFO logs now show only the operation (loaded/saved) and storage type, with `doc_id` and `seq` moved to DEBUG. `_changes` batch logs at INFO show the change count; individual `_id`/`_rev`/`_seq` rows log at DEBUG. `_bulk_get` logs request/response doc counts at INFO; individual doc IDs and payload sizes at DEBUG. Single-doc GET logs at INFO (count) and DEBUG (`_id`, `_rev`, payload size). Replication config (feed type, active_only, include_docs, since, initial_sync state) is logged at INFO on startup.
+
+---
+
 ## v1.5.0 — 2026-04-18
 
 ### New Features

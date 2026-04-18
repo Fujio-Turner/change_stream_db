@@ -210,11 +210,24 @@ async def fetch_docs(
         return []
 
     batches = _chunked(eligible, batch_size)
-    ic(f"fetch_docs: {len(eligible)} docs in {len(batches)} batch(es) of {batch_size}")
+    log_event(
+        logger,
+        "info",
+        "HTTP",
+        "fetching %d docs in %d batch(es)" % (len(eligible), len(batches)),
+        batch_size=batch_size,
+        doc_count=len(eligible),
+    )
 
     all_results: list[dict] = []
     for i, batch in enumerate(batches):
-        ic(f"fetch_docs batch {i + 1}/{len(batches)}: {len(batch)} docs")
+        log_event(
+            logger,
+            "debug",
+            "HTTP",
+            "fetch batch %d/%d: %d docs" % (i + 1, len(batches), len(batch)),
+            batch_size=len(batch),
+        )
         if src == "edge_server":
             results = await _fetch_docs_individually(
                 http, base_url, batch, auth, headers, max_concurrent, metrics=metrics
@@ -315,6 +328,22 @@ async def _fetch_docs_bulk_get(
     url = f"{base_url}/_bulk_get?revs=false"
     payload = {"docs": docs_req}
     requested_count = len(docs_req)
+    log_event(
+        logger,
+        "info",
+        "HTTP",
+        "_bulk_get: requesting %d docs" % requested_count,
+        doc_count=requested_count,
+    )
+    # DEBUG: log the individual _id,_rev pairs being requested
+    for dr in docs_req:
+        log_event(
+            logger,
+            "debug",
+            "HTTP",
+            "_bulk_get request item",
+            doc_id=dr["id"],
+        )
     ic(url, requested_count)
     t0 = time.monotonic()
     resp = await http.request(
@@ -327,11 +356,13 @@ async def _fetch_docs_bulk_get(
     # _bulk_get returns multipart/mixed or JSON depending on SG version
     ct = resp.content_type or ""
     results: list[dict] = []
+    response_bytes = 0
     if "application/json" in ct:
         raw_bytes = await resp.read()
+        response_bytes = len(raw_bytes)
         resp.release()
         if metrics:
-            metrics.inc("bytes_received_total", len(raw_bytes))
+            metrics.inc("bytes_received_total", response_bytes)
         try:
             body = json.loads(raw_bytes)
         except json.JSONDecodeError as exc:
@@ -351,9 +382,10 @@ async def _fetch_docs_bulk_get(
     else:
         # Fallback: read raw text and attempt JSON extraction
         raw = await resp.text()
+        response_bytes = len(raw.encode("utf-8"))
         resp.release()
         if metrics:
-            metrics.inc("bytes_received_total", len(raw.encode("utf-8")))
+            metrics.inc("bytes_received_total", response_bytes)
         for line in raw.splitlines():
             line = line.strip()
             if line.startswith("{"):
@@ -364,6 +396,31 @@ async def _fetch_docs_bulk_get(
     if metrics:
         metrics.inc("doc_fetch_requests_total")
         metrics.record_doc_fetch_time(time.monotonic() - t0)
+
+    log_event(
+        logger,
+        "info",
+        "HTTP",
+        "_bulk_get: received %d docs" % len(results),
+        doc_count=len(results),
+    )
+    log_event(
+        logger,
+        "debug",
+        "HTTP",
+        "_bulk_get response detail",
+        doc_count=len(results),
+        input_count=requested_count,
+        bytes=response_bytes,
+    )
+    for doc in results:
+        log_event(
+            logger,
+            "debug",
+            "HTTP",
+            "_bulk_get result doc",
+            doc_id=doc.get("_id", ""),
+        )
 
     # -- Verify we got all requested docs back --
     returned_count = len(results)
@@ -453,7 +510,13 @@ async def _fetch_docs_individually(
         params: dict[str, str] = {}
         if rev:
             params["rev"] = rev
-        ic("GET doc (edge_server)", url, rev)
+        log_event(
+            logger,
+            "debug",
+            "HTTP",
+            "GET single doc",
+            doc_id=doc_id,
+        )
         async with sem:
             try:
                 resp = await http.request(
@@ -464,6 +527,14 @@ async def _fetch_docs_individually(
                     metrics.inc("bytes_received_total", len(raw_bytes))
                 doc = json.loads(raw_bytes)
                 resp.release()
+                log_event(
+                    logger,
+                    "debug",
+                    "HTTP",
+                    "GET single doc received",
+                    doc_id=doc_id,
+                    bytes=len(raw_bytes),
+                )
                 async with lock:
                     results.append(doc)
             except ClientHTTPError as exc:
@@ -478,8 +549,12 @@ async def _fetch_docs_individually(
                     metrics.inc("doc_fetch_errors_total")
 
     tasks = [asyncio.create_task(_get_one(r)) for r in rows]
-    ic(
-        f"Fetching {len(tasks)} docs individually (Edge Server, concurrency={max_concurrent})"
+    log_event(
+        logger,
+        "info",
+        "HTTP",
+        "fetching %d docs individually" % len(tasks),
+        doc_count=len(tasks),
     )
     await asyncio.gather(*tasks)
     if metrics:
@@ -501,6 +576,7 @@ def _build_changes_body(
     timeout_ms: int,
     limit: int = 0,
     active_only_override: bool | None = None,
+    include_docs_override: bool | None = None,
 ) -> dict:
     """Build JSON body for a POST _changes request.
 
@@ -509,6 +585,9 @@ def _build_changes_body(
     everything via POST body to avoid URL-length limits.
 
     ``active_only_override`` lets the caller force ``active_only`` on or
+    off regardless of the config value (used during initial sync).
+
+    ``include_docs_override`` lets the caller force ``include_docs`` on or
     off regardless of the config value (used during initial sync).
     """
     body: dict = {
@@ -525,7 +604,12 @@ def _build_changes_body(
     )
     if use_active_only and src != "couchdb":
         body["active_only"] = True
-    if feed_cfg.get("include_docs"):
+    use_include_docs = (
+        include_docs_override
+        if include_docs_override is not None
+        else feed_cfg.get("include_docs", False)
+    )
+    if use_include_docs:
         body["include_docs"] = True
     if limit > 0:
         body["limit"] = limit
@@ -570,10 +654,15 @@ async def _process_changes_batch(
     every_n_docs: int,
     max_concurrent: int,
     shutdown_cfg: dict | None = None,
+    initial_sync: bool = False,
 ) -> tuple[str, bool]:
     """
     Process a batch of _changes results: filter, fetch docs, forward to output,
     checkpoint.  Returns (new_since, output_failed).
+
+    When ``initial_sync`` is True and the source is CouchDB (which lacks
+    ``active_only``), deleted and removed changes are silently filtered
+    out regardless of the ``ignore_delete``/``ignore_remove`` config.
     """
     batch_t0 = time.monotonic()
     sequential = proc_cfg.get("sequential", False)
@@ -594,14 +683,32 @@ async def _process_changes_batch(
 
     log_event(
         logger,
-        "debug",
+        "info",
         "CHANGES",
-        "received _changes batch",
-        seq=since,
+        "_changes batch: %d changes" % len(results),
         batch_size=len(results),
     )
+    # DEBUG: log each individual change row
+    for change in results:
+        c_id = change.get("id", "")
+        c_rev = ""
+        c_changes = change.get("changes", [])
+        if c_changes:
+            c_rev = c_changes[0].get("rev", "")
+        log_event(
+            logger,
+            "debug",
+            "CHANGES",
+            "change row",
+            doc_id=c_id,
+            seq=change.get("seq", ""),
+        )
+        ic(c_id, c_rev, change.get("seq", ""))
 
-    # Count deletes/removes in the feed (always), then optionally filter
+    # Count deletes/removes in the feed (always), then optionally filter.
+    # During initial sync for CouchDB (no active_only), force-skip
+    # deleted/removed changes to replicate active_only behaviour.
+    force_skip_deletes = initial_sync and src == "couchdb"
     filtered: list[dict] = []
     deleted_count = 0
     removed_count = 0
@@ -612,11 +719,15 @@ async def _process_changes_batch(
             feed_deletes += 1
         if change.get("removed"):
             feed_removes += 1
-        if proc_cfg.get("ignore_delete") and change.get("deleted"):
+        if (proc_cfg.get("ignore_delete") or force_skip_deletes) and change.get(
+            "deleted"
+        ):
             ic("ignoring deleted", change.get("id"))
             deleted_count += 1
             continue
-        if proc_cfg.get("ignore_remove") and change.get("removed"):
+        if (proc_cfg.get("ignore_remove") or force_skip_deletes) and change.get(
+            "removed"
+        ):
             ic("ignoring removed", change.get("id"))
             removed_count += 1
             continue
@@ -930,18 +1041,36 @@ async def _catch_up_normal(
     initial_sync: bool = False,
 ) -> str:
     """
-    Phase 1 of continuous mode: catch up using one-shot normal requests
-    with a limit.  Repeats until the server returns 0 results, meaning
-    we are caught up.  Returns the latest since value.
+    Phase 1 of continuous mode: catch up using one-shot normal requests.
+    Repeats until the server returns 0 results, meaning we are caught up.
+    Returns the latest since value.
 
     When ``initial_sync`` is True, ``active_only=true`` is forced for
     Couchbase products so historical deletes are skipped.
+
+    When ``optimize_initial_sync`` is True (from feed_cfg), requests use
+    a ``limit`` to page through the feed in chunks.  When False (the
+    default), no limit is set and the full feed is returned in one
+    request — simpler and avoids the consistency gap where deletes
+    between chunks can be missed.
     """
+    optimize_initial = feed_cfg.get("optimize_initial_sync", False)
     catchup_limit = feed_cfg.get("continuous_catchup_limit", 500)
+    # Only apply limit when optimized chunking is enabled during initial sync
+    use_limit = catchup_limit if (initial_sync and optimize_initial) or not initial_sync else 0
     failure_count = 0
 
-    logger.info(
-        "CONTINUOUS catch-up: starting from since=%s (limit=%d)", since, catchup_limit
+    log_event(
+        logger,
+        "info",
+        "CHANGES",
+        "catch-up starting (limit=%s, active_only=%s, include_docs=%s)"
+        % (
+            use_limit if use_limit > 0 else "none",
+            True if initial_sync else feed_cfg.get("active_only", False),
+            False if initial_sync else feed_cfg.get("include_docs", False),
+        ),
+        seq=since,
     )
 
     while not shutdown_event.is_set():
@@ -951,8 +1080,9 @@ async def _catch_up_normal(
             since,
             "normal",
             timeout_ms,
-            limit=catchup_limit,
+            limit=use_limit,
             active_only_override=True if initial_sync else None,
+            include_docs_override=False if initial_sync else None,
         )
         ic(changes_url, body_payload, since, "catch-up")
 
@@ -1016,6 +1146,7 @@ async def _catch_up_normal(
             every_n_docs=every_n_docs,
             max_concurrent=max_concurrent,
             shutdown_cfg=shutdown_cfg,
+            initial_sync=initial_sync,
         )
 
         if output_failed:
@@ -1025,13 +1156,33 @@ async def _catch_up_normal(
             continue
 
         if not results:
-            logger.info("CONTINUOUS catch-up complete at since=%s", since)
+            if initial_sync and not checkpoint.initial_sync_done:
+                checkpoint._initial_sync_done = True
+                await checkpoint.save(
+                    since, http, base_url, basic_auth, auth_headers
+                )
+                log_event(
+                    logger,
+                    "info",
+                    "CHANGES",
+                    "initial sync complete – reverting to config settings",
+                )
+            log_event(
+                logger,
+                "info",
+                "CHANGES",
+                "catch-up complete",
+                seq=since,
+            )
             return since
 
-        logger.info(
-            "CONTINUOUS catch-up: got %d rows, fetching next batch from since=%s",
-            len(results),
-            since,
+        log_event(
+            logger,
+            "info",
+            "CHANGES",
+            "catch-up batch: %d changes received" % len(results),
+            seq=since,
+            batch_size=len(results),
         )
 
     return since
