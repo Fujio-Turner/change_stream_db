@@ -35,7 +35,6 @@ from icecream import ic
 
 from rest import (
     OutputForwarder,
-    OutputEndpointDown,
     DeadLetterQueue,
     VALID_OUTPUT_FORMATS,
 )
@@ -47,7 +46,6 @@ from rest.changes_http import (
     RedirectHTTPError,
     ServerHTTPError,
     fetch_docs,
-    _fetch_single_doc_with_retry,
     _fetch_docs_bulk_get,
     _fetch_docs_individually,
     _build_changes_body,
@@ -2046,36 +2044,10 @@ async def poll_changes(
                     ),
                 )
 
-        # Source-specific feed type validation
+        # feed_type / timeout validation is handled by validate_config()
+        # at startup — no runtime fallbacks needed here.
         feed_type = feed_cfg.get("feed_type", "longpoll")
-        if src == "edge_server" and feed_type == "websocket":
-            logger.warning(
-                "Edge Server does not support feed=websocket, falling back to longpoll"
-            )
-            feed_type = "longpoll"
-        if src != "edge_server" and feed_type == "sse":
-            logger.warning(
-                "SSE feed is only supported by Edge Server, falling back to longpoll"
-            )
-            feed_type = "longpoll"
-        if src == "couchdb" and feed_type == "websocket":
-            logger.warning(
-                "CouchDB does not support feed=websocket, falling back to longpoll"
-            )
-            feed_type = "longpoll"
-        if src == "couchdb" and feed_type == "sse":
-            logger.warning(
-                "CouchDB does not support feed=sse, use feed=eventsource instead"
-            )
-            feed_type = "eventsource"
-
-        # Edge Server caps timeout at 900000ms (15 min)
         timeout_ms = feed_cfg.get("timeout_ms", 60000)
-        if src == "edge_server" and timeout_ms > 900000:
-            logger.warning(
-                "Edge Server max timeout is 900000ms – clamping from %d", timeout_ms
-            )
-            timeout_ms = 900000
 
         changes_url = f"{base_url}/_changes"
 

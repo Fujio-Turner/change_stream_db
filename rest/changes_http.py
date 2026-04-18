@@ -711,22 +711,23 @@ async def _process_changes_batch(
         "_changes batch: %d changes" % len(results),
         batch_size=len(results),
     )
-    # DEBUG: log each individual change row
-    for change in results:
-        c_id = change.get("id", "")
-        c_rev = ""
-        c_changes = change.get("changes", [])
-        if c_changes:
-            c_rev = c_changes[0].get("rev", "")
-        log_event(
-            logger,
-            "debug",
-            "CHANGES",
-            "change row",
-            doc_id=c_id,
-            seq=change.get("seq", ""),
-        )
-        ic(c_id, c_rev, change.get("seq", ""))
+    # DEBUG: log each individual change row (gated to avoid overhead)
+    if logger.isEnabledFor(logging.DEBUG):
+        for change in results:
+            c_id = change.get("id", "")
+            c_rev = ""
+            c_changes = change.get("changes", [])
+            if c_changes:
+                c_rev = c_changes[0].get("rev", "")
+            log_event(
+                logger,
+                "debug",
+                "CHANGES",
+                "change row",
+                doc_id=c_id,
+                seq=change.get("seq", ""),
+            )
+            ic(c_id, c_rev, change.get("seq", ""))
 
     # Count deletes/removes in the feed (always), then optionally filter.
     # During initial sync for CouchDB (no active_only), force-skip
