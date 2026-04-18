@@ -569,8 +569,15 @@ class CBLStore:
     # ── Dead Letter Queue ─────────────────────────────────────
 
     def add_dlq_entry(
-        self, doc_id: str, seq: str, method: str, status: int, error: str, doc: dict,
-        target_url: str = "", ttl_seconds: int = 0,
+        self,
+        doc_id: str,
+        seq: str,
+        method: str,
+        status: int,
+        error: str,
+        doc: dict,
+        target_url: str = "",
+        ttl_seconds: int = 0,
     ) -> None:
         ic("add_dlq_entry: entry", doc_id)
         ts = int(time.time())
@@ -777,7 +784,8 @@ class CBLStore:
                 logger,
                 "info",
                 "DLQ",
-                "purged %d expired entries (older than %ds)" % (purged, max_age_seconds),
+                "purged %d expired entries (older than %ds)"
+                % (purged, max_age_seconds),
                 operation="DELETE",
                 doc_type="dlq",
                 doc_count=purged,

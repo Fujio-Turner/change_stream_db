@@ -2340,7 +2340,10 @@ class TestReplayDeadLetterQueue(unittest.TestCase):
             event = asyncio.Event()
 
             result = await cw._replay_dead_letter_queue(dlq, output, None, event)
-            self.assertEqual(result, {"total": 0, "succeeded": 0, "failed": 0, "skipped": 0, "expired": 0})
+            self.assertEqual(
+                result,
+                {"total": 0, "succeeded": 0, "failed": 0, "skipped": 0, "expired": 0},
+            )
 
         asyncio.run(_run())
 
@@ -3039,10 +3042,13 @@ class TestDeadLetterQueueConfig(unittest.TestCase):
         self.assertEqual(dlq.max_replay_attempts, 10)
 
     def test_custom_retention_and_max_attempts(self):
-        dlq = cw.DeadLetterQueue("", dlq_cfg={
-            "retention_seconds": 3600,
-            "max_replay_attempts": 5,
-        })
+        dlq = cw.DeadLetterQueue(
+            "",
+            dlq_cfg={
+                "retention_seconds": 3600,
+                "max_replay_attempts": 5,
+            },
+        )
         self.assertEqual(dlq.retention_seconds, 3600)
         self.assertEqual(dlq.max_replay_attempts, 5)
 
@@ -3072,7 +3078,9 @@ class TestDeadLetterQueueNewFields(unittest.TestCase):
                 "status": 500,
                 "error": "boom",
             }
-            asyncio.run(dlq.write(doc, result, "15", target_url="https://api.example.com"))
+            asyncio.run(
+                dlq.write(doc, result, "15", target_url="https://api.example.com")
+            )
 
             lines = Path(path).read_text().strip().split("\n")
             entry = json.loads(lines[0])
@@ -3087,11 +3095,19 @@ class TestDeadLetterQueueNewFields(unittest.TestCase):
             path = f.name
         try:
             dlq = cw.DeadLetterQueue(path)
-            asyncio.run(dlq.write(
-                {"_id": "doc1"},
-                {"ok": False, "doc_id": "doc1", "method": "PUT", "status": 0, "error": "err"},
-                "1",
-            ))
+            asyncio.run(
+                dlq.write(
+                    {"_id": "doc1"},
+                    {
+                        "ok": False,
+                        "doc_id": "doc1",
+                        "method": "PUT",
+                        "status": 0,
+                        "error": "err",
+                    },
+                    "1",
+                )
+            )
             entry = json.loads(Path(path).read_text().strip())
             self.assertEqual(entry["target_url"], "")
         finally:
@@ -3105,23 +3121,39 @@ class TestDeadLetterQueueFileWriteFailure(unittest.TestCase):
         """OSError during file write is raised to the caller."""
         dlq = cw.DeadLetterQueue("/nonexistent/path/dlq.jsonl")
         with self.assertRaises(OSError):
-            asyncio.run(dlq.write(
-                {"_id": "doc1"},
-                {"ok": False, "doc_id": "doc1", "method": "PUT", "status": 500, "error": "err"},
-                "1",
-            ))
+            asyncio.run(
+                dlq.write(
+                    {"_id": "doc1"},
+                    {
+                        "ok": False,
+                        "doc_id": "doc1",
+                        "method": "PUT",
+                        "status": 500,
+                        "error": "err",
+                    },
+                    "1",
+                )
+            )
 
     def test_write_increments_metrics_on_failure(self):
         """OSError increments dlq_write_failures_total via metrics."""
         dlq = cw.DeadLetterQueue("/nonexistent/path/dlq.jsonl")
         metrics = MagicMock()
         with self.assertRaises(OSError):
-            asyncio.run(dlq.write(
-                {"_id": "doc1"},
-                {"ok": False, "doc_id": "doc1", "method": "PUT", "status": 500, "error": "err"},
-                "1",
-                metrics=metrics,
-            ))
+            asyncio.run(
+                dlq.write(
+                    {"_id": "doc1"},
+                    {
+                        "ok": False,
+                        "doc_id": "doc1",
+                        "method": "PUT",
+                        "status": 500,
+                        "error": "err",
+                    },
+                    "1",
+                    metrics=metrics,
+                )
+            )
         metrics.inc.assert_called_with("dlq_write_failures_total")
 
 
@@ -3139,14 +3171,28 @@ class TestDeadLetterQueueCBLDelegation(unittest.TestCase):
 
             await dlq.write(
                 {"_id": "doc1"},
-                {"ok": False, "doc_id": "doc1", "method": "PUT", "status": 500, "error": "err"},
+                {
+                    "ok": False,
+                    "doc_id": "doc1",
+                    "method": "PUT",
+                    "status": 500,
+                    "error": "err",
+                },
                 "10",
                 target_url="https://api.example.com",
             )
             mock_store.add_dlq_entry.assert_called_once()
             call_kwargs = mock_store.add_dlq_entry.call_args
-            self.assertEqual(call_kwargs.kwargs.get("target_url") or call_kwargs[1].get("target_url"), "https://api.example.com")
-            self.assertEqual(call_kwargs.kwargs.get("ttl_seconds") or call_kwargs[1].get("ttl_seconds"), 7200)
+            self.assertEqual(
+                call_kwargs.kwargs.get("target_url")
+                or call_kwargs[1].get("target_url"),
+                "https://api.example.com",
+            )
+            self.assertEqual(
+                call_kwargs.kwargs.get("ttl_seconds")
+                or call_kwargs[1].get("ttl_seconds"),
+                7200,
+            )
 
         asyncio.run(_run())
 
@@ -3211,10 +3257,20 @@ class TestReplayMaxAttempts(unittest.TestCase):
             dlq.max_replay_attempts = 3
             dlq.increment_replay_attempts.return_value = 1
             dlq.list_pending.return_value = [
-                {"id": "dlq:doc1:100", "doc_id_original": "doc1", "method": "PUT",
-                 "replay_attempts": 3, "target_url": ""},
-                {"id": "dlq:doc2:200", "doc_id_original": "doc2", "method": "PUT",
-                 "replay_attempts": 0, "target_url": ""},
+                {
+                    "id": "dlq:doc1:100",
+                    "doc_id_original": "doc1",
+                    "method": "PUT",
+                    "replay_attempts": 3,
+                    "target_url": "",
+                },
+                {
+                    "id": "dlq:doc2:200",
+                    "doc_id_original": "doc2",
+                    "method": "PUT",
+                    "replay_attempts": 0,
+                    "target_url": "",
+                },
             ]
             dlq.get_entry_doc.return_value = {
                 "id": "dlq:doc2:200",
@@ -3245,8 +3301,13 @@ class TestReplayMaxAttempts(unittest.TestCase):
             dlq.max_replay_attempts = 0  # unlimited
             dlq.increment_replay_attempts.return_value = 1
             dlq.list_pending.return_value = [
-                {"id": "dlq:doc1:100", "doc_id_original": "doc1", "method": "PUT",
-                 "replay_attempts": 999, "target_url": ""},
+                {
+                    "id": "dlq:doc1:100",
+                    "doc_id_original": "doc1",
+                    "method": "PUT",
+                    "replay_attempts": 999,
+                    "target_url": "",
+                },
             ]
             dlq.get_entry_doc.return_value = {
                 "id": "dlq:doc1:100",
@@ -3275,8 +3336,13 @@ class TestReplayMaxAttempts(unittest.TestCase):
             dlq.max_replay_attempts = 10
             dlq.increment_replay_attempts.return_value = 2
             dlq.list_pending.return_value = [
-                {"id": "dlq:doc1:100", "doc_id_original": "doc1", "method": "PUT",
-                 "replay_attempts": 1, "target_url": ""},
+                {
+                    "id": "dlq:doc1:100",
+                    "doc_id_original": "doc1",
+                    "method": "PUT",
+                    "replay_attempts": 1,
+                    "target_url": "",
+                },
             ]
             dlq.get_entry_doc.return_value = {
                 "id": "dlq:doc1:100",
@@ -3306,8 +3372,13 @@ class TestReplayMaxAttempts(unittest.TestCase):
             dlq.max_replay_attempts = 10
             dlq.increment_replay_attempts.return_value = 1
             dlq.list_pending.return_value = [
-                {"id": "dlq:doc1:100", "doc_id_original": "doc1", "method": "PUT",
-                 "replay_attempts": 0, "target_url": ""},
+                {
+                    "id": "dlq:doc1:100",
+                    "doc_id_original": "doc1",
+                    "method": "PUT",
+                    "replay_attempts": 0,
+                    "target_url": "",
+                },
             ]
             dlq.get_entry_doc.return_value = {
                 "id": "dlq:doc1:100",
@@ -3340,8 +3411,13 @@ class TestReplayTargetUrlMismatch(unittest.TestCase):
             dlq.max_replay_attempts = 10
             dlq.increment_replay_attempts.return_value = 1
             dlq.list_pending.return_value = [
-                {"id": "dlq:doc1:100", "doc_id_original": "doc1", "method": "PUT",
-                 "replay_attempts": 0, "target_url": "https://old-api.example.com"},
+                {
+                    "id": "dlq:doc1:100",
+                    "doc_id_original": "doc1",
+                    "method": "PUT",
+                    "replay_attempts": 0,
+                    "target_url": "https://old-api.example.com",
+                },
             ]
             dlq.get_entry_doc.return_value = {
                 "id": "dlq:doc1:100",
@@ -3354,7 +3430,10 @@ class TestReplayTargetUrlMismatch(unittest.TestCase):
             event = asyncio.Event()
 
             result = await cw._replay_dead_letter_queue(
-                dlq, output, None, event,
+                dlq,
+                output,
+                None,
+                event,
                 current_target_url="https://new-api.example.com",
             )
 
@@ -3374,8 +3453,13 @@ class TestReplayTargetUrlMismatch(unittest.TestCase):
             dlq.max_replay_attempts = 10
             dlq.increment_replay_attempts.return_value = 1
             dlq.list_pending.return_value = [
-                {"id": "dlq:doc1:100", "doc_id_original": "doc1", "method": "PUT",
-                 "replay_attempts": 0, "target_url": "https://api.example.com"},
+                {
+                    "id": "dlq:doc1:100",
+                    "doc_id_original": "doc1",
+                    "method": "PUT",
+                    "replay_attempts": 0,
+                    "target_url": "https://api.example.com",
+                },
             ]
             dlq.get_entry_doc.return_value = {
                 "id": "dlq:doc1:100",
@@ -3388,7 +3472,10 @@ class TestReplayTargetUrlMismatch(unittest.TestCase):
             event = asyncio.Event()
 
             result = await cw._replay_dead_letter_queue(
-                dlq, output, None, event,
+                dlq,
+                output,
+                None,
+                event,
                 current_target_url="https://api.example.com",
             )
 
@@ -3407,11 +3494,17 @@ class TestReplayExpiredPurge(unittest.TestCase):
             call_order = []
 
             dlq = MagicMock()
-            dlq.purge_expired.side_effect = lambda: (call_order.append("purge_expired"), 3)[1]
+            dlq.purge_expired.side_effect = lambda: (
+                call_order.append("purge_expired"),
+                3,
+            )[1]
             dlq.retention_seconds = 86400
             dlq.max_replay_attempts = 10
             dlq.increment_replay_attempts.return_value = 1
-            dlq.list_pending.side_effect = lambda: (call_order.append("list_pending"), [])[1]
+            dlq.list_pending.side_effect = lambda: (
+                call_order.append("list_pending"),
+                [],
+            )[1]
 
             output = MagicMock()
             event = asyncio.Event()

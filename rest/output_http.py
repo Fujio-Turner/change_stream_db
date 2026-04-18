@@ -1003,7 +1003,11 @@ class DeadLetterQueue:
         return self._use_cbl or self._path is not None
 
     async def write(
-        self, doc: dict, result: dict, seq: str | int, target_url: str = "",
+        self,
+        doc: dict,
+        result: dict,
+        seq: str | int,
+        target_url: str = "",
         metrics=None,
     ) -> None:
         ic("DLQ.write", result.get("doc_id"), seq, "cbl" if self._use_cbl else "file")

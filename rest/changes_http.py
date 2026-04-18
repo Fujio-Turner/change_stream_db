@@ -846,7 +846,13 @@ async def _process_changes_batch(
                         if dlq.enabled and metrics:
                             metrics.inc("dead_letter_total")
                             metrics.set("dlq_last_write_epoch", time.time())
-                        await dlq.write(result["_doc"], result, change.get("seq", ""), target_url=output.target_url, metrics=metrics)
+                        await dlq.write(
+                            result["_doc"],
+                            result,
+                            change.get("seq", ""),
+                            target_url=output.target_url,
+                            metrics=metrics,
+                        )
                 except (OutputEndpointDown, ShutdownRequested) as exc:
                     output_failed = True
                     is_shutdown = isinstance(exc, ShutdownRequested)
@@ -911,7 +917,13 @@ async def _process_changes_batch(
                         if dlq.enabled and metrics:
                             metrics.inc("dead_letter_total")
                             metrics.set("dlq_last_write_epoch", time.time())
-                        await dlq.write(result["_doc"], result, change.get("seq", ""), target_url=output.target_url, metrics=metrics)
+                        await dlq.write(
+                            result["_doc"],
+                            result,
+                            change.get("seq", ""),
+                            target_url=output.target_url,
+                            metrics=metrics,
+                        )
             else:
                 tasks = [asyncio.create_task(process_one(c)) for c in filtered]
                 done, _ = await asyncio.wait(tasks)
@@ -927,8 +939,11 @@ async def _process_changes_batch(
                             metrics.inc("dead_letter_total")
                             metrics.set("dlq_last_write_epoch", time.time())
                         await dlq.write(
-                            result["_doc"], result, result["_change"].get("seq", ""),
-                            target_url=output.target_url, metrics=metrics,
+                            result["_doc"],
+                            result,
+                            result["_change"].get("seq", ""),
+                            target_url=output.target_url,
+                            metrics=metrics,
                         )
         except (OutputEndpointDown, ShutdownRequested) as exc:
             output_failed = True
@@ -1075,7 +1090,9 @@ async def _catch_up_normal(
     optimize_initial = feed_cfg.get("optimize_initial_sync", False)
     catchup_limit = feed_cfg.get("continuous_catchup_limit", 500)
     # Only apply limit when optimized chunking is enabled during initial sync
-    use_limit = catchup_limit if (initial_sync and optimize_initial) or not initial_sync else 0
+    use_limit = (
+        catchup_limit if (initial_sync and optimize_initial) or not initial_sync else 0
+    )
     failure_count = 0
 
     log_event(
@@ -1176,9 +1193,7 @@ async def _catch_up_normal(
         if not results:
             if initial_sync and not checkpoint.initial_sync_done:
                 checkpoint._initial_sync_done = True
-                await checkpoint.save(
-                    since, http, base_url, basic_auth, auth_headers
-                )
+                await checkpoint.save(since, http, base_url, basic_auth, auth_headers)
                 log_event(
                     logger,
                     "info",
@@ -1620,7 +1635,13 @@ async def _replay_dead_letter_queue(
     pending = dlq.list_pending()
     if not pending:
         log_event(logger, "info", "DLQ", "no pending dead-letter entries to replay")
-        return {"total": 0, "succeeded": 0, "failed": 0, "skipped": 0, "expired": expired}
+        return {
+            "total": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "skipped": 0,
+            "expired": expired,
+        }
 
     log_event(
         logger,

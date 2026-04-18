@@ -1907,10 +1907,7 @@ async def poll_changes(
         # optimize_initial_sync=false (default) → single large request,
         #   no limit, long timeout — simpler and no consistency gap
         requested_since = feed_cfg.get("since", "0")
-        initial_sync = (
-            requested_since == "0"
-            and not checkpoint.initial_sync_done
-        )
+        initial_sync = requested_since == "0" and not checkpoint.initial_sync_done
         optimize_initial = feed_cfg.get("optimize_initial_sync", False)
         if initial_sync:
             if optimize_initial:

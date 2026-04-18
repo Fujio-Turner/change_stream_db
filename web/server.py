@@ -308,12 +308,14 @@ async def dlq_count(request):
 
 async def dlq_meta(request):
     if not USE_CBL:
-        return json_response({
-            "last_inserted_at": None,
-            "last_drained_at": None,
-            "last_inserted_job": None,
-            "last_drained_job": None,
-        })
+        return json_response(
+            {
+                "last_inserted_at": None,
+                "last_drained_at": None,
+                "last_inserted_job": None,
+                "last_drained_job": None,
+            }
+        )
     return json_response(CBLStore().get_dlq_meta())
 
 
@@ -325,10 +327,12 @@ async def replay_dlq(request):
     entries = [e for e in store.list_dlq() if not e.get("retried")]
     if not entries:
         return json_response({"total": 0, "message": "no pending entries to replay"})
-    return json_response({
-        "total": len(entries),
-        "message": "use worker restart or POST /api/restart to trigger replay — on-demand replay requires the output forwarder context",
-    })
+    return json_response(
+        {
+            "total": len(entries),
+            "message": "use worker restart or POST /api/restart to trigger replay — on-demand replay requires the output forwarder context",
+        }
+    )
 
 
 # --- Status API ---

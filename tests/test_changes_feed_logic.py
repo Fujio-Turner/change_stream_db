@@ -33,6 +33,7 @@ import main as cw
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _feed_cfg(**overrides):
     cfg = {"heartbeat_ms": 30000}
     cfg.update(overrides)
@@ -81,17 +82,17 @@ def _make_http(response_body):
 # ===================================================================
 
 SG_SEQUENCES = {
-    "integer":              "42",
-    "zero":                 "0",
-    "large_int":            "128",
-    "backfill":             "123:100",
-    "delayed":              "90::100",
-    "delayed_backfill":     "90:123:100",
-    "distributed_hash":     "200-0",
-    "vbucket":              "50.123",
+    "integer": "42",
+    "zero": "0",
+    "large_int": "128",
+    "backfill": "123:100",
+    "delayed": "90::100",
+    "delayed_backfill": "90:123:100",
+    "distributed_hash": "200-0",
+    "vbucket": "50.123",
     "distributed_backfill": "200-0:50.123",
-    "couchdb_int":          "42",
-    "couchdb_string":       "42-abc123def456",
+    "couchdb_int": "42",
+    "couchdb_string": "42-abc123def456",
 }
 
 
@@ -138,7 +139,10 @@ class TestBuildChangesBodyActiveOnly(unittest.TestCase):
         """Even with override=True, CouchDB must not get active_only."""
         body = cw._build_changes_body(
             _feed_cfg(active_only=False),
-            "couchdb", "0", "normal", 60000,
+            "couchdb",
+            "0",
+            "normal",
+            60000,
             active_only_override=True,
         )
         self.assertNotIn("active_only", body)
@@ -146,7 +150,10 @@ class TestBuildChangesBodyActiveOnly(unittest.TestCase):
     def test_override_true_overrides_config_false(self):
         body = cw._build_changes_body(
             _feed_cfg(active_only=False),
-            "sync_gateway", "0", "normal", 60000,
+            "sync_gateway",
+            "0",
+            "normal",
+            60000,
             active_only_override=True,
         )
         self.assertTrue(body["active_only"])
@@ -154,7 +161,10 @@ class TestBuildChangesBodyActiveOnly(unittest.TestCase):
     def test_override_false_overrides_config_true(self):
         body = cw._build_changes_body(
             _feed_cfg(active_only=True),
-            "sync_gateway", "0", "normal", 60000,
+            "sync_gateway",
+            "0",
+            "normal",
+            60000,
             active_only_override=False,
         )
         self.assertNotIn("active_only", body)
@@ -162,7 +172,10 @@ class TestBuildChangesBodyActiveOnly(unittest.TestCase):
     def test_override_none_uses_config(self):
         body = cw._build_changes_body(
             _feed_cfg(active_only=True),
-            "sync_gateway", "0", "normal", 60000,
+            "sync_gateway",
+            "0",
+            "normal",
+            60000,
             active_only_override=None,
         )
         self.assertTrue(body["active_only"])
@@ -186,7 +199,10 @@ class TestBuildChangesBodyIncludeDocs(unittest.TestCase):
     def test_include_docs_override_false_overrides_config_true(self):
         body = cw._build_changes_body(
             _feed_cfg(include_docs=True),
-            "sync_gateway", "0", "normal", 60000,
+            "sync_gateway",
+            "0",
+            "normal",
+            60000,
             include_docs_override=False,
         )
         self.assertNotIn("include_docs", body)
@@ -194,7 +210,10 @@ class TestBuildChangesBodyIncludeDocs(unittest.TestCase):
     def test_include_docs_override_true_overrides_config_false(self):
         body = cw._build_changes_body(
             _feed_cfg(include_docs=False),
-            "sync_gateway", "0", "normal", 60000,
+            "sync_gateway",
+            "0",
+            "normal",
+            60000,
             include_docs_override=True,
         )
         self.assertTrue(body["include_docs"])
@@ -202,7 +221,10 @@ class TestBuildChangesBodyIncludeDocs(unittest.TestCase):
     def test_include_docs_override_none_uses_config(self):
         body = cw._build_changes_body(
             _feed_cfg(include_docs=True),
-            "sync_gateway", "0", "normal", 60000,
+            "sync_gateway",
+            "0",
+            "normal",
+            60000,
             include_docs_override=None,
         )
         self.assertTrue(body["include_docs"])
@@ -245,35 +267,28 @@ class TestBuildChangesBodySequenceFormats(unittest.TestCase):
                 body = cw._build_changes_body(
                     _feed_cfg(), "sync_gateway", seq, "normal", 60000
                 )
-                self.assertEqual(body["since"], seq,
-                                 f"Sequence {name!r} not passed through")
+                self.assertEqual(
+                    body["since"], seq, f"Sequence {name!r} not passed through"
+                )
 
 
 class TestBuildChangesBodyVersionType(unittest.TestCase):
     """version_type only for SG and App Services."""
 
     def test_sg_has_version_type(self):
-        body = cw._build_changes_body(
-            _feed_cfg(), "sync_gateway", "0", "normal", 60000
-        )
+        body = cw._build_changes_body(_feed_cfg(), "sync_gateway", "0", "normal", 60000)
         self.assertIn("version_type", body)
 
     def test_app_services_has_version_type(self):
-        body = cw._build_changes_body(
-            _feed_cfg(), "app_services", "0", "normal", 60000
-        )
+        body = cw._build_changes_body(_feed_cfg(), "app_services", "0", "normal", 60000)
         self.assertIn("version_type", body)
 
     def test_edge_server_no_version_type(self):
-        body = cw._build_changes_body(
-            _feed_cfg(), "edge_server", "0", "normal", 60000
-        )
+        body = cw._build_changes_body(_feed_cfg(), "edge_server", "0", "normal", 60000)
         self.assertNotIn("version_type", body)
 
     def test_couchdb_no_version_type(self):
-        body = cw._build_changes_body(
-            _feed_cfg(), "couchdb", "0", "normal", 60000
-        )
+        body = cw._build_changes_body(_feed_cfg(), "couchdb", "0", "normal", 60000)
         self.assertNotIn("version_type", body)
 
 
@@ -282,24 +297,21 @@ class TestBuildChangesBodyChannels(unittest.TestCase):
 
     def test_sg_with_channels(self):
         body = cw._build_changes_body(
-            _feed_cfg(channels=["ch1", "ch2"]),
-            "sync_gateway", "0", "normal", 60000
+            _feed_cfg(channels=["ch1", "ch2"]), "sync_gateway", "0", "normal", 60000
         )
         self.assertEqual(body["filter"], "sync_gateway/bychannel")
         self.assertEqual(body["channels"], "ch1,ch2")
 
     def test_couchdb_channels_not_sent(self):
         body = cw._build_changes_body(
-            _feed_cfg(channels=["ch1"]),
-            "couchdb", "0", "normal", 60000
+            _feed_cfg(channels=["ch1"]), "couchdb", "0", "normal", 60000
         )
         self.assertNotIn("filter", body)
         self.assertNotIn("channels", body)
 
     def test_empty_channels_no_filter(self):
         body = cw._build_changes_body(
-            _feed_cfg(channels=[]),
-            "sync_gateway", "0", "normal", 60000
+            _feed_cfg(channels=[]), "sync_gateway", "0", "normal", 60000
         )
         self.assertNotIn("filter", body)
 
@@ -314,9 +326,7 @@ class TestBuildChangesBodyFeedType(unittest.TestCase):
         self.assertEqual(body["feed"], "longpoll")
 
     def test_normal(self):
-        body = cw._build_changes_body(
-            _feed_cfg(), "sync_gateway", "0", "normal", 60000
-        )
+        body = cw._build_changes_body(_feed_cfg(), "sync_gateway", "0", "normal", 60000)
         self.assertEqual(body["feed"], "normal")
 
     def test_continuous(self):
@@ -334,7 +344,10 @@ class TestBuildChangesBodyCombined(unittest.TestCase):
         include_docs=False, limit set."""
         body = cw._build_changes_body(
             _feed_cfg(active_only=False, include_docs=True),
-            "sync_gateway", "0", "normal", 60000,
+            "sync_gateway",
+            "0",
+            "normal",
+            60000,
             limit=10000,
             active_only_override=True,
             include_docs_override=False,
@@ -348,7 +361,10 @@ class TestBuildChangesBodyCombined(unittest.TestCase):
         """CouchDB initial sync: active_only override ignored, include_docs=False."""
         body = cw._build_changes_body(
             _feed_cfg(active_only=False, include_docs=True),
-            "couchdb", "0", "normal", 60000,
+            "couchdb",
+            "0",
+            "normal",
+            60000,
             active_only_override=True,
             include_docs_override=False,
         )
@@ -359,7 +375,10 @@ class TestBuildChangesBodyCombined(unittest.TestCase):
         """After initial sync: user config used."""
         body = cw._build_changes_body(
             _feed_cfg(active_only=True, include_docs=True),
-            "sync_gateway", "128", "longpoll", 60000,
+            "sync_gateway",
+            "128",
+            "longpoll",
+            60000,
         )
         self.assertTrue(body["active_only"])
         self.assertTrue(body["include_docs"])
@@ -393,15 +412,18 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
 
     def test_load_sg_with_flag_true(self):
         """Load from SG response with initial_sync_done=true."""
+
         async def _run():
             http = MagicMock()
             resp = AsyncMock()
-            resp.json = AsyncMock(return_value={
-                "SGs_Seq": "42",
-                "_rev": "1-abc",
-                "remote": 5,
-                "initial_sync_done": True,
-            })
+            resp.json = AsyncMock(
+                return_value={
+                    "SGs_Seq": "42",
+                    "_rev": "1-abc",
+                    "remote": 5,
+                    "initial_sync_done": True,
+                }
+            )
             resp.release = MagicMock()
             http.request = AsyncMock(return_value=resp)
 
@@ -414,15 +436,18 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
 
     def test_load_sg_with_flag_false(self):
         """Load from SG with initial_sync_done=false (interrupted initial)."""
+
         async def _run():
             http = MagicMock()
             resp = AsyncMock()
-            resp.json = AsyncMock(return_value={
-                "SGs_Seq": "200-0",
-                "_rev": "2-def",
-                "remote": 10,
-                "initial_sync_done": False,
-            })
+            resp.json = AsyncMock(
+                return_value={
+                    "SGs_Seq": "200-0",
+                    "_rev": "2-def",
+                    "remote": 10,
+                    "initial_sync_done": False,
+                }
+            )
             resp.release = MagicMock()
             http.request = AsyncMock(return_value=resp)
 
@@ -435,13 +460,16 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
 
     def test_load_sg_flag_missing_seq_zero(self):
         """Legacy checkpoint: flag missing + seq=0 → False."""
+
         async def _run():
             http = MagicMock()
             resp = AsyncMock()
-            resp.json = AsyncMock(return_value={
-                "SGs_Seq": "0",
-                "_rev": "1-x",
-            })
+            resp.json = AsyncMock(
+                return_value={
+                    "SGs_Seq": "0",
+                    "_rev": "1-x",
+                }
+            )
             resp.release = MagicMock()
             http.request = AsyncMock(return_value=resp)
 
@@ -453,13 +481,16 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
 
     def test_load_sg_flag_missing_seq_nonzero(self):
         """Legacy checkpoint: flag missing + seq=42 → True (backward compat)."""
+
         async def _run():
             http = MagicMock()
             resp = AsyncMock()
-            resp.json = AsyncMock(return_value={
-                "SGs_Seq": "42",
-                "_rev": "1-x",
-            })
+            resp.json = AsyncMock(
+                return_value={
+                    "SGs_Seq": "42",
+                    "_rev": "1-x",
+                }
+            )
             resp.release = MagicMock()
             http.request = AsyncMock(return_value=resp)
 
@@ -471,13 +502,16 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
 
     def test_load_sg_flag_missing_distributed_seq(self):
         """Legacy checkpoint with distributed seq 200-0 → True."""
+
         async def _run():
             http = MagicMock()
             resp = AsyncMock()
-            resp.json = AsyncMock(return_value={
-                "SGs_Seq": "200-0",
-                "_rev": "3-y",
-            })
+            resp.json = AsyncMock(
+                return_value={
+                    "SGs_Seq": "200-0",
+                    "_rev": "3-y",
+                }
+            )
             resp.release = MagicMock()
             http.request = AsyncMock(return_value=resp)
 
@@ -489,6 +523,7 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
 
     def test_save_includes_flag(self):
         """save() must include initial_sync_done in the request body."""
+
         async def _run():
             http = MagicMock()
             resp = AsyncMock()
@@ -509,6 +544,7 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
 
     def test_save_includes_flag_true(self):
         """save() with initial_sync_done=True persists it."""
+
         async def _run():
             http = MagicMock()
             resp = AsyncMock()
@@ -531,9 +567,7 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
             path = f.name
         try:
-            cp = cw.Checkpoint(
-                {"client_id": "w", "file": path}, self._gw(), []
-            )
+            cp = cw.Checkpoint({"client_id": "w", "file": path}, self._gw(), [])
             cp._initial_sync_done = True
             cp._save_fallback("99")
 
@@ -541,9 +575,7 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
             self.assertTrue(data["initial_sync_done"])
 
             # Load it back
-            cp2 = cw.Checkpoint(
-                {"client_id": "w", "file": path}, self._gw(), []
-            )
+            cp2 = cw.Checkpoint({"client_id": "w", "file": path}, self._gw(), [])
             seq = cp2._load_fallback()
             self.assertEqual(seq, "99")
             self.assertTrue(cp2.initial_sync_done)
@@ -557,9 +589,7 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
             json.dump({"SGs_Seq": "55", "time": 1000, "remote": 1}, f)
             path = f.name
         try:
-            cp = cw.Checkpoint(
-                {"client_id": "w", "file": path}, self._gw(), []
-            )
+            cp = cw.Checkpoint({"client_id": "w", "file": path}, self._gw(), [])
             seq = cp._load_fallback()
             self.assertEqual(seq, "55")
             self.assertTrue(cp.initial_sync_done)
@@ -573,9 +603,7 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
             json.dump({"SGs_Seq": "0", "time": 1000, "remote": 0}, f)
             path = f.name
         try:
-            cp = cw.Checkpoint(
-                {"client_id": "w", "file": path}, self._gw(), []
-            )
+            cp = cw.Checkpoint({"client_id": "w", "file": path}, self._gw(), [])
             seq = cp._load_fallback()
             self.assertEqual(seq, "0")
             self.assertFalse(cp.initial_sync_done)
@@ -592,10 +620,7 @@ class TestInitialSyncDetection(unittest.TestCase):
     """Test the initial_sync boolean derivation."""
 
     def _check(self, requested_since, initial_sync_done, expected):
-        result = (
-            requested_since == "0"
-            and not initial_sync_done
-        )
+        result = requested_since == "0" and not initial_sync_done
         self.assertEqual(result, expected)
 
     def test_fresh_start(self):
@@ -647,48 +672,63 @@ class TestProcessChangesBatchFiltering(unittest.TestCase):
 
     def test_no_initial_sync_sg_deleted_not_filtered(self):
         """Steady state SG: deleted change passes through."""
+
         async def _run():
             changes = [
-                {"id": "d1", "seq": "10", "deleted": True,
-                 "doc": {"_id": "d1", "_deleted": True},
-                 "changes": [{"rev": "2-abc"}]},
+                {
+                    "id": "d1",
+                    "seq": "10",
+                    "deleted": True,
+                    "doc": {"_id": "d1", "_deleted": True},
+                    "changes": [{"rev": "2-abc"}],
+                },
             ]
             kw = self._batch_kwargs(src="sync_gateway", initial_sync=False)
-            since, failed = await cw._process_changes_batch(
-                changes, "10", "0", **kw
-            )
+            since, failed = await cw._process_changes_batch(changes, "10", "0", **kw)
             kw["output"].send.assert_called_once()
 
         asyncio.run(_run())
 
     def test_no_initial_sync_couchdb_deleted_not_filtered(self):
         """Steady state CouchDB: deleted change passes through."""
+
         async def _run():
             changes = [
-                {"id": "d1", "seq": "10", "deleted": True,
-                 "doc": {"_id": "d1"}, "changes": [{"rev": "2-abc"}]},
+                {
+                    "id": "d1",
+                    "seq": "10",
+                    "deleted": True,
+                    "doc": {"_id": "d1"},
+                    "changes": [{"rev": "2-abc"}],
+                },
             ]
             kw = self._batch_kwargs(src="couchdb", initial_sync=False)
-            since, failed = await cw._process_changes_batch(
-                changes, "10", "0", **kw
-            )
+            since, failed = await cw._process_changes_batch(changes, "10", "0", **kw)
             kw["output"].send.assert_called_once()
 
         asyncio.run(_run())
 
     def test_initial_sync_couchdb_deleted_filtered(self):
         """Initial sync CouchDB: deleted change is filtered out."""
+
         async def _run():
             changes = [
-                {"id": "d1", "seq": "9", "deleted": True,
-                 "doc": {"_id": "d1"}, "changes": [{"rev": "2-abc"}]},
-                {"id": "d2", "seq": "10",
-                 "doc": {"_id": "d2"}, "changes": [{"rev": "1-x"}]},
+                {
+                    "id": "d1",
+                    "seq": "9",
+                    "deleted": True,
+                    "doc": {"_id": "d1"},
+                    "changes": [{"rev": "2-abc"}],
+                },
+                {
+                    "id": "d2",
+                    "seq": "10",
+                    "doc": {"_id": "d2"},
+                    "changes": [{"rev": "1-x"}],
+                },
             ]
             kw = self._batch_kwargs(src="couchdb", initial_sync=True)
-            since, failed = await cw._process_changes_batch(
-                changes, "10", "0", **kw
-            )
+            since, failed = await cw._process_changes_batch(changes, "10", "0", **kw)
             # d1 filtered, only d2 sent
             kw["output"].send.assert_called_once()
 
@@ -696,17 +736,25 @@ class TestProcessChangesBatchFiltering(unittest.TestCase):
 
     def test_initial_sync_couchdb_removed_filtered(self):
         """Initial sync CouchDB: removed change is filtered out."""
+
         async def _run():
             changes = [
-                {"id": "d1", "seq": "9", "removed": True,
-                 "doc": {"_id": "d1"}, "changes": [{"rev": "2-abc"}]},
-                {"id": "d2", "seq": "10",
-                 "doc": {"_id": "d2"}, "changes": [{"rev": "1-x"}]},
+                {
+                    "id": "d1",
+                    "seq": "9",
+                    "removed": True,
+                    "doc": {"_id": "d1"},
+                    "changes": [{"rev": "2-abc"}],
+                },
+                {
+                    "id": "d2",
+                    "seq": "10",
+                    "doc": {"_id": "d2"},
+                    "changes": [{"rev": "1-x"}],
+                },
             ]
             kw = self._batch_kwargs(src="couchdb", initial_sync=True)
-            since, failed = await cw._process_changes_batch(
-                changes, "10", "0", **kw
-            )
+            since, failed = await cw._process_changes_batch(changes, "10", "0", **kw)
             # d1 filtered, only d2 sent
             kw["output"].send.assert_called_once()
 
@@ -715,36 +763,48 @@ class TestProcessChangesBatchFiltering(unittest.TestCase):
     def test_initial_sync_sg_deleted_not_filtered_by_processing(self):
         """Initial sync SG: server handles active_only, processing doesn't
         force-filter (unless user set ignore_delete)."""
+
         async def _run():
             changes = [
-                {"id": "d1", "seq": "10", "deleted": True,
-                 "doc": {"_id": "d1"}, "changes": [{"rev": "2-abc"}]},
+                {
+                    "id": "d1",
+                    "seq": "10",
+                    "deleted": True,
+                    "doc": {"_id": "d1"},
+                    "changes": [{"rev": "2-abc"}],
+                },
             ]
             kw = self._batch_kwargs(src="sync_gateway", initial_sync=True)
-            since, failed = await cw._process_changes_batch(
-                changes, "10", "0", **kw
-            )
+            since, failed = await cw._process_changes_batch(changes, "10", "0", **kw)
             kw["output"].send.assert_called_once()
 
         asyncio.run(_run())
 
     def test_ignore_delete_config_filters(self):
         """proc_cfg.ignore_delete=True filters deleted regardless of initial_sync."""
+
         async def _run():
             changes = [
-                {"id": "d1", "seq": "9", "deleted": True,
-                 "doc": {"_id": "d1"}, "changes": [{"rev": "2-abc"}]},
-                {"id": "d2", "seq": "10",
-                 "doc": {"_id": "d2", "val": 1}, "changes": [{"rev": "1-x"}]},
+                {
+                    "id": "d1",
+                    "seq": "9",
+                    "deleted": True,
+                    "doc": {"_id": "d1"},
+                    "changes": [{"rev": "2-abc"}],
+                },
+                {
+                    "id": "d2",
+                    "seq": "10",
+                    "doc": {"_id": "d2", "val": 1},
+                    "changes": [{"rev": "1-x"}],
+                },
             ]
             kw = self._batch_kwargs(
                 src="sync_gateway",
                 proc_cfg={"ignore_delete": True},
                 initial_sync=False,
             )
-            since, failed = await cw._process_changes_batch(
-                changes, "10", "0", **kw
-            )
+            since, failed = await cw._process_changes_batch(changes, "10", "0", **kw)
             # d1 was filtered, only d2 was sent
             kw["output"].send.assert_called_once()
 
@@ -752,34 +812,54 @@ class TestProcessChangesBatchFiltering(unittest.TestCase):
 
     def test_initial_sync_couchdb_mixed_batch(self):
         """CouchDB initial sync: only non-deleted/removed pass through."""
+
         async def _run():
             changes = [
-                {"id": "alive1", "seq": "1",
-                 "doc": {"_id": "alive1"}, "changes": [{"rev": "1-a"}]},
-                {"id": "del1", "seq": "2", "deleted": True,
-                 "doc": {"_id": "del1"}, "changes": [{"rev": "2-b"}]},
-                {"id": "alive2", "seq": "3",
-                 "doc": {"_id": "alive2"}, "changes": [{"rev": "1-c"}]},
-                {"id": "rem1", "seq": "4", "removed": True,
-                 "doc": {"_id": "rem1"}, "changes": [{"rev": "3-d"}]},
-                {"id": "alive3", "seq": "5",
-                 "doc": {"_id": "alive3"}, "changes": [{"rev": "1-e"}]},
+                {
+                    "id": "alive1",
+                    "seq": "1",
+                    "doc": {"_id": "alive1"},
+                    "changes": [{"rev": "1-a"}],
+                },
+                {
+                    "id": "del1",
+                    "seq": "2",
+                    "deleted": True,
+                    "doc": {"_id": "del1"},
+                    "changes": [{"rev": "2-b"}],
+                },
+                {
+                    "id": "alive2",
+                    "seq": "3",
+                    "doc": {"_id": "alive2"},
+                    "changes": [{"rev": "1-c"}],
+                },
+                {
+                    "id": "rem1",
+                    "seq": "4",
+                    "removed": True,
+                    "doc": {"_id": "rem1"},
+                    "changes": [{"rev": "3-d"}],
+                },
+                {
+                    "id": "alive3",
+                    "seq": "5",
+                    "doc": {"_id": "alive3"},
+                    "changes": [{"rev": "1-e"}],
+                },
             ]
             kw = self._batch_kwargs(src="couchdb", initial_sync=True)
-            since, failed = await cw._process_changes_batch(
-                changes, "5", "0", **kw
-            )
+            since, failed = await cw._process_changes_batch(changes, "5", "0", **kw)
             self.assertEqual(kw["output"].send.call_count, 3)
 
         asyncio.run(_run())
 
     def test_empty_batch_checkpoints(self):
         """Empty results still checkpoint."""
+
         async def _run():
             kw = self._batch_kwargs()
-            since, failed = await cw._process_changes_batch(
-                [], "42", "0", **kw
-            )
+            since, failed = await cw._process_changes_batch([], "42", "0", **kw)
             self.assertEqual(since, "42")
             self.assertFalse(failed)
             kw["checkpoint"].save.assert_called_once()
@@ -806,9 +886,7 @@ class TestCatchUpNormalInitialSync(unittest.TestCase):
                 captured_bodies.append(kwargs.get("json", {}))
                 resp = AsyncMock()
                 resp.read = AsyncMock(
-                    return_value=json.dumps(
-                        {"results": [], "last_seq": "50"}
-                    ).encode()
+                    return_value=json.dumps({"results": [], "last_seq": "50"}).encode()
                 )
                 resp.release = MagicMock()
                 return resp
@@ -915,22 +993,34 @@ class TestCatchUpNormalMultipleBatches(unittest.TestCase):
                 nonlocal call_count
                 call_count += 1
                 if call_count == 1:
-                    body = {"results": [
-                        {"id": "d1", "seq": "10", "changes": [{"rev": "1-a"}],
-                         "doc": {"_id": "d1"}},
-                    ], "last_seq": "10"}
+                    body = {
+                        "results": [
+                            {
+                                "id": "d1",
+                                "seq": "10",
+                                "changes": [{"rev": "1-a"}],
+                                "doc": {"_id": "d1"},
+                            },
+                        ],
+                        "last_seq": "10",
+                    }
                 elif call_count == 2:
-                    body = {"results": [
-                        {"id": "d2", "seq": "20", "changes": [{"rev": "1-b"}],
-                         "doc": {"_id": "d2"}},
-                    ], "last_seq": "20"}
+                    body = {
+                        "results": [
+                            {
+                                "id": "d2",
+                                "seq": "20",
+                                "changes": [{"rev": "1-b"}],
+                                "doc": {"_id": "d2"},
+                            },
+                        ],
+                        "last_seq": "20",
+                    }
                 else:
                     body = {"results": [], "last_seq": "20"}
 
                 resp = AsyncMock()
-                resp.read = AsyncMock(
-                    return_value=json.dumps(body).encode()
-                )
+                resp.read = AsyncMock(return_value=json.dumps(body).encode())
                 resp.release = MagicMock()
                 return resp
 
@@ -941,7 +1031,8 @@ class TestCatchUpNormalMultipleBatches(unittest.TestCase):
                 since="0",
                 changes_url="http://localhost:4984/db/_changes",
                 feed_cfg={
-                    "include_docs": True, "active_only": True,
+                    "include_docs": True,
+                    "active_only": True,
                     "continuous_catchup_limit": 500,
                     "optimize_initial_sync": True,
                     "heartbeat_ms": 30000,
@@ -982,9 +1073,12 @@ class TestSequenceFormatPassthrough(unittest.TestCase):
     def _process_with_seq(self, seq_value):
         async def _run():
             changes = [
-                {"id": "doc1", "seq": seq_value,
-                 "doc": {"_id": "doc1", "val": 1},
-                 "changes": [{"rev": "1-abc"}]},
+                {
+                    "id": "doc1",
+                    "seq": seq_value,
+                    "doc": {"_id": "doc1", "val": 1},
+                    "changes": [{"rev": "1-abc"}],
+                },
             ]
             cp = _make_checkpoint()
             kw = dict(
@@ -1054,8 +1148,12 @@ class TestFetchDocsBasics(unittest.TestCase):
     def test_empty_rows_returns_empty(self):
         async def _run():
             result = await cw.fetch_docs(
-                MagicMock(), "http://localhost:4984/db",
-                [], None, {}, "sync_gateway",
+                MagicMock(),
+                "http://localhost:4984/db",
+                [],
+                None,
+                {},
+                "sync_gateway",
             )
             self.assertEqual(result, [])
 
@@ -1064,8 +1162,12 @@ class TestFetchDocsBasics(unittest.TestCase):
     def test_rows_without_changes_returns_empty(self):
         async def _run():
             result = await cw.fetch_docs(
-                MagicMock(), "http://localhost:4984/db",
-                [{"id": "d1"}], None, {}, "sync_gateway",
+                MagicMock(),
+                "http://localhost:4984/db",
+                [{"id": "d1"}],
+                None,
+                {},
+                "sync_gateway",
             )
             self.assertEqual(result, [])
 
@@ -1091,12 +1193,14 @@ class TestBulkGetBasics(unittest.TestCase):
             http.request = AsyncMock(return_value=resp)
 
             result = await cw._fetch_docs_bulk_get(
-                http, "http://localhost:4984/db",
+                http,
+                "http://localhost:4984/db",
                 [
                     {"id": "d1", "changes": [{"rev": "1-a"}]},
                     {"id": "d2", "changes": [{"rev": "1-b"}]},
                 ],
-                None, {},
+                None,
+                {},
             )
             self.assertEqual(len(result), 2)
             ids = {d["_id"] for d in result}
@@ -1119,9 +1223,12 @@ class TestIndividualFetchBasics(unittest.TestCase):
             http.request = AsyncMock(return_value=resp)
 
             result = await cw._fetch_docs_individually(
-                http, "http://localhost:4984/db",
+                http,
+                "http://localhost:4984/db",
                 [{"id": "d1", "changes": [{"rev": "1-a"}]}],
-                None, {}, 5,
+                None,
+                {},
+                5,
             )
             self.assertEqual(len(result), 1)
             self.assertEqual(result[0]["_id"], "d1")
@@ -1158,9 +1265,13 @@ class TestOptimizeInitialSyncInBuildBody(unittest.TestCase):
         """When optimize=False, _build_changes_body does not add limit
         (it's up to the caller not to pass one)."""
         body = cw._build_changes_body(
-            _feed_cfg(active_only=False, include_docs=True,
-                      optimize_initial_sync=False),
-            "sync_gateway", "0", "normal", 60000,
+            _feed_cfg(
+                active_only=False, include_docs=True, optimize_initial_sync=False
+            ),
+            "sync_gateway",
+            "0",
+            "normal",
+            60000,
             limit=0,
             active_only_override=True,
             include_docs_override=False,
@@ -1172,9 +1283,11 @@ class TestOptimizeInitialSyncInBuildBody(unittest.TestCase):
     def test_optimize_initial_sync_with_limit(self):
         """When optimize=True, caller passes limit → appears in body."""
         body = cw._build_changes_body(
-            _feed_cfg(active_only=False, include_docs=True,
-                      optimize_initial_sync=True),
-            "sync_gateway", "0", "normal", 60000,
+            _feed_cfg(active_only=False, include_docs=True, optimize_initial_sync=True),
+            "sync_gateway",
+            "0",
+            "normal",
+            60000,
             limit=10000,
             active_only_override=True,
             include_docs_override=False,
@@ -1207,9 +1320,7 @@ class TestBuildChangesBodySourceMatrix(unittest.TestCase):
         for src in self.SOURCES:
             for feed in ["normal", "longpoll", "continuous"]:
                 with self.subTest(src=src, feed=feed):
-                    body = cw._build_changes_body(
-                        _feed_cfg(), src, "0", feed, 60000
-                    )
+                    body = cw._build_changes_body(_feed_cfg(), src, "0", feed, 60000)
                     self.assertEqual(body["feed"], feed)
 
     def test_active_only_never_for_couchdb(self):
@@ -1219,20 +1330,23 @@ class TestBuildChangesBodySourceMatrix(unittest.TestCase):
                 with self.subTest(override=override, config=config_val):
                     body = cw._build_changes_body(
                         _feed_cfg(active_only=config_val),
-                        "couchdb", "0", "normal", 60000,
+                        "couchdb",
+                        "0",
+                        "normal",
+                        60000,
                         active_only_override=override,
                     )
                     self.assertNotIn("active_only", body)
 
     def test_version_type_only_sg_and_app_services(self):
         for src in self.SOURCES:
-            body = cw._build_changes_body(
-                _feed_cfg(), src, "0", "normal", 60000
-            )
+            body = cw._build_changes_body(_feed_cfg(), src, "0", "normal", 60000)
             if src in ("sync_gateway", "app_services"):
                 self.assertIn("version_type", body, f"{src} should have version_type")
             else:
-                self.assertNotIn("version_type", body, f"{src} should NOT have version_type")
+                self.assertNotIn(
+                    "version_type", body, f"{src} should NOT have version_type"
+                )
 
     def test_channels_only_non_couchdb(self):
         for src in self.SOURCES:
