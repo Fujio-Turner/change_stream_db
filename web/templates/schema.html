@@ -18,6 +18,7 @@
     })();
   </script>
   <style>
+    .tooltip-lg::before { font-size: 1rem !important; }
     .field-item { cursor: grab; padding: 2px 8px; border-radius: 6px; font-size: 13px; font-family: monospace; }
     .field-item:hover { background: oklch(var(--p) / 0.15); }
     .field-item.drag-over { outline: 2px solid oklch(var(--p)); }
@@ -79,30 +80,35 @@
     <!-- Top action bar -->
     <div class="card bg-base-100 shadow-sm rounded-2xl">
       <div class="card-body p-4 flex-row items-center gap-3 flex-wrap">
-        <!-- Save + Mapping name -->
-        <button class="btn btn-info btn-md text-base font-bold px-6" onclick="saveMapping()">Save Mapping</button>
-        <input id="filenameInput" type="text" placeholder="filename.json" class="input input-bordered input-sm w-48" />
-        <div class="dropdown">
-          <label tabindex="0" class="btn btn-ghost btn-sm">Sample Mappings ▾</label>
-          <ul tabindex="0" class="dropdown-content menu p-2 shadow-lg bg-base-200 rounded-box w-56 z-50">
-            <li class="menu-title text-xs opacity-50">Tables</li>
-            <li><a onclick="loadTemplate('orders')">Orders</a></li>
-            <li><a onclick="loadTemplate('profiles')">Profiles</a></li>
-            <li><a onclick="loadTemplate('products')">Products</a></li>
-            <li class="menu-title text-xs opacity-50 mt-1">JSON</li>
-            <li><a onclick="loadTemplate('orders_json')">Orders (JSON)</a></li>
-            <li><a onclick="loadTemplate('events_json')">Events (JSON)</a></li>
-            <li><a onclick="loadTemplate('sensors_json')">Sensors (JSON)</a></li>
-          </ul>
+        <!-- Left-aligned group -->
+        <div class="flex items-center gap-2">
+          <div class="tooltip tooltip-bottom tooltip-lg" data-tip="Export Mapping (JSON)">
+            <button class="btn btn-ghost btn-sm" onclick="downloadMapping()"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v13m0 0l-4-4m4 4l4-4"/></svg></button>
+          </div>
+          <div class="tooltip tooltip-bottom tooltip-lg" data-tip="Import Mapping (JSON)">
+            <label class="btn btn-ghost btn-sm" onclick="document.getElementById('importFileInput').click()"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 16V3m0 0l-4 4m4-4l4 4"/></svg></label>
+          </div>
+          <input type="file" id="importFileInput" accept=".json,application/json" class="hidden" onchange="importMappingFile(event)" />
         </div>
 
         <!-- Right-aligned group -->
         <div class="flex items-center gap-2 ml-auto">
-          <span id="statusMsg" class="text-sm"></span>
+          <div class="dropdown">
+            <label tabindex="0" class="btn btn-ghost btn-sm">Sample Mappings ▾</label>
+            <ul tabindex="0" class="dropdown-content menu p-2 shadow-lg bg-base-200 rounded-box w-56 z-50">
+              <li class="menu-title text-xs opacity-50">Tables</li>
+              <li><a onclick="loadTemplate('orders')">Orders</a></li>
+              <li><a onclick="loadTemplate('profiles')">Profiles</a></li>
+              <li><a onclick="loadTemplate('products')">Products</a></li>
+              <li class="menu-title text-xs opacity-50 mt-1">JSON</li>
+              <li><a onclick="loadTemplate('orders_json')">Orders (JSON)</a></li>
+              <li><a onclick="loadTemplate('events_json')">Events (JSON)</a></li>
+              <li><a onclick="loadTemplate('sensors_json')">Sensors (JSON)</a></li>
+            </ul>
+          </div>
           <button class="btn btn-sm" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;" onclick="openAIAssist()">AI Mapping Assist</button>
-          <button class="btn btn-ghost btn-sm" onclick="downloadMapping()">Export Mapping</button>
-          <label class="btn btn-ghost btn-sm" onclick="document.getElementById('importFileInput').click()">Import Mapping</label>
-          <input type="file" id="importFileInput" accept=".json,application/json" class="hidden" onchange="importMappingFile(event)" />
+          <input id="filenameInput" type="text" placeholder="filename.json" class="input input-bordered input-sm w-48" />
+          <button class="btn btn-info btn-md text-base font-bold px-6" onclick="saveMapping()">Save Mapping</button>
         </div>
       </div>
     </div>
@@ -2477,10 +2483,6 @@ function showRestartRequiredToast() {
 }
 
 function showStatus(msg, type) {
-  var el = document.getElementById('statusMsg');
-  el.textContent = msg;
-  el.className = 'text-sm ml-auto ' + (type === 'error' ? 'text-error' : 'text-success');
-  setTimeout(function() { el.textContent = ''; }, 3000);
   // DaisyUI toast
   var container = document.getElementById('toastContainer');
   var alertClass = type === 'success' ? 'alert-success' : 'alert-error';

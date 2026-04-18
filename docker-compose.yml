@@ -25,6 +25,8 @@ services:
       - cbl-data:/app/data
       - ./mappings:/app/mappings
     restart: unless-stopped
+    profiles:
+      - ui
 
 volumes:
   cbl-data:

@@ -20,10 +20,10 @@
     { type: 'divider' },
 
     { type: 'section', label: 'System' },
-    { href: '/config',     label: 'Settings',         icon: '/static/icons/settings.svg' },
+    { href: '/settings',   label: 'Settings',         icon: '/static/icons/settings.svg' },
 
     { type: 'section', label: 'Reference' },
-    { href: '/transforms', label: 'Glossary',         icon: '/static/icons/help.svg'     },
+    { href: '/glossary', label: 'Glossary',         icon: '/static/icons/book.svg'     },
     { href: '/help',       label: 'Help',             icon: '/static/icons/help.svg'     }
   ];
 

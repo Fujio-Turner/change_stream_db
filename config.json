@@ -26,7 +26,8 @@
     "timeout_ms": 60000,
     "http_timeout_seconds": 300,
     "throttle_feed": 0,
-    "continuous_catchup_limit": 10000
+    "continuous_catchup_limit": 10000,
+    "optimize_initial_sync": false
   },
   "threads": 4,
   "processing": {
@@ -107,6 +108,10 @@
     "log_response_times": true,
     "output_format": "json",
     "dead_letter_path": "failed_docs.jsonl",
+    "dlq": {
+      "retention_seconds": 86400,
+      "max_replay_attempts": 10
+    },
     "request_options": {
       "params": {},
       "headers": {}
@@ -124,6 +129,11 @@
     "backoff_base_seconds": 1,
     "backoff_max_seconds": 60,
     "retry_on_status": [500, 502, 503, 504]
+  },
+  "admin_ui": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "port": 8080
   },
   "metrics": {
     "enabled": true,

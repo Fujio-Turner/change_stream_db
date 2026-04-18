@@ -27,7 +27,7 @@
   <div id="sidebar-root"></div>
 
   <div class="sidebar-main">
-  <main class="w-full mx-auto p-6 max-w-5xl">
+  <main class="w-full mx-auto p-6">
 
     <!-- Step Indicators -->
     <ul class="steps steps-horizontal w-full mb-6">
@@ -165,6 +165,7 @@
             <a class="tab tab-active" id="outTabStdout" onclick="switchOutputTab('stdout')">Stdout</a>
             <a class="tab" id="outTabHttp" onclick="switchOutputTab('http')">HTTP</a>
             <a class="tab" id="outTabDb" onclick="switchOutputTab('db')">RDBMS</a>
+            <a class="tab" id="outTabS3" onclick="switchOutputTab('s3')">S3 / Cloud</a>
           </div>
 
           <!-- Stdout panel -->
@@ -290,6 +291,96 @@
             <div id="outDbTableList" class="mt-4 hidden">
               <div class="divider text-xs">Discovered Tables</div>
               <div id="outDbTablesContainer" class="max-h-64 overflow-y-auto space-y-1"></div>
+            </div>
+          </div>
+
+          <!-- S3 / Cloud panel -->
+          <div id="outPanelS3" class="hidden">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="label label-text text-xs font-semibold">Bucket</label>
+                <input id="outS3Bucket" type="text" class="input input-bordered input-sm w-full" placeholder="my-changes-bucket" required />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Region</label>
+                <select id="outS3Region" class="select select-bordered select-sm w-full">
+                  <option value="">-- select region --</option>
+                  <option value="us-east-1" selected>US East (N. Virginia)</option>
+                  <option value="us-east-2">US East (Ohio)</option>
+                  <option value="us-west-1">US West (N. California)</option>
+                  <option value="us-west-2">US West (Oregon)</option>
+                  <option value="eu-west-1">Europe (Ireland)</option>
+                  <option value="eu-west-2">Europe (London)</option>
+                  <option value="eu-west-3">Europe (Paris)</option>
+                  <option value="eu-central-1">Europe (Frankfurt)</option>
+                  <option value="eu-north-1">Europe (Stockholm)</option>
+                  <option value="ap-northeast-1">Asia Pacific (Tokyo)</option>
+                  <option value="ap-northeast-2">Asia Pacific (Seoul)</option>
+                  <option value="ap-southeast-1">Asia Pacific (Singapore)</option>
+                  <option value="ap-southeast-2">Asia Pacific (Sydney)</option>
+                  <option value="ap-south-1">Asia Pacific (Mumbai)</option>
+                  <option value="ca-central-1">Canada (Central)</option>
+                  <option value="sa-east-1">South America (São Paulo)</option>
+                  <option value="me-south-1">Middle East (Bahrain)</option>
+                  <option value="af-south-1">Africa (Cape Town)</option>
+                </select>
+              </div>
+              <div class="md:col-span-2">
+                <label class="label label-text text-xs font-semibold">Endpoint URL</label>
+                <input id="outS3Endpoint" type="text" class="input input-bordered input-sm w-full" placeholder="(blank = AWS S3)" />
+                <label class="label"><span class="label-text-alt text-xs opacity-60">Leave blank for AWS S3. Set for MinIO or LocalStack.</span></label>
+              </div>
+            </div>
+
+            <div class="divider text-xs opacity-60">Credentials</div>
+            <div class="alert alert-info shadow-sm mb-4">
+              <span>Leave blank to use the default AWS credential chain (env vars, IAM role, ~/.aws/credentials).</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="label label-text text-xs font-semibold">Access Key ID</label>
+                <input id="outS3AccessKey" type="text" class="input input-bordered input-sm w-full font-mono text-sm" placeholder="(default chain)" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Secret Access Key</label>
+                <input id="outS3SecretKey" type="password" class="input input-bordered input-sm w-full font-mono text-sm" placeholder="(default chain)" />
+              </div>
+            </div>
+
+            <div class="divider text-xs opacity-60">Object Key</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="label label-text text-xs font-semibold">Key Prefix</label>
+                <input id="outS3Prefix" type="text" class="input input-bordered input-sm w-full" value="couchdb-changes" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Key Template</label>
+                <input id="outS3KeyTemplate" type="text" class="input input-bordered input-sm w-full font-mono text-sm" value="{prefix}/{doc_id}.json" />
+              </div>
+            </div>
+
+            <div class="divider text-xs opacity-60">Storage Options</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="label label-text text-xs font-semibold">Storage Class</label>
+                <select id="outS3StorageClass" class="select select-bordered select-sm w-full">
+                  <option value="">(bucket default)</option>
+                  <option value="STANDARD">STANDARD</option>
+                  <option value="INTELLIGENT_TIERING">INTELLIGENT_TIERING</option>
+                  <option value="STANDARD_IA">STANDARD_IA</option>
+                  <option value="ONEZONE_IA">ONEZONE_IA</option>
+                  <option value="GLACIER">GLACIER</option>
+                  <option value="DEEP_ARCHIVE">DEEP_ARCHIVE</option>
+                </select>
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">On Delete</label>
+                <select id="outS3OnDelete" class="select select-bordered select-sm w-full">
+                  <option value="delete">delete (remove object)</option>
+                  <option value="tombstone">tombstone (upload marker)</option>
+                  <option value="ignore">ignore (do nothing)</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -480,7 +571,7 @@ function esc(s) { var d = document.createElement('div'); d.textContent = s || ''
 var currentStep = 1;
 var wizardSampleDoc = null;
 var wizSourceFieldsList = [];
-var wizOutputMode = 'stdout';   // 'stdout', 'http', 'db'
+var wizOutputMode = 'stdout';   // 'stdout', 'http', 'db', 's3'
 var wizJsonFields = [];         // [{key, path, transform}]
 var wizTables = [];
 var wizActiveTableIdx = 0;
@@ -757,10 +848,22 @@ function switchOutputTab(mode) {
   document.getElementById('outTabStdout').classList.toggle('tab-active', mode === 'stdout');
   document.getElementById('outTabHttp').classList.toggle('tab-active', mode === 'http');
   document.getElementById('outTabDb').classList.toggle('tab-active', mode === 'db');
+  document.getElementById('outTabS3').classList.toggle('tab-active', mode === 's3');
   document.getElementById('outPanelStdout').classList.toggle('hidden', mode !== 'stdout');
   document.getElementById('outPanelHttp').classList.toggle('hidden', mode !== 'http');
   document.getElementById('outPanelDb').classList.toggle('hidden', mode !== 'db');
+  document.getElementById('outPanelS3').classList.toggle('hidden', mode !== 's3');
   if (mode === 'db') loadWizDbDrivers();
+  if (mode === 's3') autoSuggestS3Prefix();
+}
+
+// Auto-suggest S3 key prefix from source database
+function autoSuggestS3Prefix() {
+  var db = document.getElementById('srcDatabase').value.trim();
+  var prefix = document.getElementById('outS3Prefix');
+  if (db && (!prefix.value || prefix.value === 'couchdb-changes')) {
+    prefix.value = db + '-changes';
+  }
 }
 
 // ── Step 2: Output Auth Toggle ───────────────────────────────
@@ -832,10 +935,21 @@ async function loadWizDbDrivers() {
 function onOutDbTypeChange() {
   var t = document.getElementById('outDbType').value;
   if (DEFAULT_PORTS[t]) document.getElementById('outDbPort').value = DEFAULT_PORTS[t];
-  if (t === 'postgres') document.getElementById('outDbSchema').value = 'public';
-  else if (t === 'mssql') document.getElementById('outDbSchema').value = 'dbo';
-  else if (t === 'oracle') document.getElementById('outDbSchema').value = '';
-  else document.getElementById('outDbSchema').value = '';
+  if (t === 'postgres') {
+    document.getElementById('outDbSchema').value = 'public';
+    document.getElementById('outDbUser').value = 'postgres';
+  } else if (t === 'mysql') {
+    document.getElementById('outDbSchema').value = '';
+    document.getElementById('outDbUser').value = 'root';
+  } else if (t === 'mssql') {
+    document.getElementById('outDbSchema').value = 'dbo';
+    document.getElementById('outDbUser').value = 'sa';
+  } else if (t === 'oracle') {
+    document.getElementById('outDbSchema').value = '';
+    document.getElementById('outDbUser').value = 'system';
+  } else {
+    document.getElementById('outDbSchema').value = '';
+  }
 }
 
 function onOutDbHostChange() {
@@ -1352,6 +1466,32 @@ function buildConfig() {
         schema: dbCfg.schema,
         ssl: dbCfg.ssl,
         pool_size: 5
+      },
+      halt_on_failure: true
+    };
+  } else if (wizOutputMode === 's3') {
+    config.output = {
+      mode: 's3',
+      s3: {
+        bucket: document.getElementById('outS3Bucket').value.trim(),
+        region: document.getElementById('outS3Region').value,
+        endpoint_url: document.getElementById('outS3Endpoint').value.trim(),
+        access_key_id: document.getElementById('outS3AccessKey').value.trim(),
+        secret_access_key: document.getElementById('outS3SecretKey').value,
+        session_token: '',
+        key_prefix: document.getElementById('outS3Prefix').value.trim() || 'couchdb-changes',
+        key_template: document.getElementById('outS3KeyTemplate').value.trim() || '{prefix}/{doc_id}.json',
+        key_sanitize: true,
+        content_type: 'application/json',
+        storage_class: document.getElementById('outS3StorageClass').value,
+        server_side_encryption: '',
+        kms_key_id: '',
+        metadata: {},
+        on_delete: document.getElementById('outS3OnDelete').value,
+        batch: { enabled: false, max_docs: 100, max_bytes: 1048576, max_seconds: 5.0 },
+        max_retries: 3,
+        backoff_base_seconds: 0.5,
+        backoff_max_seconds: 10
       },
       halt_on_failure: true
     };

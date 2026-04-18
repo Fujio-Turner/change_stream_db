@@ -3,8 +3,10 @@
 This document describes the internal architecture of the changes_worker, how data flows through the system, and what happens when things go wrong at every stage.
 
 **Related docs:**
+- [`CHANGES_PROCESSING.md`](CHANGES_PROCESSING.md) -- `_changes` feed processing, initial sync strategy, checkpoint crash recovery
 - [`ADMIN_UI.md`](ADMIN_UI.md) -- Dashboard, config editor, and schema mapping UI
 - [`CBL_DATABASE.md`](CBL_DATABASE.md) -- Embedded Couchbase Lite storage schema
+- [`DLQ.md`](DLQ.md) -- Dead letter queue deep dive: triggers, data flow, failure modes, orphaned entries
 - [`JOBS.md`](JOBS.md) -- Job ID concept, per-engine/per-job OUTPUT metrics
 - [`SCHEMA_MAPPING.md`](SCHEMA_MAPPING.md) -- JSON-to-relational mapping definitions
 - [`RDBMS_PLAN.md`](RDBMS_PLAN.md) -- RDBMS output architecture and config
