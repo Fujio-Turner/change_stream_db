@@ -1017,17 +1017,25 @@ class CBLStore:
                 key = r.get("reason", "") or "unknown"
                 reason_counts[key] = r.get("count", 0)
 
-            # Timeline — fetch timestamps and bucket in Python
-            time_rows = _run_n1ql(
+            # Timeline by reason (stacked bar chart) — grouped by time buckets
+            timeline_rows = _run_n1ql(
                 self.db,
-                f"SELECT d.time AS t FROM {f} AS d WHERE d.type = 'dlq' AND d.time > 0",
+                f"SELECT d.reason AS reason, COUNT(*) AS count,"
+                f" FLOOR(d.time / 300) * 300 AS time_bucket"
+                f" FROM {f} AS d WHERE d.type = 'dlq' AND d.time > 0"
+                f" GROUP BY d.reason, time_bucket"
+                f" ORDER BY time_bucket",
             )
-            timeline: dict[str, int] = {}
-            for r in time_rows:
-                t = r.get("t", 0)
-                if t:
-                    minute_key = time.strftime("%Y-%m-%d %H:%M", time.gmtime(t))
-                    timeline[minute_key] = timeline.get(minute_key, 0) + 1
+            timeline: dict[str, dict[str, int]] = {}  # {time_key: {reason: count}}
+            for r in timeline_rows:
+                bucket = r.get("time_bucket", 0)
+                reason = r.get("reason", "") or "unknown"
+                count = r.get("count", 0)
+                if bucket:
+                    time_key = time.strftime("%Y-%m-%d %H:%M", time.gmtime(bucket))
+                    if time_key not in timeline:
+                        timeline[time_key] = {}
+                    timeline[time_key][reason] = count
 
             return {
                 "total": total,
