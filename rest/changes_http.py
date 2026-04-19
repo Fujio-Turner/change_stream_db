@@ -12,6 +12,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -576,6 +577,100 @@ async def _fetch_docs_individually(
 # ---------------------------------------------------------------------------
 # Helpers: shared batch processing & continuous feed
 # ---------------------------------------------------------------------------
+
+
+def _parse_seq_number(seq) -> int:
+    """Extract the numeric portion of a sequence value for comparison.
+
+    Sync Gateway sequences can be plain integers (``150``), strings
+    (``"150"``), or compound strings (``"42:150"``).  CouchDB uses
+    opaque strings like ``"292786-g1AAAAFe..."`` where the leading
+    integer is the sequence number.  This helper extracts the largest
+    integer component so that ``last_seq`` from ``_changes`` can be
+    compared to ``update_seq`` from the database root endpoint.
+    """
+    s = str(seq)
+    # Split on both ":" (SG compound) and "-" (CouchDB opaque) delimiters
+    parts = re.split(r"[:\-]", s)
+    best = 0
+    for part in parts:
+        try:
+            best = max(best, int(part))
+        except ValueError:
+            continue
+    return best
+
+
+async def fetch_db_update_seq(
+    http: RetryableHTTP,
+    base_url: str,
+    basic_auth: aiohttp.BasicAuth | None,
+    auth_headers: dict,
+) -> int | None:
+    """GET ``{base_url}/`` and return the ``update_seq`` value.
+
+    The database root endpoint returns metadata including ``update_seq``
+    which represents the latest sequence number in the database.  This is
+    used during optimized initial sync to know when catch-up pagination
+    has reached the end of the feed that existed at the start of the sync.
+
+    Returns ``None`` if the request fails or the field is missing so the
+    caller can fall back to the existing zero-results strategy.
+    """
+    try:
+        url = base_url.rstrip("/") + "/"
+        resp = await http.request(
+            "GET",
+            url,
+            auth=basic_auth,
+            headers=auth_headers,
+        )
+        body = json.loads(await resp.read())
+        resp.release()
+        raw_seq = body.get("update_seq")
+        # Edge Server database-level response: update_seq is nested
+        # under each collection in "collections", not at the top level.
+        # Use the max update_seq across all collections.
+        if raw_seq is None and "collections" in body:
+            collections = body["collections"]
+            if collections:
+                raw_seq = max(c.get("update_seq", 0) for c in collections.values())
+                log_event(
+                    logger,
+                    "debug",
+                    "CHANGES",
+                    "extracted update_seq from Edge Server collections",
+                    url=url,
+                    collection_count=len(collections),
+                )
+        if raw_seq is None:
+            log_event(
+                logger,
+                "warn",
+                "CHANGES",
+                "database root response missing update_seq",
+                url=url,
+            )
+            return None
+        seq_int = _parse_seq_number(raw_seq)
+        log_event(
+            logger,
+            "info",
+            "CHANGES",
+            "fetched database update_seq=%d as initial sync target" % seq_int,
+            url=url,
+            update_seq=seq_int,
+        )
+        return seq_int
+    except Exception as exc:
+        log_event(
+            logger,
+            "warn",
+            "CHANGES",
+            "failed to fetch database update_seq: %s – "
+            "falling back to zero-results completion" % exc,
+        )
+        return None
 
 
 def _build_changes_body(
@@ -1159,10 +1254,18 @@ async def _catch_up_normal(
     Couchbase products so historical deletes are skipped.
 
     When ``optimize_initial_sync`` is True (from feed_cfg), requests use
-    a ``limit`` to page through the feed in chunks.  When False (the
-    default), no limit is set and the full feed is returned in one
-    request — simpler and avoids the consistency gap where deletes
-    between chunks can be missed.
+    a ``limit`` to page through the feed in chunks.  The worker first
+    fetches the database ``update_seq`` via ``GET {base_url}/`` to
+    establish a target endpoint.  Once ``last_seq`` from ``_changes``
+    reaches or exceeds that target, the initial sync is complete and the
+    worker switches to steady-state mode where deletes are processed.
+    This avoids the consistency gap where deletes between chunks could
+    be missed.  If the ``update_seq`` fetch fails, the worker falls
+    back to the original zero-results completion strategy.
+
+    When ``optimize_initial_sync`` is False (the default), no limit is
+    set and the full feed is returned in one request — simpler and
+    avoids the consistency gap entirely.
     """
     optimize_initial = feed_cfg.get("optimize_initial_sync", False)
     catchup_limit = feed_cfg.get("continuous_catchup_limit", 500)
@@ -1172,15 +1275,22 @@ async def _catch_up_normal(
     )
     failure_count = 0
 
+    # When using optimized/chunked initial sync, fetch the database
+    # update_seq first so we know the exact endpoint to reach.
+    target_seq: int | None = None
+    if initial_sync and optimize_initial:
+        target_seq = await fetch_db_update_seq(http, base_url, basic_auth, auth_headers)
+
     log_event(
         logger,
         "info",
         "CHANGES",
-        "catch-up starting (limit=%s, active_only=%s, include_docs=%s)"
+        "catch-up starting (limit=%s, active_only=%s, include_docs=%s%s)"
         % (
             use_limit if use_limit > 0 else "none",
             True if initial_sync else feed_cfg.get("active_only", False),
             False if initial_sync else feed_cfg.get("include_docs", False),
+            ", target_seq=%d" % target_seq if target_seq is not None else "",
         ),
         seq=since,
     )
@@ -1268,7 +1378,19 @@ async def _catch_up_normal(
             )
             continue
 
-        if not results:
+        # ── Check if initial sync is complete ─────────────────────────
+        # When using optimized/chunked initial sync with a target_seq,
+        # completion is determined by last_seq reaching the target —
+        # NOT by getting zero results (which would require an extra
+        # round-trip and leaves a consistency gap between chunks).
+        reached_target = (
+            initial_sync
+            and target_seq is not None
+            and results
+            and _parse_seq_number(last_seq) >= target_seq
+        )
+
+        if not results or reached_target:
             if initial_sync and not checkpoint.initial_sync_done:
                 checkpoint._initial_sync_done = True
                 await checkpoint.save(since, http, base_url, basic_auth, auth_headers)
@@ -1276,7 +1398,12 @@ async def _catch_up_normal(
                     logger,
                     "info",
                     "CHANGES",
-                    "initial sync complete – reverting to config settings",
+                    "initial sync complete – reverting to config settings"
+                    + (
+                        " (reached target_seq=%d)" % target_seq
+                        if reached_target
+                        else ""
+                    ),
                 )
             log_event(
                 logger,

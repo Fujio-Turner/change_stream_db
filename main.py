@@ -46,9 +46,11 @@ from rest.changes_http import (
     RedirectHTTPError,
     ServerHTTPError,
     fetch_docs,
+    fetch_db_update_seq,
     _fetch_docs_bulk_get,
     _fetch_docs_individually,
     _build_changes_body,
+    _parse_seq_number,
     _sleep_with_backoff,
     _process_changes_batch,
     _catch_up_normal,
@@ -2293,6 +2295,15 @@ async def poll_changes(
                 return
 
             # ── Polled mode (longpoll / normal / sse) ────────────────────────
+            # For optimized initial sync, fetch the database update_seq
+            # as a completion target so we know when to stop ignoring
+            # deletes and switch to steady-state.
+            poll_target_seq: int | None = None
+            if initial_sync and optimize_initial:
+                poll_target_seq = await fetch_db_update_seq(
+                    http, base_url, basic_auth, auth_headers
+                )
+
             while not stop_event.is_set():
                 # During initial sync use feed=normal so the server
                 # returns immediately with a limited result set instead
@@ -2383,7 +2394,15 @@ async def poll_changes(
                     )
                     continue
 
-                if not results:
+                # Check if optimized initial sync reached its target
+                reached_poll_target = (
+                    initial_sync
+                    and poll_target_seq is not None
+                    and results
+                    and _parse_seq_number(last_seq) >= poll_target_seq
+                )
+
+                if not results or reached_poll_target:
                     if initial_sync:
                         initial_sync = False
                         checkpoint._initial_sync_done = True
@@ -2394,11 +2413,17 @@ async def poll_changes(
                             logger,
                             "info",
                             "CHANGES",
-                            "initial sync complete – reverting to config settings",
+                            "initial sync complete – reverting to config settings"
+                            + (
+                                " (reached target_seq=%d)" % poll_target_seq
+                                if reached_poll_target
+                                else ""
+                            ),
                         )
-                    await _sleep_or_shutdown(
-                        feed_cfg.get("poll_interval_seconds", 10), stop_event
-                    )
+                    if not results:
+                        await _sleep_or_shutdown(
+                            feed_cfg.get("poll_interval_seconds", 10), stop_event
+                        )
                     continue
 
                 # When throttling: if we got a full batch there are more rows

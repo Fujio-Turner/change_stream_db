@@ -125,15 +125,36 @@ timeout, the worker can chunk the initial pull:
 }
 ```
 
+Before starting the paginated `_changes` requests, the worker calls
+`GET {base_url}/` to fetch the database `update_seq`.  This endpoint
+is supported across all source types:
+
+- **Sync Gateway / App Services** — `GET /{db}/` or `GET /{db}.{scope}.{collection}/`
+  returns `update_seq` as an integer.
+- **Edge Server** — `GET /{keyspace}/` returns `update_seq` as an
+  integer (per-collection).
+- **CouchDB** — `GET /{db}/` returns `update_seq` as an opaque string
+  (e.g. `"292786-g1AAAAF..."`); the worker extracts the leading integer.
+
+This value acts as the "endpoint" — the worker knows the initial sync
+is complete once `last_seq` from a `_changes` response reaches or
+exceeds `update_seq`.
+
 ```
+          GET {base_url}/ ──▶ { "update_seq": 150, ... }
+                │
+                ▼
+          target_seq = 150
+                │
+                ▼
 since=0 ──▶ _changes?feed=normal&limit=10000
                       &active_only=true          (Couchbase only)
                       &include_docs=false
             │
             ▼
-      got N results?
+      last_seq >= target_seq?
       ┌─────┴──────┐
-      │ N > 0       │ N == 0
+      │ no          │ yes
       │             │
       ▼             ▼
   process batch   DONE ── mark initial_sync_done=true
@@ -143,11 +164,18 @@ since=0 ──▶ _changes?feed=normal&limit=10000
       └─── loop ◀───┘
 ```
 
-**Trade-off:** Chunking reduces per-request latency and lets the worker
-checkpoint between pages, but introduces a small consistency window
-where deletes between chunks can be missed (as described above).  For
-most use cases this is acceptable because the steady-state feed will
-eventually deliver those deletes.
+**Why `update_seq`?**  When using a limit, `last_seq` is only the
+sequence of the last row in that page, so the previous approach of
+waiting for zero results required an extra round-trip and left a window
+where deletes between chunks could be missed.  By capturing `update_seq`
+upfront, the worker has a definitive target: once `last_seq >= update_seq`,
+every document that existed at the start of the sync has been accounted
+for.  Any mutation (including deletes) that happened *after* the
+`update_seq` snapshot will have a higher sequence number and will be
+delivered by the steady-state feed.
+
+If the `update_seq` fetch fails (e.g., the endpoint doesn't support it),
+the worker falls back to the original zero-results completion strategy.
 
 **Why 5,000 / 10,000?**  Sync Gateway's `_changes` index serves roughly
 5,000 entries per second.  A `limit=5000` request takes ~1 second;
@@ -206,11 +234,11 @@ catch-up?*
   deletes that occurred during the catch-up) will be delivered by the
   stream.  No gap.
 
-- **Optimized mode** (chunked): between chunks, a delete could happen
-  for a document already processed.  That delete's sequence is behind
-  the checkpoint and won't be replayed.  The stream will deliver future
-  deletes from the switch-over point onwards, but the in-between ones
-  are missed.  This is the same trade-off as in polled mode.
+- **Optimized mode** (chunked): the worker fetches `update_seq` before
+  starting the catch-up and stops once `last_seq >= update_seq`.  Any
+  deletes that occur *after* the `update_seq` snapshot will have higher
+  sequence numbers and will be delivered by the continuous/websocket
+  stream once it connects.  No consistency gap.
 
 ---
 
