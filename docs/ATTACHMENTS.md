@@ -17,6 +17,52 @@ After processing the attachments, a secondary operation is usually performed on 
 
 ---
 
+## Pipeline Modes
+
+The changes_worker operates in one of two modes depending on whether attachment processing is enabled:
+
+### Data Only Mode (default)
+
+When `attachments.enabled` is `false` (the default), the worker runs in **Data Only** mode. The pipeline is a straight three-stage flow:
+
+```
+Source → changes_worker → Output
+```
+
+![Data Only Architecture](../img/architecture.png)
+
+- Documents flow directly from the changes feed through processing to the output
+- No attachment detection, fetching, or uploading occurs
+- The Attachments node is hidden from the dashboard architecture diagram
+- This is the simplest and fastest mode — use it when your documents don't have attachments or you don't need to process them
+
+### Attachments + Data Mode
+
+When `attachments.enabled` is `true`, the worker runs in **Attachments + Data** mode. An attachment processing stage is inserted between the worker and the output:
+
+```
+Source → changes_worker → Attachments → Output
+```
+
+![Attachments Architecture](../img/architecture_attach.png)
+
+- Documents with `_attachments` stubs are detected and attachments are fetched from the source
+- Fetched attachments are uploaded to the configured destination (S3, HTTP, filesystem)
+- Optional post-processing (update doc, delete attachments, set TTL, purge)
+- The Attachments node appears on the dashboard with live metrics (uploaded count, errors)
+- The worker stat label shows a 📎 prefix when in this mode
+
+### Switching Modes
+
+Toggle `attachments.enabled` in `config.json` or via the **Settings → Attachments** tab in the admin UI. The mode indicator banner at the top of the Attachments settings tab shows the current mode:
+
+- **Yellow** — "Mode: Data Only" — attachments disabled
+- **Green** — "Mode: Attachments + Data" — attachments enabled
+
+No restart is required if using hot config reload; otherwise restart the worker.
+
+---
+
 ## Source Platform Support
 
 | Platform | Attachment API | Notes |
@@ -1483,12 +1529,12 @@ Where `{tenant_id}` could be derived from the document body, the Couchbase chann
 
 ### Phase 4: Advanced
 
-14. ⬜ Bulk fetch via `_bulk_get?attachments=true`
-15. ⬜ Multipart/related fetch — `GET /{docId}?attachments=true` with `Accept: multipart/related`
-16. ⬜ Streaming large attachments — pipe GET response directly to destination PUT without touching disk
-17. ⬜ Pre-signed URL generation for `update_doc` post-processing (S3/GCS)
-18. ⬜ Admin UI — attachment config editor, attachment processing status panel
-19. ⬜ CouchDB-specific multipart/related response parsing
+14. ✅ Bulk fetch via `_bulk_get?attachments=true`
+15. ✅ Multipart/related fetch — `GET /{docId}?attachments=true` with `Accept: multipart/related`
+16. ✅ Streaming large attachments — pipe GET response directly to destination PUT without touching disk
+17. ✅ Pre-signed URL generation for `update_doc` post-processing (S3/GCS)
+18. ✅ Admin UI — attachment config editor, attachment processing status panel
+19. ✅ CouchDB-specific multipart/related response parsing
 20. ⬜ Edge Server upstream proxy — fetch attachments from upstream SG when source is Edge Server
 
 ---

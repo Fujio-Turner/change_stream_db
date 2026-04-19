@@ -54,6 +54,7 @@ class AttachmentUploadResult:
     digest: str
     uploaded_at: str
     etag: str = ""
+    access_url: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +195,10 @@ class AttachmentUploader:
                     % (name, dest_type, elapsed * 1000),
                     doc_id=doc.get("_id", doc.get("id", "<unknown>")),
                 )
+                access_url = ""
+                if dest_type == "s3" and self._dest.presigned_urls.enabled:
+                    access_url = await self._generate_presigned_url(key)
+
                 return AttachmentUploadResult(
                     attachment_name=name,
                     destination_type=dest_type,
@@ -206,6 +211,7 @@ class AttachmentUploader:
                         "%Y-%m-%dT%H:%M:%SZ"
                     ),
                     etag=etag,
+                    access_url=access_url,
                 )
 
             except Exception as exc:
@@ -296,6 +302,21 @@ class AttachmentUploader:
             functools.partial(client.put_object, **put_kwargs),
         )
         return resp.get("ETag", "")
+
+    async def _generate_presigned_url(self, key: str) -> str:
+        """Generate a pre-signed GET URL for an S3 object."""
+        client = await self._ensure_s3_client()
+        loop = asyncio.get_event_loop()
+        url = await loop.run_in_executor(
+            self._s3_executor,
+            functools.partial(
+                client.generate_presigned_url,
+                "get_object",
+                Params={"Bucket": self._dest.s3.bucket, "Key": key},
+                ExpiresIn=self._dest.presigned_urls.expiry_seconds,
+            ),
+        )
+        return url
 
     async def _ensure_s3_client(self):
         if self._s3_client is not None:

@@ -54,6 +54,17 @@ Status for Changes Feed, Processing, and Output is computed **client-side** from
 
 All four status dots start as **yellow** (unknown) on page load. Once data is fetched, each dot transitions to its computed color. When the worker's metrics endpoint is unreachable or metrics are disabled in the config, the feed/processing/output dots remain **yellow** (unknown / not monitored) — never red. The CBL dot is set independently from `/api/status`.
 
+#### Architecture Graph
+
+The architecture diagram below the status bar shows the live pipeline topology. Nodes represent pipeline stages and update with real-time metrics.
+
+The diagram operates in two visual modes:
+
+- **Data Only** (`attachments.enabled = false`) — Three columns: Source → Worker+DLQ → Outputs. The Attachments node is hidden and Worker→Output arrows are drawn directly.
+- **Attachments + Data** (`attachments.enabled = true`) — Four columns: Source → Worker+DLQ → Attachments → Outputs. The Attachments node appears between Worker and Outputs with live metrics (uploaded count, errors). Arrows route through the Attachments node to the active output.
+
+Inactive output nodes are dimmed. The active output node (matching `output.mode`) is fully visible with colored health arrows. Click any node to open a detail modal with expanded metrics and mini-charts.
+
 #### Charts Row
 
 Three live line charts sit directly below the status bar in their own card row, one per pipeline stage. Charts use inline `style` dimensions (not Tailwind classes) to ensure ECharts has a non-zero container height before Tailwind JS processes.
@@ -126,6 +137,7 @@ Collapsible sections for each config block:
 | **Changes Feed** | Feed type (grouped: Polling / Continuous with tooltip), poll interval, active only, include docs, channels (Tagify tag input), throttle, HTTP timeout |
 | **Processing** | Ignore delete, ignore remove, sequential, max concurrent, dry run |
 | **Output** | Mode (stdout/http/db) with conditional field visibility: HTTP shows target URL + output format; DB shows engine, host, port, database, credentials, schema, table, pool size, SSL, mapping mode (jsonb/columns) with sub-fields. Halt on failure shown for all modes. |
+| **Attachments** | Mode indicator banner (green=enabled, yellow=disabled), enable toggle, dry run, fetch mode (individual/bulk/stream), halt on failure, on missing attachment, partial success, skip on Edge Server. Sub-sections: Filter (content types, size, name pattern), Fetch (bulk get, concurrency, timeout, temp dir), Destination (S3/HTTP/filesystem with type-specific fields), Post-Process (action, update field, TTL, cleanup), Retry. |
 | **Checkpoint** | Enabled, client ID, every N docs |
 | **Metrics** | Enabled, host, port |
 | **Logging** | Level (DEBUG/INFO/WARNING/ERROR) |
@@ -482,7 +494,7 @@ Every page follows the same layout:
 ```
 <nav>   Navbar with title, page links (Dashboard, Config, Schema Mappings, Transforms, Wizard — active highlight), theme toggle
 <main>  Page-specific content
-<footer> "Changes Worker v1.4.0"
+<footer> "Changes Worker v1.7.0"
 ```
 
 Consistent classes across all pages: `min-h-screen flex flex-col bg-base-200` on `<body>`, `<nav class="navbar bg-base-100 shadow-sm px-4">` for the navbar.

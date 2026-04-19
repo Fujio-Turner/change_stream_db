@@ -106,6 +106,18 @@ All settings live in a single `config.json` file. Here is a complete reference w
     "retry_on_status": [500, 502, 503, 504]
   },
 
+  "attachments": {
+    "enabled": false,                // false = Data Only mode, true = Attachments + Data mode
+    "mode": "individual",            // "individual" | "bulk" | "stream"
+    "dry_run": false,                // Detect attachments without downloading/uploading
+    "halt_on_failure": true,         // Stop on attachment operation failure
+    "destination": {
+      "type": "s3",                  // "s3" | "http" | "filesystem"
+      "key_template": "{prefix}/{doc_id}/{attachment_name}",
+      "key_prefix": "attachments"
+    }
+  },
+
   "metrics": {
     "enabled": false,                // Enable Prometheus /_metrics endpoint
     "host": "0.0.0.0",              // Bind address

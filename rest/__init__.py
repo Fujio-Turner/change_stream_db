@@ -10,6 +10,8 @@ from .output_http import (
 from .attachment_config import AttachmentConfig, parse_attachment_config
 from .attachment_upload import AttachmentUploader, AttachmentUploadResult
 from .attachment_postprocess import AttachmentPostProcessor
+from .attachment_multipart import MultipartParseError, parse_multipart_response
+from .attachment_stream import AttachmentStreamer
 from .attachments import AttachmentProcessor, AttachmentError
 
 __all__ = [
@@ -27,4 +29,7 @@ __all__ = [
     "AttachmentUploader",
     "AttachmentUploadResult",
     "AttachmentPostProcessor",
+    "MultipartParseError",
+    "parse_multipart_response",
+    "AttachmentStreamer",
 ]

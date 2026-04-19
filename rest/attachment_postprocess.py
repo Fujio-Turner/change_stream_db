@@ -425,7 +425,7 @@ class AttachmentPostProcessor:
         ext: dict[str, dict] = {}
         for name, result in uploaded.items():
             ext[name] = {
-                "url": result.location,
+                "url": result.access_url or result.location,
                 "content_type": result.content_type,
                 "length": result.length,
                 "digest": result.digest,
