@@ -17,6 +17,52 @@ After processing the attachments, a secondary operation is usually performed on 
 
 ---
 
+## Pipeline Modes
+
+The changes_worker operates in one of two modes depending on whether attachment processing is enabled:
+
+### Data Only Mode (default)
+
+When `attachments.enabled` is `false` (the default), the worker runs in **Data Only** mode. The pipeline is a straight three-stage flow:
+
+```
+Source → changes_worker → Output
+```
+
+![Data Only Architecture](../img/architecture.png)
+
+- Documents flow directly from the changes feed through processing to the output
+- No attachment detection, fetching, or uploading occurs
+- The Attachments node is hidden from the dashboard architecture diagram
+- This is the simplest and fastest mode — use it when your documents don't have attachments or you don't need to process them
+
+### Attachments + Data Mode
+
+When `attachments.enabled` is `true`, the worker runs in **Attachments + Data** mode. An attachment processing stage is inserted between the worker and the output:
+
+```
+Source → changes_worker → Attachments → Output
+```
+
+![Attachments Architecture](../img/architecture_attach.png)
+
+- Documents with `_attachments` stubs are detected and attachments are fetched from the source
+- Fetched attachments are uploaded to the configured destination (S3, HTTP, filesystem)
+- Optional post-processing (update doc, delete attachments, set TTL, purge)
+- The Attachments node appears on the dashboard with live metrics (uploaded count, errors)
+- The worker stat label shows a 📎 prefix when in this mode
+
+### Switching Modes
+
+Toggle `attachments.enabled` in `config.json` or via the **Settings → Attachments** tab in the admin UI. The mode indicator banner at the top of the Attachments settings tab shows the current mode:
+
+- **Yellow** — "Mode: Data Only" — attachments disabled
+- **Green** — "Mode: Attachments + Data" — attachments enabled
+
+No restart is required if using hot config reload; otherwise restart the worker.
+
+---
+
 ## Source Platform Support
 
 | Platform | Attachment API | Notes |
@@ -52,10 +98,54 @@ After processing the attachments, a secondary operation is usually performed on 
 | Head/ping attachment | `HEAD` | `/{db}/{docid}/{attach}` | [CouchDB API — Attachments](https://docs.couchdb.org/en/stable/api/document/common.html#attachments) |
 | Delete attachment | `DELETE` | `/{db}/{docid}/{attach}?rev=<rev>` | [CouchDB API — Attachments](https://docs.couchdb.org/en/stable/api/document/common.html#attachments) |
 | Get document (with attachments) | `GET` | `/{db}/{docid}?attachments=true` | [CouchDB API — Documents](https://docs.couchdb.org/en/stable/api/document/common.html#attachments) |
-| Bulk get (with attachments) | `POST` | `/{db}/_bulk_get` | [CouchDB API — Bulk get](https://docs.couchdb.org/en/stable/api/database/bulk-api.html#db-bulk-get) |
+| Bulk get (with attachments) | `POST` | `/{db}/_bulk_get` | [CouchDB API — Bulk get](https://docs.couchbase.com/couchdb/current/api/database/bulk-api.html#db-bulk-get) |
 | Bulk docs (inline attachments) | `POST` | `/{db}/_bulk_docs` | [CouchDB API — Bulk docs](https://docs.couchdb.org/en/stable/api/database/bulk-api.html#db-bulk-docs) |
 | Delete document | `DELETE` | `/{db}/{docid}?rev=<rev>` | [CouchDB API — Documents](https://docs.couchdb.org/en/stable/api/document/common.html#attachments) |
 | Purge document | `POST` | `/{db}/_purge` | [CouchDB API — Purge](https://docs.couchdb.org/en/stable/api/database/misc.html) |
+
+### Couchbase Lite (CBL) — Blob Storage
+
+Couchbase Lite uses **blobs** instead of "attachments." Blobs are stored as **files on disk** within the CBL database directory, with metadata (size, content_type, digest) tracked in the document JSON. CBL blobs are **not accessed via REST API** — they exist only in the local CBL database and are synced via replication to a Couchbase Server/Sync Gateway, which makes them accessible as standard Sync Gateway attachments.
+
+| Operation | Context | Details |
+|---|---|---|
+| **Write blob** | CBL local | Document contains a `Blob` object: `doc["photo"] = Blob(contentType: "image/jpeg", data: bytes)`. Blob is stored in filesystem, reference in doc metadata. |
+| **Read blob** | CBL local | `blob = doc["photo"].blob; data = blob.content` — read from filesystem. |
+| **Sync to gateway** | Replication | Blobs are synced to Sync Gateway as standard attachments, appearing in `_attachments` on the SG side. |
+| **Download from gateway** | Pull replication | Worker receives documents from SG via `_changes` or replication. Blobs are replicated back to CBL local storage. |
+| **Query blobs in CBL** | Metadata only | CBL N1QL can query blob metadata (size, content_type) but not blob contents. Cannot filter by blob data directly. |
+
+**Key difference from Sync Gateway/CouchDB:** CBL blobs have **no REST API** — they are local filesystem objects. If the worker is consuming from a **CBL database directly** (via SDK), blobs are accessed in-process. If consuming from **Sync Gateway (which is replicating from CBL)**, the blobs appear as standard `_attachments` stubs and are fetched via the Sync Gateway REST API (see table above).
+
+**Blob metadata in CBL document:**
+
+```json
+{
+  "_id": "photo_001",
+  "photo": {
+    "@type": "blob",
+    "content_type": "image/jpeg",
+    "digest": "sha1-abc123==",
+    "length": 2048576
+  }
+}
+```
+
+When synced to Sync Gateway, this becomes an entry in `_attachments`:
+
+```json
+{
+  "_id": "photo_001",
+  "_attachments": {
+    "photo": {
+      "content_type": "image/jpeg",
+      "digest": "sha1-abc123==",
+      "length": 2048576,
+      "stub": true
+    }
+  }
+}
+```
 
 ---
 
@@ -1439,13 +1529,449 @@ Where `{tenant_id}` could be derived from the document body, the Couchbase chann
 
 ### Phase 4: Advanced
 
-14. ⬜ Bulk fetch via `_bulk_get?attachments=true`
-15. ⬜ Multipart/related fetch — `GET /{docId}?attachments=true` with `Accept: multipart/related`
-16. ⬜ Streaming large attachments — pipe GET response directly to destination PUT without touching disk
-17. ⬜ Pre-signed URL generation for `update_doc` post-processing (S3/GCS)
-18. ⬜ Admin UI — attachment config editor, attachment processing status panel
-19. ⬜ CouchDB-specific multipart/related response parsing
+14. ✅ Bulk fetch via `_bulk_get?attachments=true`
+15. ✅ Multipart/related fetch — `GET /{docId}?attachments=true` with `Accept: multipart/related`
+16. ✅ Streaming large attachments — pipe GET response directly to destination PUT without touching disk
+17. ✅ Pre-signed URL generation for `update_doc` post-processing (S3/GCS)
+18. ✅ Admin UI — attachment config editor, attachment processing status panel
+19. ✅ CouchDB-specific multipart/related response parsing
 20. ⬜ Edge Server upstream proxy — fetch attachments from upstream SG when source is Edge Server
+
+---
+
+## Implementation Details
+
+### Core Classes
+
+#### `AttachmentProcessor` — Main orchestrator
+
+```python
+class AttachmentProcessor:
+    """
+    Processes attachments in the three-stage pipeline.
+    Inserted between MIDDLE and RIGHT stages.
+    """
+    
+    def __init__(self, config: AttachmentConfig, 
+                 http_client: HTTPClient,
+                 destination: BlobDestination,
+                 metrics: MetricsCollector):
+        self.config = config
+        self.http_client = http_client
+        self.destination = destination
+        self.metrics = metrics
+    
+    def process(self, doc: Dict, context: ProcessContext) -> Tuple[Dict, Optional[AttachmentError]]:
+        """
+        Processes attachments in a document.
+        Returns (modified_doc, error) where error is None on success.
+        """
+        if not self.config.enabled:
+            return doc, None
+        
+        # 1. DETECT
+        attachments = self._detect(doc)
+        if not attachments:
+            return doc, None
+        
+        self.metrics.increment("attachments_detected_total", labels={"doc_id": doc["_id"]})
+        
+        # 2. FILTER
+        filtered = self._apply_filter(doc, attachments)
+        if not filtered:
+            return doc, None
+        
+        # 3. FETCH
+        fetched = self._fetch_all(doc, filtered, context)
+        if self.config.dry_run:
+            self.metrics.increment("attachments_downloaded_total", value=len(fetched))
+            # Do NOT advance checkpoint in dry_run mode
+            return doc, None
+        
+        # 4. UPLOAD
+        uploaded_urls = {}
+        errors = []
+        for attach_name, blob_data in fetched.items():
+            try:
+                url = self._upload_one(doc, attach_name, blob_data, context)
+                uploaded_urls[attach_name] = url
+                self.metrics.increment("attachments_uploaded_total")
+            except Exception as e:
+                errors.append((attach_name, e))
+                if self.config.halt_on_failure:
+                    return doc, AttachmentError(f"Upload failed: {attach_name}", e)
+                else:
+                    self.metrics.increment("attachments_upload_errors_total")
+        
+        # 5. POST-PROCESS
+        if uploaded_urls:
+            modified_doc = self._post_process(doc, uploaded_urls, context)
+            return modified_doc, None
+        
+        return doc, None
+    
+    def _detect(self, doc: Dict) -> Dict[str, Any]:
+        """Extract _attachments stubs from document."""
+        return doc.get("_attachments", {})
+    
+    def _apply_filter(self, doc: Dict, attachments: Dict) -> Dict[str, Any]:
+        """Filter attachments by content_type, size, name pattern, revpos."""
+        filtered = {}
+        total_size = 0
+        
+        for name, meta in attachments.items():
+            # Skip already-downloaded (stub=false means body is included, process anyway)
+            
+            content_type = meta.get("content_type", "")
+            length = meta.get("length", 0)
+            
+            # Content type filters
+            if self.config.filter.content_types and not self._match_any(
+                content_type, self.config.filter.content_types
+            ):
+                self.metrics.increment("attachments_skipped_total", 
+                                     labels={"reason": "content_type"})
+                continue
+            
+            if self._match_any(content_type, self.config.filter.reject_content_types):
+                self.metrics.increment("attachments_skipped_total", 
+                                     labels={"reason": "rejected_content_type"})
+                continue
+            
+            # Size filters
+            if self.config.filter.min_size_bytes and length < self.config.filter.min_size_bytes:
+                self.metrics.increment("attachments_skipped_total", labels={"reason": "too_small"})
+                continue
+            
+            if self.config.filter.max_size_bytes and length > self.config.filter.max_size_bytes:
+                self.metrics.increment("attachments_skipped_total", labels={"reason": "too_large"})
+                continue
+            
+            total_size += length
+            if (self.config.filter.max_total_bytes_per_doc and 
+                total_size > self.config.filter.max_total_bytes_per_doc):
+                self.metrics.increment("attachments_skipped_total", 
+                                     labels={"reason": "doc_size_exceeded"})
+                break
+            
+            # Name pattern
+            if self.config.filter.name_pattern and not re.match(
+                self.config.filter.name_pattern, name
+            ):
+                self.metrics.increment("attachments_skipped_total", labels={"reason": "name"})
+                continue
+            
+            filtered[name] = meta
+        
+        return filtered
+    
+    def _fetch_all(self, doc: Dict, attachments: Dict, 
+                   context: ProcessContext) -> Dict[str, bytes]:
+        """
+        Fetch all filtered attachments.
+        Uses individual, bulk, or multipart mode.
+        """
+        if self.config.fetch.use_bulk_get:
+            return self._fetch_bulk(doc, attachments, context)
+        elif self.config.mode == "multipart":
+            return self._fetch_multipart(doc, attachments, context)
+        else:  # individual
+            return self._fetch_individual(doc, attachments, context)
+    
+    def _fetch_individual(self, doc: Dict, attachments: Dict, 
+                         context: ProcessContext) -> Dict[str, bytes]:
+        """Fetch each attachment separately with parallelism."""
+        results = {}
+        errors = []
+        
+        # Semaphore for per-doc concurrency
+        sem = threading.Semaphore(self.config.fetch.max_concurrent_downloads)
+        
+        def fetch_one(attach_name, meta):
+            with sem:
+                try:
+                    url = self._build_fetch_url(doc, attach_name, context)
+                    resp = self.http_client.get(
+                        url,
+                        timeout=self.config.fetch.request_timeout_seconds,
+                        stream=True
+                    )
+                    
+                    if resp.status_code == 404:
+                        raise AttachmentError(f"Attachment not found: {attach_name}")
+                    
+                    resp.raise_for_status()
+                    
+                    data = self._stream_to_bytes(resp, meta)
+                    
+                    if self.config.fetch.verify_digest:
+                        self._verify_digest(data, meta, attach_name)
+                    if self.config.fetch.verify_length:
+                        self._verify_length(data, meta, attach_name)
+                    
+                    results[attach_name] = data
+                    self.metrics.record("attachments_download_time_seconds", 
+                                      value=...)
+                except Exception as e:
+                    errors.append((attach_name, e))
+        
+        threads = []
+        for attach_name, meta in attachments.items():
+            t = threading.Thread(target=fetch_one, args=(attach_name, meta))
+            t.start()
+            threads.append(t)
+        
+        for t in threads:
+            t.join()
+        
+        if errors and self.config.halt_on_failure:
+            raise AttachmentError(f"Fetch failed: {errors[0][0]}", errors[0][1])
+        
+        return results
+    
+    def _fetch_bulk(self, doc: Dict, attachments: Dict, 
+                   context: ProcessContext) -> Dict[str, bytes]:
+        """Fetch via _bulk_get?attachments=true."""
+        # POST /{keyspace}/_bulk_get?attachments=true
+        # Body: {"docs": [{"id": "{doc_id}"}]}
+        pass
+    
+    def _fetch_multipart(self, doc: Dict, attachments: Dict, 
+                        context: ProcessContext) -> Dict[str, bytes]:
+        """Fetch via GET /{docId}?attachments=true with multipart/related."""
+        pass
+    
+    def _upload_one(self, doc: Dict, attach_name: str, 
+                   blob_data: bytes, context: ProcessContext) -> str:
+        """Upload a single attachment to destination. Returns the URL/location."""
+        key = self._build_key(doc, attach_name, context)
+        
+        # Send to destination
+        location = self.destination.upload(
+            key=key,
+            data=blob_data,
+            content_type=doc["_attachments"][attach_name].get("content_type")
+        )
+        
+        self.metrics.record("attachments_bytes_uploaded_total", value=len(blob_data))
+        self.metrics.record("attachments_upload_time_seconds", value=...)
+        
+        return location
+    
+    def _post_process(self, doc: Dict, uploaded_urls: Dict[str, str], 
+                     context: ProcessContext) -> Dict:
+        """Apply post-processing action: update_doc, set_ttl, delete_attachments, delete_doc, purge."""
+        
+        if isinstance(self.config.post_process.action, list):
+            # Chain multiple actions
+            for action in self.config.post_process.action:
+                doc = self._apply_action(doc, action, uploaded_urls, context)
+        else:
+            doc = self._apply_action(doc, self.config.post_process.action, 
+                                    uploaded_urls, context)
+        
+        self.metrics.increment("attachments_post_process_total")
+        return doc
+    
+    def _apply_action(self, doc: Dict, action: str, uploaded_urls: Dict, 
+                     context: ProcessContext) -> Dict:
+        """Apply a single post-processing action."""
+        
+        if action == "none":
+            return doc
+        
+        elif action == "update_doc":
+            # Add external URLs to document
+            external_urls = {}
+            for attach_name, url in uploaded_urls.items():
+                external_urls[attach_name] = {
+                    "url": url,
+                    "content_type": doc["_attachments"][attach_name].get("content_type"),
+                    "length": doc["_attachments"][attach_name].get("length"),
+                    "uploaded_at": datetime.utcnow().isoformat() + "Z"
+                }
+            
+            doc[self.config.post_process.update_field] = external_urls
+            
+            if self.config.post_process.remove_attachments_after_upload:
+                del doc["_attachments"]
+            
+            # PUT to source
+            self._put_doc(doc, context)
+            return doc
+        
+        elif action == "set_ttl":
+            # Set _exp field (Couchbase only)
+            doc["_exp"] = int(time.time()) + self.config.post_process.ttl_seconds
+            self._put_doc(doc, context)
+            return doc
+        
+        elif action == "delete_attachments":
+            # Sequential DELETE of each attachment
+            for attach_name in uploaded_urls.keys():
+                self._delete_attachment(doc, attach_name, context)
+            return doc
+        
+        elif action == "delete_doc":
+            # DELETE entire document
+            self._delete_doc(doc, context)
+            return doc
+        
+        elif action == "purge":
+            # POST to admin port _purge (irreversible, no replication)
+            self._purge_doc(doc, context)
+            return doc
+        
+        return doc
+    
+    def _stream_to_bytes(self, response, meta) -> bytes:
+        """Stream response to bytes (memory or temp file depending on size)."""
+        if meta.get("length", 0) > self.config.fetch.stream_to_disk_threshold_bytes:
+            # Write to temp file
+            temp_file = os.path.join(self.config.fetch.temp_dir, f"{uuid.uuid4()}.blob")
+            os.makedirs(self.config.fetch.temp_dir, exist_ok=True)
+            
+            with open(temp_file, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            with open(temp_file, "rb") as f:
+                return f.read()
+        else:
+            # Hold in memory
+            return response.content
+    
+    def _verify_digest(self, data: bytes, meta: Dict, attach_name: str):
+        """Verify attachment digest (MD5 or SHA1)."""
+        digest_header = meta.get("digest", "")
+        if not digest_header:
+            return
+        
+        # digest format: "md5-abc123==" or "sha1-xyz=="
+        algo, expected_hash = digest_header.split("-", 1)
+        
+        if algo == "md5":
+            actual_hash = base64.b64encode(hashlib.md5(data).digest()).decode()
+        elif algo == "sha1":
+            actual_hash = base64.b64encode(hashlib.sha1(data).digest()).decode()
+        else:
+            return  # Unknown algo, skip
+        
+        if actual_hash != expected_hash:
+            raise AttachmentError(
+                f"Digest mismatch for {attach_name}: expected {expected_hash}, got {actual_hash}"
+            )
+    
+    def _verify_length(self, data: bytes, meta: Dict, attach_name: str):
+        """Verify attachment length."""
+        expected = meta.get("length", 0)
+        actual = len(data)
+        if actual != expected:
+            raise AttachmentError(
+                f"Length mismatch for {attach_name}: expected {expected}, got {actual}"
+            )
+    
+    def _build_fetch_url(self, doc: Dict, attach_name: str, 
+                        context: ProcessContext) -> str:
+        """Build GET URL for individual attachment."""
+        keyspace = context.keyspace  # e.g., "db.scope.collection"
+        doc_id = doc["_id"]
+        return f"{context.source_url}/{keyspace}/{doc_id}/{attach_name}"
+    
+    def _build_key(self, doc: Dict, attach_name: str, context: ProcessContext) -> str:
+        """Build destination key using key_template."""
+        template = self.config.destination.key_template
+        
+        placeholders = {
+            "doc_id": doc["_id"],
+            "attachment_name": attach_name,
+            "content_type": doc["_attachments"][attach_name].get("content_type", ""),
+            "rev": doc.get("_rev", ""),
+            "revpos": doc["_attachments"][attach_name].get("revpos", ""),
+            "prefix": self.config.destination.key_prefix,
+            "scope": context.scope,
+            "collection": context.collection,
+            "database": context.database,
+            "digest": doc["_attachments"][attach_name].get("digest", ""),
+            "length": doc["_attachments"][attach_name].get("length", 0),
+            "timestamp": int(time.time()),
+            "iso_date": datetime.utcnow().isoformat() + "Z",
+            "year": datetime.utcnow().year,
+            "month": datetime.utcnow().month,
+            "day": datetime.utcnow().day,
+        }
+        
+        return template.format(**placeholders)
+    
+    def _put_doc(self, doc: Dict, context: ProcessContext):
+        """PUT updated document to source."""
+        url = f"{context.source_url}/{context.keyspace}/{doc['_id']}"
+        self.http_client.put(url, json=doc)
+    
+    def _delete_attachment(self, doc: Dict, attach_name: str, context: ProcessContext):
+        """DELETE individual attachment (must loop for sequential deletes)."""
+        url = f"{context.source_url}/{context.keyspace}/{doc['_id']}/{attach_name}"
+        params = {"rev": doc["_rev"]}
+        resp = self.http_client.delete(url, params=params)
+        # Extract new _rev from response
+        doc["_rev"] = resp.json().get("rev")
+    
+    def _delete_doc(self, doc: Dict, context: ProcessContext):
+        """DELETE entire document."""
+        url = f"{context.source_url}/{context.keyspace}/{doc['_id']}"
+        params = {"rev": doc["_rev"]}
+        self.http_client.delete(url, params=params)
+    
+    def _purge_doc(self, doc: Dict, context: ProcessContext):
+        """POST to admin port _purge (irreversible)."""
+        admin_url = self.config.post_process.admin_url
+        keyspace = context.keyspace
+        url = f"{admin_url}/{keyspace}/_purge"
+        
+        body = {doc["_id"]: ["*"]}
+        
+        auth = (
+            self.config.post_process.admin_auth.username,
+            self.config.post_process.admin_auth.password
+        )
+        
+        self.http_client.post(url, json=body, auth=auth)
+```
+
+#### `BlobDestination` — Abstract base for upload
+
+```python
+class BlobDestination(ABC):
+    """Base class for attachment upload destinations."""
+    
+    @abstractmethod
+    def upload(self, key: str, data: bytes, content_type: str = None) -> str:
+        """Upload blob and return URL/location."""
+        pass
+
+class S3Destination(BlobDestination):
+    """Upload to AWS S3."""
+    
+    def upload(self, key: str, data: bytes, content_type: str = None) -> str:
+        # Use existing cloud_s3.py with binary support
+        pass
+
+class HTTPDestination(BlobDestination):
+    """Upload to HTTP endpoint (PUT or POST)."""
+    pass
+
+class FilesystemDestination(BlobDestination):
+    """Write to local/mounted filesystem."""
+    pass
+
+class GCSDestination(BlobDestination):
+    """Upload to Google Cloud Storage."""
+    pass
+
+class AzureDestination(BlobDestination):
+    """Upload to Azure Blob Storage."""
+    pass
+```
 
 ---
 
@@ -1455,17 +1981,190 @@ Where `{tenant_id}` could be derived from the document body, the Couchbase chann
 
 | File | Description |
 |---|---|
-| `rest/attachments.py` | Attachment processor — detect, fetch, upload, post-process |
+| `rest/attachments.py` | `AttachmentProcessor` — detect, fetch, upload, post-process |
+| `rest/attachment_config.py` | Config schema for `attachments` block |
+| `rest/blob_destinations.py` | `BlobDestination` implementations (S3, GCS, Azure, HTTP, Filesystem) |
 | `tests/test_attachments.py` | Unit tests for attachment processing |
+| `tests/fixtures/attachments/` | Test fixtures (mock documents, blobs) |
 
 ### Modified Files
 
 | File | Change |
 |---|---|
-| `main.py` | Wire attachment stage into the processing pipeline |
-| `config.json` | Add `attachments` config block |
-| `rest/changes_http.py` | Pass attachment metadata through the processing pipeline |
-| `cloud/cloud_base.py` | Support binary (non-JSON) uploads for attachment blobs |
-| `cloud/cloud_s3.py` | Binary upload support + attachment key templating |
-| `web/server.py` | Admin UI — attachment config fields |
-| `docs/DESIGN.md` | Update pipeline diagram to include ATTACHMENT stage |
+| `main.py` | Wire `AttachmentProcessor` into the three-stage pipeline (LEFT → MIDDLE → ATTACHMENT → RIGHT) |
+| `config.json` | Add `attachments` config block with all sub-config sections |
+| `rest/changes_http.py` | Pass attachment metadata through context to ATTACHMENT stage |
+| `cbl_store.py` | Update to return attachment metadata in `_changes` documents |
+| `cloud/cloud_base.py` | Add binary upload support (not just JSON) |
+| `cloud/cloud_s3.py` | Binary upload + attachment key templating |
+| `cloud/cloud_gcs.py` | Binary upload + presigned URL generation |
+| `cloud/cloud_azure.py` | Binary upload support |
+| `metrics.py` | Add attachment-specific counters and summary metrics |
+| `pipeline_logging.py` | Log attachment processing steps and errors |
+| `web/server.py` | Admin UI — attachment config editor, status dashboard |
+| `docs/DESIGN.md` | Update pipeline diagram: LEFT → MIDDLE → ATTACHMENT → RIGHT |
+| `docs/CBL_STORE.md` | Document CBL blob sync behavior |
+
+---
+
+## Configuration Example
+
+```jsonc
+{
+  "attachments": {
+    "enabled": true,
+    "dry_run": false,
+    "mode": "individual",                    // or "bulk", "multipart"
+    
+    "filter": {
+      "content_types": [],                   // empty = all
+      "reject_content_types": [
+        "application/x-msdownload",
+        "application/x-executable"
+      ],
+      "min_size_bytes": 0,
+      "max_size_bytes": 5368709120,          // 5 GB
+      "max_total_bytes_per_doc": 10737418240, // 10 GB per doc
+      "name_pattern": "",
+      "ignore_revpos": false
+    },
+    
+    "fetch": {
+      "use_bulk_get": false,
+      "max_concurrent_downloads": 5,
+      "max_concurrent_downloads_global": 20,
+      "request_timeout_seconds": 120,
+      "temp_dir": "/tmp/attachments",
+      "stream_to_disk_threshold_bytes": 10485760,  // 10 MB
+      "verify_digest": true,
+      "verify_length": true
+    },
+    
+    "destination": {
+      "type": "s3",
+      "key_template": "{prefix}/{doc_id}/{attachment_name}",
+      "key_prefix": "attachments",
+      
+      "s3": {
+        "bucket": "my-attachments",
+        "region": "us-east-1",
+        "access_key_id": "",                 // env: AWS_ACCESS_KEY_ID
+        "secret_access_key": ""              // env: AWS_SECRET_ACCESS_KEY
+      },
+      
+      "presigned_urls": {
+        "enabled": false,
+        "expiry_seconds": 604800
+      }
+    },
+    
+    "post_process": {
+      "action": "update_doc",                // or array: ["update_doc", "set_ttl"]
+      "update_field": "_attachments_external",
+      "remove_attachments_after_upload": false,
+      "ttl_seconds": 86400,
+      "admin_url": "http://localhost:4985",
+      "admin_auth": {
+        "method": "basic",
+        "username": "",                      // env: ATTACHMENTS_ADMIN_USERNAME
+        "password": ""                       // env: ATTACHMENTS_ADMIN_PASSWORD
+      }
+    },
+    
+    "retry": {
+      "max_retries": 3,
+      "backoff_base_seconds": 1,
+      "backoff_max_seconds": 30
+    },
+    
+    "halt_on_failure": true,
+    "skip_on_edge_server": true
+  }
+}
+```
+
+---
+
+## Testing Strategy
+
+### Unit Tests
+
+- **Test detection:** Verify `_attachments` field is identified
+- **Test filtering:** Content type, size, name patterns exclude/include correctly
+- **Test fetch:** Mock HTTP responses, verify streaming to memory/temp, digest/length validation
+- **Test upload:** Mock S3/HTTP/filesystem, verify key templating
+- **Test post-process:** update_doc adds URL field, set_ttl adds _exp, delete sequences properly
+- **Test corner cases:** Missing attachment, digest mismatch, upload failure with retry
+
+### Integration Tests
+
+- **End-to-end with mock Sync Gateway:** Feed documents with attachments, verify upload to destination
+- **DLQ recovery:** Simulate crash mid-upload, verify DLQ entry and replay
+- **Large files:** Stream 1 GB+ attachments, verify disk usage stays within bounds
+- **Concurrent documents:** Process multiple documents with many attachments in parallel
+
+---
+
+## Monitoring & Alerts
+
+### Key Metrics
+
+```promql
+# Documents with attachments
+rate(changes_worker_attachments_detected_total[5m])
+
+# Attachment download rate
+rate(changes_worker_attachments_downloaded_total[5m])
+
+# Download errors
+rate(changes_worker_attachments_download_errors_total[5m])
+
+# Upload latency
+histogram_quantile(0.95, attachments_upload_time_seconds)
+
+# Bytes flowing through system
+rate(changes_worker_attachments_bytes_downloaded_total[1m])
+rate(changes_worker_attachments_bytes_uploaded_total[1m])
+
+# Disk fill risk
+changes_worker_system_disk_percent > 85
+
+# CBL database size risk
+changes_worker_cbl_db_size_bytes > 2147483648
+```
+
+### Alerting Rules
+
+| Alert | Condition | Action |
+|---|---|---|
+| **High attachment download latency** | `histogram_quantile(0.95, attachments_download_time_seconds) > 60` | Check source SG availability, network latency |
+| **High attachment upload failure rate** | `rate(attachments_upload_errors_total[5m]) > 0.01` | Check destination (S3/GCS/HTTP) availability, credentials |
+| **Disk filling with attachment temp files** | `system_disk_percent > 85` | Increase temp volume size, lower `max_size_bytes`, reduce parallelism |
+| **CBL database swelling** | `cbl_db_size_bytes > 2GB` | Run maintenance (compact/optimize), check for orphaned blobs |
+| **DLQ growing** | `dlq_entries{stage: "attachment_*"} > 100` | Manual replay, investigate root cause |
+
+---
+
+## Edge Cases & Troubleshooting
+
+### Q: Why does my document have `_attachments` but `GET /{docId}/attach.jpg` returns 404?
+
+**A:** The attachment was deleted between the `_changes` delivery and the fetch. The worker should log this, increment the skipped counter, and continue. This is not an error — it's a normal race condition in replication.
+
+### Q: How do I handle very large attachments (>1 GB)?
+
+**A:** Set `stream_to_disk_threshold_bytes` to a low value so they go directly to `temp_dir`. Ensure the temp volume has sufficient free space (at least attachment_size × max_concurrent_downloads). Use a separate volume from the CBL data directory to avoid compounding disk usage.
+
+### Q: Can I re-process attachments without deleting them from the source?
+
+**A:** Yes. Set `post_process.action: "none"` to upload but skip any deletion/update. The attachment stubs remain on the source, and on next pipeline run, they will be re-processed. Use `dry_run: true` to test attachment detection and filtering without uploading.
+
+### Q: What happens if the worker crashes during attachment upload?
+
+**A:** If the upload to S3 fails mid-transfer, the incomplete multipart upload is cancelled (timeout). The DLQ entry is created with the downloaded blob in the temp directory. On restart, the worker checks if the temp file still exists, and if so, retries the upload. If the temp file was cleaned (TTL or disk wipe), the worker re-downloads from the source.
+
+### Q: Should I use `delete_doc` or `purge` after uploading attachments?
+
+**A:** Use `delete_doc` in normal workflows. It creates a deletion tombstone that replicates to all peers (including mobile clients), so everyone learns the document is gone. Reserve `purge` for GDPR "Right to be Forgotten" scenarios where you need physical disk wiping. Purge does NOT replicate, so mobile clients never learn the document was purged.
+
+---

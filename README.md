@@ -1,10 +1,14 @@
-# Changes Worker  v1.5.0
+# Changes Worker  v1.7.0
 
 A production-ready, async Python 3 processor for the `_changes` feed. It connects to **Sync Gateway**, **Capella App Services**, **Couchbase Edge Server**, or **Apache CouchDB**, consumes document changes via longpoll or continuous streaming, and forwards them to a downstream consumer — stdout, HTTP endpoint, RDBMS (PostgreSQL, MySQL, MS SQL, Oracle), or cloud blob storage (AWS S3, MinIO, S3-compatible).
 
 Built for real-world workloads: checkpoint management so you never re-process, throttled feed consumption for large datasets, configurable retry with exponential backoff, and full async concurrency control.
 
 ![Changes Worker Architecture](img/architecture.png)
+
+When attachment processing is enabled, the pipeline includes an attachment stage:
+
+![Attachments Architecture](img/architecture_attach.png)
 
 ---
 
@@ -19,7 +23,7 @@ Built for real-world workloads: checkpoint management so you never re-process, t
 │                      │         │  • Serialize     │ ──────► │  (Postgres/MySQL/   │
 │  /{db}/_changes      │         │  • Checkpoint    │         │   MSSQL/Oracle)     │
 │                      │         │  • Dead Letter Q │         ├─────────────────────┤
-│                      │         │  • CBL metadata  │         │  Cloud Storage      │
+│                      │         │  • Attachments   │         │  Cloud Storage      │
 │                      │         │                  │         │  (AWS S3/MinIO)     │
 │                      │         │                  │         ├─────────────────────┤
 │                      │         │                  │         │  stdout             │
@@ -30,8 +34,9 @@ Built for real-world workloads: checkpoint management so you never re-process, t
 2. **Filter** — Skip deletes, removes, or limit to specific channels
 3. **Fetch** — Bulk or individual doc fetching when `include_docs=false`
 4. **Map** — Schema mappings transform JSON documents into SQL rows, remapped JSON, etc.
-5. **Forward** — Serialize (JSON, XML, msgpack, etc.) and send to stdout, HTTP, RDBMS, or S3
-6. **Checkpoint** — Save `last_seq` as a `_local/` doc so restarts resume exactly where they left off
+5. **Attachments** *(optional)* — Detect, fetch, and upload document attachments to cloud storage, HTTP, or filesystem
+6. **Forward** — Serialize (JSON, XML, msgpack, etc.) and send to stdout, HTTP, RDBMS, or S3
+7. **Checkpoint** — Save `last_seq` as a `_local/` doc so restarts resume exactly where they left off
 
 ---
 
@@ -93,6 +98,7 @@ Set `"admin_ui": { "enabled": false }` in `config.json` for headless deployments
 | **Schema mapping** | Transform JSON docs into SQL table rows with 58 built-in transform functions |
 | **Checkpoint** | CBL-style `_local/` doc checkpoints — never re-process on restart |
 | **Dead letter queue** | Failed docs saved for later retry (CBL or JSONL file) |
+| **Attachment processing** | Detect, fetch, and upload document attachments to S3, HTTP, or filesystem with optional post-processing |
 | **Retry + backoff** | Configurable exponential backoff on both source and output sides |
 | **Prometheus metrics** | Built-in `/_metrics` endpoint with pipeline, system, and runtime metrics |
 | **Startup validation** | Every config setting validated before launch — clear error messages |
@@ -176,6 +182,7 @@ change_stream_db/
 | [`docs/ADMIN_UI.md`](docs/ADMIN_UI.md) | Admin dashboard documentation |
 | [`docs/WIZARD.md`](docs/WIZARD.md) | Setup wizard guide |
 | [`docs/CLOUD_BLOB_PLAN.md`](docs/CLOUD_BLOB_PLAN.md) | Cloud blob storage design document |
+| [`docs/ATTACHMENTS.md`](docs/ATTACHMENTS.md) | Attachment processing: modes, detection, fetch, upload, post-process |
 | [`docs/LOGGING.md`](docs/LOGGING.md) | Developer logging guide |
 | [`docs/CBL_DATABASE.md`](docs/CBL_DATABASE.md) | Couchbase Lite database schema |
 

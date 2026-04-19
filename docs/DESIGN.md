@@ -29,6 +29,20 @@ This document describes the internal architecture of the changes_worker, how dat
 
 The admin UI dashboard mirrors this pipeline with a [charts-first grouped layout](ADMIN_UI.md#charts-row) showing live metrics for each stage.
 
+### Pipeline Modes
+
+The worker operates in one of two visual modes on the dashboard:
+
+| Mode | When | Architecture Diagram | Dashboard |
+|---|---|---|---|
+| **Data Only** | `attachments.enabled = false` (default) | Source → Worker → Output | Attachments node hidden |
+| **Attachments + Data** | `attachments.enabled = true` | Source → Worker → Attachments → Output | Attachments node visible with live metrics |
+
+In **Data Only** mode, the three-stage pipeline runs as described above. In **Attachments + Data** mode, an attachment processing stage (detect → fetch → upload → post-process) is inserted between MIDDLE and RIGHT. See [`ATTACHMENTS.md`](ATTACHMENTS.md) for full details.
+
+![Data Only Architecture](../img/architecture.png)
+![Attachments + Data Architecture](../img/architecture_attach.png)
+
 ---
 
 ## Sequential vs Parallel Processing

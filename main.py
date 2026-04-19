@@ -10,7 +10,7 @@ bulk_get fallback, async parallel or sequential processing, and
 forwarding results via stdout or HTTP.
 """
 
-__version__ = "1.5.0"
+__version__ = "1.7.0"
 
 import argparse
 import asyncio
@@ -67,6 +67,8 @@ from cbl_store import (
     migrate_files_to_cbl,
     migrate_default_to_collections,
 )
+from rest.attachment_config import parse_attachment_config
+from rest.attachments import AttachmentProcessor
 from pipeline_logging import (
     configure_logging,
     log_event,
@@ -180,6 +182,26 @@ class MetricsCollector:
         # Checkpoint loads
         self.checkpoint_loads_total: int = 0
         self.checkpoint_load_errors_total: int = 0
+
+        # Attachment processing
+        self.attachments_detected_total: int = 0
+        self.attachments_downloaded_total: int = 0
+        self.attachments_download_errors_total: int = 0
+        self.attachments_uploaded_total: int = 0
+        self.attachments_upload_errors_total: int = 0
+        self.attachments_bytes_downloaded_total: int = 0
+        self.attachments_bytes_uploaded_total: int = 0
+        self.attachments_post_process_total: int = 0
+        self.attachments_post_process_errors_total: int = 0
+        self.attachments_skipped_total: int = 0
+        self.attachments_missing_total: int = 0
+        self.attachments_digest_mismatch_total: int = 0
+        self.attachments_stale_total: int = 0
+        self.attachments_post_process_skipped_total: int = 0
+        self.attachments_conflict_retries_total: int = 0
+        self.attachments_orphaned_uploads_total: int = 0
+        self.attachments_partial_success_total: int = 0
+        self.attachments_temp_files_cleaned_total: int = 0
 
         # Flood / backpressure detection
         self.largest_batch_received: int = 0
@@ -730,6 +752,68 @@ class MetricsCollector:
             hpt_sorted,
             hpt_count,
             hpt_sum,
+        )
+
+        # -- Attachments --
+        _counter(
+            "changes_worker_attachments_detected_total",
+            "Documents with _attachments seen.",
+            self.attachments_detected_total,
+        )
+        _counter(
+            "changes_worker_attachments_downloaded_total",
+            "Individual attachment downloads completed.",
+            self.attachments_downloaded_total,
+        )
+        _counter(
+            "changes_worker_attachments_download_errors_total",
+            "Failed attachment downloads.",
+            self.attachments_download_errors_total,
+        )
+        _counter(
+            "changes_worker_attachments_uploaded_total",
+            "Attachments uploaded to destination.",
+            self.attachments_uploaded_total,
+        )
+        _counter(
+            "changes_worker_attachments_upload_errors_total",
+            "Failed attachment uploads.",
+            self.attachments_upload_errors_total,
+        )
+        _counter(
+            "changes_worker_attachments_bytes_downloaded_total",
+            "Total bytes downloaded from source.",
+            self.attachments_bytes_downloaded_total,
+        )
+        _counter(
+            "changes_worker_attachments_bytes_uploaded_total",
+            "Total bytes uploaded to destination.",
+            self.attachments_bytes_uploaded_total,
+        )
+        _counter(
+            "changes_worker_attachments_post_process_total",
+            "Post-processing operations completed.",
+            self.attachments_post_process_total,
+        )
+        _counter(
+            "changes_worker_attachments_post_process_errors_total",
+            "Failed post-processing operations.",
+            self.attachments_post_process_errors_total,
+        )
+        _counter(
+            "changes_worker_attachments_skipped_total",
+            "Attachments skipped by filter.",
+            self.attachments_skipped_total,
+        )
+        _counter(
+            "changes_worker_attachments_missing_total",
+            "Attachments listed in _attachments but returned 404 on fetch.",
+            self.attachments_missing_total,
+        )
+        _counter(
+            "changes_worker_attachments_digest_mismatch_total",
+            "Downloads where digest didn't match (re-downloaded).",
+            self.attachments_digest_mismatch_total,
         )
 
         # ── SYSTEM metrics (psutil / gc / threading) ────────────────────
@@ -1515,6 +1599,32 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
                 f"metrics.port must be an integer between 1 and 65535, got {metrics_port}"
             )
 
+    # -- attachments -----------------------------------------------------------
+    att_cfg = cfg.get("attachments", {})
+    if att_cfg.get("enabled", False):
+        att_mode = att_cfg.get("mode", "individual")
+        if att_mode not in ("individual", "bulk", "multipart"):
+            errors.append(
+                f"attachments.mode must be 'individual', 'bulk', or 'multipart', got '{att_mode}'"
+            )
+        if src == "edge_server" and not att_cfg.get("skip_on_edge_server", True):
+            warnings.append(
+                "attachments enabled with edge_server source and skip_on_edge_server=false – "
+                "Edge Server has no attachment API, downloads will fail"
+            )
+        att_on_missing = att_cfg.get("on_missing_attachment", "skip")
+        if att_on_missing not in ("skip", "fail", "retry"):
+            errors.append(
+                f"attachments.on_missing_attachment must be 'skip', 'fail', or 'retry', "
+                f"got '{att_on_missing}'"
+            )
+        att_partial = att_cfg.get("partial_success", "continue")
+        if att_partial not in ("continue", "fail_doc", "require_all"):
+            errors.append(
+                f"attachments.partial_success must be 'continue', 'fail_doc', or 'require_all', "
+                f"got '{att_partial}'"
+            )
+
     return src, warnings, errors
 
 
@@ -2057,6 +2167,24 @@ async def poll_changes(
 
         changes_url = f"{base_url}/_changes"
 
+        # ── Attachment processor ──────────────────────────────────────
+        att_cfg = parse_attachment_config(cfg.get("attachments", {}))
+        att_processor = (
+            AttachmentProcessor(
+                att_cfg, metrics=metrics, gateway_cfg=cfg.get("gateway", {})
+            )
+            if att_cfg.enabled
+            else None
+        )
+        if att_processor:
+            log_event(
+                logger,
+                "info",
+                "PROCESSING",
+                "attachment processing enabled (mode=%s, dry_run=%s)"
+                % (att_cfg.mode, att_cfg.dry_run),
+            )
+
         # Shared kwargs for _process_changes_batch / catch-up / continuous
         shutdown_cfg = cfg.get("shutdown", {})
         batch_kwargs = dict(
@@ -2075,6 +2203,7 @@ async def poll_changes(
             every_n_docs=every_n_docs,
             max_concurrent=max_concurrent,
             shutdown_cfg=shutdown_cfg,
+            attachment_processor=att_processor,
         )
 
         # Log replication settings at startup

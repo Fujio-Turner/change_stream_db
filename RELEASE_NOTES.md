@@ -2,6 +2,34 @@
 
 ---
 
+## v1.7.0 — 2026-04-19
+
+### New Features
+
+- **Attachment processing pipeline** — New `attachments` config block enables detect → fetch → upload → post-process of document attachments. Supports S3/MinIO, HTTP, and filesystem destinations with configurable filters (content type, size, name pattern), fetch modes (individual, bulk, stream), and post-processing actions (update_doc, delete_attachments, delete_doc, set_ttl, purge). Post-processing writes back to the source via PUT/DELETE/PURGE.
+
+- **Two pipeline modes** — The worker now operates in **Data Only** mode (default, `attachments.enabled=false`) or **Attachments + Data** mode (`attachments.enabled=true`). The dashboard architecture diagram dynamically reflects the active mode: Data Only hides the Attachments node and draws direct Worker→Output arrows; Attachments + Data shows the Attachments node between Worker and Outputs with live metrics.
+
+- **Dashboard mode indicator** — The architecture graph hides/shows the Attachments column based on config. Worker stat label shows a 📎 prefix in Attachments + Data mode. Worker column auto-resizes to fill space in Data Only mode.
+
+- **Settings mode banner** — The Attachments settings tab now shows a mode indicator banner: green "Attachments + Data" when enabled, yellow "Data Only" when disabled. Updates live when the toggle is flipped.
+
+- **Updated architecture diagrams** — New `img/architecture.png` (Data Only with DLQ) and `img/architecture_attach.png` (Attachments + Data with DLQ and dotted post-process arrow back to source).
+
+### Bug Fixes
+
+- **`_catch_up_normal()` missing parameter** — Fixed `TypeError: _catch_up_normal() got an unexpected keyword argument 'attachment_processor'` by adding `attachment_processor` to the function signature and forwarding it to `_process_changes_batch`.
+
+- **`_consume_continuous_stream()` missing parameter** — Same fix applied: added `attachment_processor` parameter and forwarded it to inner `_process_changes_batch` call.
+
+- **`_consume_websocket_stream()` missing parameter** — Same fix applied for WebSocket feed mode.
+
+### Changes
+
+- **Version bump** — All footers and version references updated from v1.5.0 to v1.7.0.
+
+---
+
 ## v1.6.0 — 2026-04-18
 
 ### New Features

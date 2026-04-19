@@ -666,6 +666,7 @@ async def _process_changes_batch(
     shutdown_cfg: dict | None = None,
     initial_sync: bool = False,
     job_id: str = "",
+    attachment_processor=None,
 ) -> tuple[str, bool]:
     """
     Process a batch of _changes results: filter, fetch docs, forward to output,
@@ -812,6 +813,22 @@ async def _process_changes_batch(
                     doc = change.get("doc", change)
                 else:
                     doc = docs_by_id.get(doc_id, change)
+                # ── ATTACHMENT stage (between MIDDLE and RIGHT) ──
+                if attachment_processor is not None:
+                    try:
+                        doc, _skip = await attachment_processor.process(
+                            doc, base_url, http, basic_auth, auth_headers, src
+                        )
+                    except Exception as att_exc:
+                        log_event(
+                            logger,
+                            "error",
+                            "PROCESSING",
+                            "attachment processing failed: %s" % att_exc,
+                            doc_id=doc_id,
+                        )
+                        raise
+
                 method = determine_method(
                     change,
                     write_method=getattr(output, "_write_method", "PUT"),
@@ -1131,6 +1148,7 @@ async def _catch_up_normal(
     changes_http_timeout: aiohttp.ClientTimeout,
     shutdown_cfg: dict | None = None,
     initial_sync: bool = False,
+    attachment_processor=None,
 ) -> str:
     """
     Phase 1 of continuous mode: catch up using one-shot normal requests.
@@ -1241,6 +1259,7 @@ async def _catch_up_normal(
             max_concurrent=max_concurrent,
             shutdown_cfg=shutdown_cfg,
             initial_sync=initial_sync,
+            attachment_processor=attachment_processor,
         )
 
         if output_failed:
@@ -1303,6 +1322,7 @@ async def _consume_continuous_stream(
     max_concurrent: int,
     timeout_ms: int,
     shutdown_cfg: dict | None = None,
+    attachment_processor=None,
 ) -> str:
     """
     Phase 2 of continuous mode: open a streaming connection with
@@ -1406,6 +1426,7 @@ async def _consume_continuous_stream(
                     every_n_docs=every_n_docs,
                     max_concurrent=max_concurrent,
                     shutdown_cfg=shutdown_cfg,
+                    attachment_processor=attachment_processor,
                 )
 
                 if output_failed:
@@ -1456,6 +1477,7 @@ async def _consume_websocket_stream(
     max_concurrent: int,
     timeout_ms: int,
     shutdown_cfg: dict | None = None,
+    attachment_processor=None,
 ) -> str:
     """
     WebSocket mode: open a real WebSocket connection to the _changes
@@ -1625,6 +1647,7 @@ async def _consume_websocket_stream(
                         every_n_docs=every_n_docs,
                         max_concurrent=max_concurrent,
                         shutdown_cfg=shutdown_cfg,
+                        attachment_processor=attachment_processor,
                     )
                     payload["since"] = since
 

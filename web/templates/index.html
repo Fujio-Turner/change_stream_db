@@ -58,6 +58,8 @@
     .arch-node-std:hover  { box-shadow: 0 0 24px rgba(244,81,30,0.6); }
     .arch-node-dlq  { background: #d32f2f; border: 3px solid var(--color-info); box-shadow: 0 0 14px rgba(211,47,47,0.3); }
     .arch-node-dlq:hover  { box-shadow: 0 0 24px rgba(211,47,47,0.6); }
+    .arch-node-attach { background: #e91e63; border: 3px solid var(--color-info); box-shadow: 0 0 14px rgba(233,30,99,0.3); }
+    .arch-node-attach:hover { box-shadow: 0 0 24px rgba(233,30,99,0.6); }
     .arch-node.dimmed { opacity: 0.3; filter: saturate(0.4); }
     .arch-node .arch-title { font-weight: 700; font-size: 0.95rem; margin-bottom: 2px; }
     .arch-node .arch-sub { font-size: 0.8rem; opacity: 0.7; }
@@ -141,6 +143,15 @@
                 <div class="arch-sub">Dead Letter Queue</div>
                 <div class="arch-stat" id="archDlqStat">0 docs</div>
                 <div class="arch-tip arch-tip-bottom" id="archTipDlq">Loading…</div>
+              </div>
+            </div>
+            <!-- Attachments -->
+            <div class="arch-col" id="archAttachCol" style="flex: 0 0 18%; justify-content: center;">
+              <div class="arch-node arch-node-attach" id="archAttach" onclick="showArchDetail('attach')">
+                <div class="arch-title">Attachments</div>
+                <div class="arch-sub">fetch · upload · post-process</div>
+                <div class="arch-stat" id="archAttachStat">--</div>
+                <div class="arch-tip" id="archTipAttach">Loading…</div>
               </div>
             </div>
             <!-- Outputs -->
@@ -714,7 +725,7 @@ function lineOptMs(title, series) {
 var archPrev = {};
 var archPrevTs = 0;
 var archRates = { feed: 0, out: 0 };
-var archNodeColors = { http: '#4caf50', db: '#2196f3', s3: '#ff9800', stdout: '#f4511e' };
+var archNodeColors = { http: '#4caf50', db: '#2196f3', s3: '#ff9800', stdout: '#f4511e', attach: '#e91e63' };
 var lastArchM = null; // stash for modal
 
 // Arrow color logic: green=healthy, yellow=slow/warning, red=active but erroring, grey=inactive
@@ -789,18 +800,54 @@ function drawArchArrows() {
   html += '<line x1="'+sx+'" y1="'+sy+'" x2="'+wx+'" y2="'+wy+'" stroke="'+feedColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+fk+')"/>';
   html += rateBadge((sx+wx)/2, (sy+wy)/2, archRates.feed, feedColor);
 
-  // ─── Worker → each output (single arrow, one-way) ───
-  for (var i = 0; i < outs.length; i++) {
-    var mode = outs[i].getAttribute('data-mode');
-    var active = mode === outMode;
-    var ox = lx(outs[i]), oy = cy(outs[i]);
-    var wxR = rx(work), wyC = cy(work);
-    if (active) {
-      var ok = colorKey(activeOutColor);
-      html += '<line x1="'+wxR+'" y1="'+wyC+'" x2="'+ox+'" y2="'+oy+'" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')"/>';
-      html += rateBadge((wxR+ox)/2, (wyC+oy)/2, archRates.out, activeOutColor);
-    } else {
-      html += '<line x1="'+wxR+'" y1="'+wyC+'" x2="'+ox+'" y2="'+oy+'" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
+  // ─── Worker → Attachments → Outputs (if attachments enabled) ───
+  var attachEl = document.getElementById('archAttach');
+  var attachCol = document.getElementById('archAttachCol');
+  var attachEnabled = cachedCfg && cachedCfg.attachments && cachedCfg.attachments.enabled;
+
+  // ─── Attachment/Output arrows ───
+  if (attachEnabled && attachEl) {
+    attachEl.classList.remove('dimmed');
+    if (attachCol) attachCol.style.display = '';
+    // Worker → Attachments
+    var awxR = rx(work), awyC = cy(work), aaxL = lx(attachEl), aayC = cy(attachEl);
+    var attachDetected = m['changes_worker_attachments_detected_total'] || 0;
+    var attachErrors = (m['changes_worker_attachments_download_errors_total'] || 0) + (m['changes_worker_attachments_upload_errors_total'] || 0);
+    var attachTotal = attachDetected + attachErrors;
+    var attachErrRatio = attachTotal > 0 ? attachErrors / attachTotal : 0;
+    var attachArrowColor = uptime > 0 ? (attachErrRatio > 0.1 ? ARROW_YELLOW : ARROW_GREEN) : ARROW_GREY;
+    var aak = colorKey(attachArrowColor);
+    html += '<line x1="'+awxR+'" y1="'+awyC+'" x2="'+aaxL+'" y2="'+aayC+'" stroke="'+attachArrowColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+aak+')"/>';
+
+    // Attachments → each output
+    for (var i = 0; i < outs.length; i++) {
+      var mode = outs[i].getAttribute('data-mode');
+      var active = mode === outMode;
+      var ox = lx(outs[i]), oy = cy(outs[i]);
+      var aRx = rx(attachEl), aCy = cy(attachEl);
+      if (active) {
+        var ok = colorKey(activeOutColor);
+        html += '<line x1="'+aRx+'" y1="'+aCy+'" x2="'+ox+'" y2="'+oy+'" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')"/>';
+        html += rateBadge((aRx+ox)/2, (aCy+oy)/2, archRates.out, activeOutColor);
+      } else {
+        html += '<line x1="'+aRx+'" y1="'+aCy+'" x2="'+ox+'" y2="'+oy+'" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
+      }
+    }
+  } else {
+    if (attachCol) attachCol.style.display = 'none';
+    // Worker → each output (original direct path)
+    for (var i = 0; i < outs.length; i++) {
+      var mode = outs[i].getAttribute('data-mode');
+      var active = mode === outMode;
+      var ox = lx(outs[i]), oy = cy(outs[i]);
+      var wxR = rx(work), wyC = cy(work);
+      if (active) {
+        var ok = colorKey(activeOutColor);
+        html += '<line x1="'+wxR+'" y1="'+wyC+'" x2="'+ox+'" y2="'+oy+'" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')"/>';
+        html += rateBadge((wxR+ox)/2, (wyC+oy)/2, archRates.out, activeOutColor);
+      } else {
+        html += '<line x1="'+wxR+'" y1="'+wyC+'" x2="'+ox+'" y2="'+oy+'" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
+      }
     }
   }
 
@@ -868,8 +915,10 @@ function updateArchData(m) {
   archPrev._outOk    = outOk;
 
   // Node stat labels
+  var attachEnabled = cachedCfg && cachedCfg.attachments && cachedCfg.attachments.enabled;
   setText('archSrcStat', 'Received: ' + fmt(received) + ' · ' + fmtBytes(bytesIn));
-  setText('archWorkStat', 'Processed: ' + fmt(processed) + ' | Filtered: ' + fmt(filtered) + ' | DLQ: ' + fmt(dlq));
+  var modeLabel = attachEnabled ? '📎 ' : '';
+  setText('archWorkStat', modeLabel + 'Processed: ' + fmt(processed) + ' | Filtered: ' + fmt(filtered) + ' | DLQ: ' + fmt(dlq));
 
   // Output nodes — active vs dimmed
   var outEls = document.querySelectorAll('[data-mode]');
@@ -884,6 +933,29 @@ function updateArchData(m) {
   setText('archOutDbStat',   outMode === 'db'   ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
   setText('archOutS3Stat',   outMode === 's3'   ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
   setText('archOutStdStat',  outMode === 'stdout' ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
+
+  // Attachment node
+  var attDetected = m ? (m['changes_worker_attachments_detected_total'] || 0) : 0;
+  var attDownloaded = m ? (m['changes_worker_attachments_downloaded_total'] || 0) : 0;
+  var attUploaded = m ? (m['changes_worker_attachments_uploaded_total'] || 0) : 0;
+  var attDlErr = m ? (m['changes_worker_attachments_download_errors_total'] || 0) : 0;
+  var attUlErr = m ? (m['changes_worker_attachments_upload_errors_total'] || 0) : 0;
+  var attSkipped = m ? (m['changes_worker_attachments_skipped_total'] || 0) : 0;
+  var attBytesDown = m ? (m['changes_worker_attachments_bytes_downloaded_total'] || 0) : 0;
+  var attBytesUp = m ? (m['changes_worker_attachments_bytes_uploaded_total'] || 0) : 0;
+  var attPostProc = m ? (m['changes_worker_attachments_post_process_total'] || 0) : 0;
+  var attPostErr = m ? (m['changes_worker_attachments_post_process_errors_total'] || 0) : 0;
+  var attachCol = document.getElementById('archAttachCol');
+  var workCol = document.getElementById('archWork').closest('.arch-col');
+  if (attachEnabled) {
+    setText('archAttachStat', fmt(attUploaded) + ' up · ' + fmt(attDlErr + attUlErr) + ' err');
+    if (attachCol) attachCol.style.display = '';
+    if (workCol) workCol.style.flex = '0 0 30%';
+  } else {
+    setText('archAttachStat', 'disabled');
+    if (attachCol) attachCol.style.display = 'none';
+    if (workCol) workCol.style.flex = '0 0 36%';
+  }
 
   // DLQ node
   setText('archDlqStat', fmt(dlq) + ' doc' + (dlq !== 1 ? 's' : ''));
@@ -915,6 +987,14 @@ function updateArchData(m) {
     'Last Insert: <b>' + fmtEpoch(cachedDlqMeta.last_inserted_at) + '</b><br>' +
     'Last Drain: <b>' + fmtEpoch(cachedDlqMeta.last_drained_at) + '</b><br>' +
     'Review at <b>/api/dlq</b>';
+  document.getElementById('archTipAttach').innerHTML = attachEnabled
+    ? 'Detected: <b>' + fmt(attDetected) + '</b><br>' +
+      'Downloaded: <b>' + fmt(attDownloaded) + '</b> (' + fmtBytes(attBytesDown) + ')<br>' +
+      'Uploaded: <b>' + fmt(attUploaded) + '</b> (' + fmtBytes(attBytesUp) + ')<br>' +
+      'Skipped: <b>' + fmt(attSkipped) + '</b><br>' +
+      'Errors: <b>' + fmt(attDlErr + attUlErr) + '</b><br>' +
+      'Post-Process: <b>' + fmt(attPostProc) + '</b> (err: ' + fmt(attPostErr) + ')'
+    : 'Attachments disabled';
 
   drawArchArrows();
 }
@@ -1019,6 +1099,52 @@ function showArchDetail(which) {
     chart2Opt = lineOpt('Processing Over Time', [
       lineSeries('Processed', chartHistory.processed, '#6c56a4'),
       lineSeries('Filtered', chartHistory.filtered, c.yellow)
+    ]);
+  } else if (which === 'attach') {
+    title = 'Attachments — Processing';
+    color = '#e91e63';
+    var attDetected = m['changes_worker_attachments_detected_total'] || 0;
+    var attDownloaded = m['changes_worker_attachments_downloaded_total'] || 0;
+    var attUploaded = m['changes_worker_attachments_uploaded_total'] || 0;
+    var attDlErr = m['changes_worker_attachments_download_errors_total'] || 0;
+    var attUlErr = m['changes_worker_attachments_upload_errors_total'] || 0;
+    var attSkipped = m['changes_worker_attachments_skipped_total'] || 0;
+    var attBytesDown = m['changes_worker_attachments_bytes_downloaded_total'] || 0;
+    var attBytesUp = m['changes_worker_attachments_bytes_uploaded_total'] || 0;
+    var attPostProc = m['changes_worker_attachments_post_process_total'] || 0;
+    var attPostErr = m['changes_worker_attachments_post_process_errors_total'] || 0;
+    var attEnabled = cachedCfg && cachedCfg.attachments && cachedCfg.attachments.enabled;
+    var attMode = (cachedCfg && cachedCfg.attachments) ? cachedCfg.attachments.mode || 'individual' : '--';
+    var attDest = (cachedCfg && cachedCfg.attachments && cachedCfg.attachments.destination) ? cachedCfg.attachments.destination.type || '--' : '--';
+    rows = [
+      ['Status', attEnabled ? '✅ Enabled' : '💤 Disabled'],
+      ['Mode', attMode],
+      ['Destination', attDest],
+      ['Detected', fmt(attDetected)],
+      ['Downloaded', fmt(attDownloaded)],
+      ['Uploaded', fmt(attUploaded)],
+      ['Download Errors', fmt(attDlErr)],
+      ['Upload Errors', fmt(attUlErr)],
+      ['Skipped', fmt(attSkipped)],
+      ['Bytes Downloaded', fmtBytes(attBytesDown)],
+      ['Bytes Uploaded', fmtBytes(attBytesUp)],
+      ['Post-Process', fmt(attPostProc)],
+      ['Post-Process Errors', fmt(attPostErr)],
+      ['Uptime', fmtUptime(uptime)]
+    ];
+    // Chart 1: pie — downloaded vs uploaded vs errors vs skipped
+    chart1Opt = pieOpt('Attachment Outcomes', [
+      { name: 'Uploaded', value: attUploaded, itemStyle: { color: '#36d399' } },
+      { name: 'DL Errors', value: attDlErr, itemStyle: { color: '#f87272' } },
+      { name: 'UL Errors', value: attUlErr, itemStyle: { color: '#d32f2f' } },
+      { name: 'Skipped', value: attSkipped, itemStyle: { color: '#fbbd23' } }
+    ]);
+    // Chart 2: bar — bytes downloaded vs uploaded
+    chart2Opt = barOpt('Transfer Volume', ['Downloaded','Uploaded'], [
+      { name: 'Bytes', type: 'bar', data: [attBytesDown, attBytesUp],
+        itemStyle: { color: function(p) { return ['#e91e63','#36d399'][p.dataIndex]; } },
+        barWidth: '50%', label: { show: true, position: 'top', color: c.text, fontSize: 10,
+          formatter: function(p) { return fmtBytes(p.value); } } }
     ]);
   } else {
     // Output nodes
@@ -1480,7 +1606,8 @@ function loadConfig() {
     ];
     var processRows = [
       ['Sequential', cfg.processing?.sequential ? 'Yes' : 'No'],
-      ['Schema Mappings', mapDisplay]
+      ['Schema Mappings', mapDisplay],
+      ['Attachments', cfg.attachments?.enabled ? '<span class="text-success">Enabled</span> (' + (cfg.attachments.mode || 'individual') + ' → ' + (cfg.attachments.destination?.type || '--') + ')' : '<span class="opacity-50">Disabled</span>']
     ];
     var outputRows = [
       ['Output', outDetail],
