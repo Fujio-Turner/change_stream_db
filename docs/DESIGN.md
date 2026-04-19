@@ -11,6 +11,7 @@ This document describes the internal architecture of the changes_worker, how dat
 - [`SCHEMA_MAPPING.md`](SCHEMA_MAPPING.md) -- JSON-to-relational mapping definitions
 - [`RDBMS_PLAN.md`](RDBMS_PLAN.md) -- RDBMS output architecture and config
 - [`RDBMS_IMPLEMENTATION.md`](RDBMS_IMPLEMENTATION.md) -- RDBMS implementation guide (single-table, multi-table, transactions)
+- [`ATTACHMENTS.md`](ATTACHMENTS.md) -- Attachment processing: detect, fetch, upload, post-process
 - [`CLOUD_BLOB_PLAN.md`](CLOUD_BLOB_PLAN.md) -- Cloud blob storage output (S3, GCS, Azure)
 - [`ADMIN_UI.md — Transforms`](ADMIN_UI.md#transform-functions-reference-transforms) -- Transform function reference (58 built-in functions)
 
