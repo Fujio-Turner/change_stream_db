@@ -23,7 +23,7 @@ When CBL is not available (e.g., local development on macOS), the system falls b
 | **Engine** | Couchbase Lite C 3.2.1 with Python CFFI bindings |
 | **Access pattern** | Module-level singleton — one `Database` handle per process |
 
-> **Note:** The Python CBL bindings do not expose the collections API directly. The worker calls the raw CFFI `lib.CBLDatabase_CreateCollection()` and `lib.CBLCollection_*` functions to manage documents in scoped collections. Manifest documents are used instead of N1QL queries to enumerate documents by type.
+> **Note:** The Python CBL bindings do not expose all APIs directly. The worker calls raw CFFI functions for operations not wrapped by the Python layer — including collection management (`lib.CBLCollection_*`), N1QL queries (`N1QLQuery`), collection-level indexes (`lib.CBLCollection_CreateValueIndex`), document expiration (`lib.CBLCollection_SetDocumentExpiration`), database transactions (`lib.CBLDatabase_BeginTransaction` / `EndTransaction`), and maintenance operations (`lib.CBLDatabase_PerformMaintenance`). DLQ entries are queried via N1QL with collection-level value indexes; manifests are still used for mappings and checkpoints.
 
 ---
 
@@ -36,7 +36,7 @@ All worker data lives in the `changes-worker` scope, separated into four collect
 | `changes-worker` | `config` | `config` | Full worker configuration |
 | `changes-worker` | `checkpoints` | `checkpoint:{uuid}`, `manifest:checkpoints` | Checkpoint sequence fallback data |
 | `changes-worker` | `mappings` | `mapping:{filename}`, `manifest:mappings` | Schema mapping definitions |
-| `changes-worker` | `dlq` | `dlq:{doc_id}:{timestamp}`, `manifest:dlq` | Failed output documents (dead letter queue) |
+| `changes-worker` | `dlq` | `dlq:{doc_id}:{timestamp}`, `dlq:meta` | Failed output documents (dead letter queue) |
 
 ---
 
@@ -140,8 +140,12 @@ doc_id: "dlq:order::12345:1768521600"
 | `method` | `str` | HTTP method that was attempted (`"PUT"` or `"DELETE"`) |
 | `status` | `int` | HTTP status code from the output endpoint (0 = connection failure) |
 | `error` | `str` | Error message or response body excerpt |
+| `reason` | `str` | Machine-readable classification (e.g., `data_error:data_type`, `server_error:500`) |
 | `time` | `int` | Unix epoch timestamp when the failure occurred |
+| `expires_at` | `int` | Unix epoch when the entry will be auto-purged (0 = no expiration) |
 | `retried` | `bool` | Whether this entry has been marked as retried |
+| `replay_attempts` | `int` | Number of failed replay attempts |
+| `target_url` | `str` | The output URL at write time (for orphan detection) |
 | `doc_data` | `str` | Full document body serialized via `json.dumps()` |
 
 **Example:**
@@ -164,11 +168,11 @@ doc_id: "dlq:order::12345:1768521600"
 
 ### `manifest:{type}`
 
-An index document that stores a JSON-encoded list of all doc IDs for a given document type. Required because CBL CE Python bindings do not expose N1QL queries — there is no `SELECT * WHERE type = 'mapping'`.
+Manifest documents store a JSON-encoded list of doc IDs for mappings and checkpoints. The DLQ collection no longer uses manifests — it uses N1QL queries with collection-level indexes instead.
 
 ```
 doc_id: "manifest:mappings"
-doc_id: "manifest:dlq"
+doc_id: "manifest:checkpoints"
 ```
 
 | Field | Type | Description |
@@ -176,19 +180,9 @@ doc_id: "manifest:dlq"
 | `type` | `str` | Always `"manifest"` |
 | `ids` | `str` | JSON array of doc IDs, serialized via `json.dumps()` |
 
-**Example:**
-
-```json
-{
-  "type": "manifest",
-  "ids": "[\"mapping:order.yaml\",\"mapping:product.yaml\"]"
-}
-```
-
 Manifests are updated atomically whenever a document is created or deleted:
 - **Create** → append the new doc ID to the manifest's `ids` array
 - **Delete** → remove the doc ID from the manifest's `ids` array
-- **Clear all** (DLQ only) → set `ids` to `[]`
 
 ---
 
@@ -248,12 +242,32 @@ The admin UI exposes DLQ management via REST when CBL is enabled:
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/dlq` | List all DLQ entries |
-| `GET` | `/api/dlq/count` | Count of DLQ entries |
+| `GET` | `/api/dlq` | Paginated list with sort/filter (N1QL `LIMIT`/`OFFSET`) |
+| `GET` | `/api/dlq/count` | Count of DLQ entries (N1QL `COUNT(*)`) |
+| `GET` | `/api/dlq/stats` | Aggregated stats for charts (N1QL `COUNT`/`MIN`/`GROUP BY`) |
+| `GET` | `/api/dlq/explain` | N1QL query plans for index verification |
 | `GET` | `/api/dlq/{id}` | Get one entry (includes full `doc_data`) |
 | `POST` | `/api/dlq/{id}/retry` | Mark entry as retried |
-| `DELETE` | `/api/dlq/{id}` | Delete one entry |
-| `DELETE` | `/api/dlq` | Clear all DLQ entries |
+| `DELETE` | `/api/dlq/{id}` | Delete (purge) one entry |
+| `DELETE` | `/api/dlq` | Clear all entries (transactional batch purge) |
+
+---
+
+## Indexes
+
+### DLQ Collection Indexes
+
+Three value indexes are created on the `changes-worker.dlq` collection at startup via `CBLCollection_CreateValueIndex` (CFFI):
+
+| Index Name | Columns | Purpose |
+|---|---|---|
+| `idx_dlq_type_time` | `type, time` | Page listing (`ORDER BY time`), purge expired (`WHERE time < cutoff`), timeline stats |
+| `idx_dlq_type_reason_time` | `type, reason, time` | Reason filter (`WHERE reason LIKE ...`), `GROUP BY reason` aggregation |
+| `idx_dlq_type_retried` | `type, retried` | Retried count (`WHERE retried = true`), total count |
+
+All indexes use `type` as the leading column so SQLite's query planner can use them for the `WHERE d.type = 'dlq'` predicate that appears in every DLQ query. Index creation is idempotent (safe to call on every startup).
+
+Query plans can be verified at runtime via `GET /api/dlq/explain`, which returns `CBLQuery_Explain()` output for all key queries. Look for `SEARCH ... USING INDEX idx_dlq_*` (good) vs. `SCAN` (bad).
 
 ---
 

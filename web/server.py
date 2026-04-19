@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 
 import aiohttp as _aiohttp
@@ -75,6 +76,158 @@ async def page_wizard(request):
 
 async def page_help(request):
     return web.FileResponse(WEB / "templates" / "help.html")
+
+
+async def page_logs(request):
+    return web.FileResponse(WEB / "templates" / "logs.html")
+
+
+async def page_dlq(request):
+    return web.FileResponse(WEB / "templates" / "dlq.html")
+
+
+# --- Logs API ---
+
+_LOG_LINE_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[.,]\d{3})\s+"  # timestamp
+    r"\[(\w+)\]\s+"  # level
+    r"([\w.]+):\s+"  # logger
+    r"(.+)$"  # rest
+)
+
+_LOG_KEY_RE = re.compile(r"\[([A-Z_]+)\]")
+
+# Known simple fields (before error_detail which can contain anything)
+_SIMPLE_FIELDS = {
+    "doc_id",
+    "seq",
+    "status",
+    "url",
+    "attempt",
+    "elapsed_ms",
+    "mode",
+    "http_method",
+    "bytes",
+    "storage",
+    "batch_size",
+    "input_count",
+    "filtered_count",
+    "host",
+    "port",
+    "delay_seconds",
+    "field_count",
+    "db_name",
+    "db_path",
+    "db_size_mb",
+    "doc_count",
+    "doc_type",
+    "manifest_id",
+    "maintenance_type",
+    "duration_ms",
+    "operation",
+}
+
+
+def _parse_log_line(line: str) -> dict | None:
+    m = _LOG_LINE_RE.match(line.strip())
+    if not m:
+        return None
+    timestamp, level, logger_name, rest = m.groups()
+
+    # Extract log_key
+    log_key = None
+    key_match = _LOG_KEY_RE.search(rest)
+    if key_match:
+        log_key = key_match.group(1)
+        # Message is everything before the log_key
+        message = rest[: key_match.start()].strip()
+        fields_str = rest[key_match.end() :].strip()
+    else:
+        message = rest.strip()
+        fields_str = ""
+
+    # Parse key=value fields
+    fields = {}
+    if fields_str:
+        # error_detail is special — it's always last and can contain anything
+        ed_idx = fields_str.find("error_detail=")
+        if ed_idx >= 0:
+            before = fields_str[:ed_idx].strip()
+            fields["error_detail"] = fields_str[ed_idx + len("error_detail=") :]
+            fields_str = before
+
+        # Parse remaining simple key=value pairs
+        for part in fields_str.split():
+            if "=" in part:
+                k, v = part.split("=", 1)
+                if k in _SIMPLE_FIELDS:
+                    fields[k] = v
+
+    return {
+        "timestamp": timestamp,
+        "level": level,
+        "logger": logger_name,
+        "message": message,
+        "log_key": log_key,
+        "fields": fields,
+    }
+
+
+_LEVEL_RANK = {"ERROR": 0, "WARNING": 1, "INFO": 2, "DEBUG": 3, "TRACE": 4}
+
+
+async def get_logs(request):
+    max_lines = min(int(request.query.get("lines", "500")), 2000)
+    file_name = request.query.get("file", "changes_worker.log")
+    min_level = request.query.get("level", "").upper()  # e.g. "INFO" → skip DEBUG/TRACE
+    if not file_name.endswith(".log") or "/" in file_name or "\\" in file_name:
+        return error_response("Invalid file name", 400)
+    log_path = ROOT / "logs" / file_name
+    if not log_path.is_file():
+        return json_response([])
+
+    level_threshold = _LEVEL_RANK.get(min_level, -1)
+
+    # Read last N lines efficiently
+    try:
+        with open(log_path, "r", errors="replace") as f:
+            all_lines = f.readlines()
+        tail = all_lines[-max_lines:] if len(all_lines) > max_lines else all_lines
+    except Exception as exc:
+        return error_response(str(exc), 500)
+
+    entries = []
+    for line in tail:
+        parsed = _parse_log_line(line)
+        if parsed:
+            if level_threshold >= 0:
+                entry_rank = _LEVEL_RANK.get(parsed["level"], 4)
+                if entry_rank > level_threshold:
+                    continue
+            entries.append(parsed)
+
+    return json_response({"entries": entries, "total_lines": len(all_lines)})
+
+
+async def get_log_files(request):
+    logs_dir = ROOT / "logs"
+    if not logs_dir.is_dir():
+        return json_response([])
+    files = []
+    for p in logs_dir.iterdir():
+        if p.is_file() and p.suffix == ".log":
+            stat = p.stat()
+            files.append(
+                {
+                    "name": p.name,
+                    "size_bytes": stat.st_size,
+                    "modified": datetime.datetime.fromtimestamp(
+                        stat.st_mtime, tz=datetime.timezone.utc
+                    ).isoformat(),
+                }
+            )
+    files.sort(key=lambda f: f["modified"], reverse=True)
+    return json_response(files)
 
 
 # --- Config API ---
@@ -263,8 +416,37 @@ async def delete_mapping(request):
 
 async def list_dlq(request):
     if not USE_CBL:
-        return json_response([])
-    return json_response(CBLStore().list_dlq())
+        return json_response({"entries": [], "total": 0, "filtered": 0})
+    q = request.query
+    limit = min(int(q.get("limit", 20)), 200)
+    offset = int(q.get("offset", 0))
+    sort = q.get("sort", "time")
+    order = q.get("order", "desc")
+    reason_filter = q.get("reason", "")
+    return json_response(
+        CBLStore().list_dlq_page(
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            order=order,
+            reason_filter=reason_filter,
+        )
+    )
+
+
+async def dlq_stats(request):
+    if not USE_CBL:
+        return json_response(
+            {
+                "total": 0,
+                "pending": 0,
+                "retried": 0,
+                "oldest_time": None,
+                "reason_counts": {},
+                "timeline": {},
+            }
+        )
+    return json_response(CBLStore().dlq_stats())
 
 
 async def get_dlq_entry(request):
@@ -319,17 +501,25 @@ async def dlq_meta(request):
     return json_response(CBLStore().get_dlq_meta())
 
 
+async def dlq_explain(request):
+    """Return EXPLAIN output for DLQ queries to verify index usage."""
+    if not USE_CBL:
+        return error_response("DLQ requires CBL", 501)
+    return json_response(CBLStore().dlq_explain_queries())
+
+
 async def replay_dlq(request):
     """Trigger a DLQ replay without requiring a full worker restart."""
     if not USE_CBL:
         return error_response("DLQ requires CBL", 501)
     store = CBLStore()
-    entries = [e for e in store.list_dlq() if not e.get("retried")]
-    if not entries:
+    stats = store.dlq_stats()
+    pending = stats.get("pending", 0)
+    if not pending:
         return json_response({"total": 0, "message": "no pending entries to replay"})
     return json_response(
         {
-            "total": len(entries),
+            "total": pending,
             "message": "use worker restart or POST /api/restart to trigger replay — on-demand replay requires the output forwarder context",
         }
     )
@@ -1451,6 +1641,12 @@ def create_app():
     app.router.add_get("/glossary", page_transforms)
     app.router.add_get("/wizard", page_wizard)
     app.router.add_get("/help", page_help)
+    app.router.add_get("/logs", page_logs)
+    app.router.add_get("/dlq", page_dlq)
+
+    # Logs API
+    app.router.add_get("/api/logs", get_logs)
+    app.router.add_get("/api/log-files", get_log_files)
 
     # Config API
     app.router.add_get("/api/config", get_config)
@@ -1468,6 +1664,8 @@ def create_app():
     app.router.add_get("/api/dlq", list_dlq)
     app.router.add_get("/api/dlq/count", dlq_count)
     app.router.add_get("/api/dlq/meta", dlq_meta)
+    app.router.add_get("/api/dlq/stats", dlq_stats)
+    app.router.add_get("/api/dlq/explain", dlq_explain)
     app.router.add_post("/api/dlq/replay", replay_dlq)
     app.router.add_get("/api/dlq/{id}", get_dlq_entry)
     app.router.add_post("/api/dlq/{id}/retry", retry_dlq_entry)

@@ -12,43 +12,57 @@ The dead letter queue is where documents go to survive. When the output target r
 
 ## What Triggers the DLQ
 
-The DLQ is only active when **both** conditions are true:
+The DLQ is active in two scenarios:
 
-1. **`halt_on_failure: false`** — the worker skips failed docs instead of stopping
-2. **A storage backend exists** — either CBL is available (automatic) or `dead_letter_path` is set (file fallback)
+1. **`halt_on_failure: false`** — the worker skips failed docs instead of stopping; all failures go to the DLQ
+2. **`data_error_action: "dlq"`** (default) — permanent data errors (type mismatches, constraint violations, 4xx) are routed to the DLQ even when `halt_on_failure: true`. These errors will never self-heal on retry, so the pipeline advances past them.
 
-When `halt_on_failure: true` (the default), the worker **stops the batch** on any output failure and holds the checkpoint. No DLQ is needed because no data is skipped — the entire batch retries on the next poll cycle.
+A **storage backend** must also exist — either CBL is available (automatic) or `dead_letter_path` is set (file fallback).
+
+### Data errors vs. infrastructure errors
+
+The system distinguishes between two categories of failure:
+
+| Category | Examples | `halt_on_failure` applies? | DLQ behavior |
+|---|---|---|---|
+| **Data error** | int32 overflow, constraint violation, 4xx client error | ❌ No — never halts | Controlled by `data_error_action`: `"dlq"` (store) or `"skip"` (drop) |
+| **Infrastructure error** | 5xx server error, connection refused, timeout | ✅ Yes | `halt_on_failure: true` → stop batch; `false` → DLQ |
+
+This separation exists because data errors are "you messed up" (the data itself is wrong) while infrastructure errors are "I messed up" (the server is down). Retrying a data error forever would create an infinite loop — the checkpoint never advances and the same bad document blocks the entire pipeline.
 
 ### The trigger path in code
 
 ```
-document → output.send() → retry with backoff → all retries exhausted
-                                                         │
-                                              halt_on_failure?
-                                              ┌─────┴─────┐
-                                            true         false
-                                              │            │
-                                         raise          return
-                                    OutputEndpointDown   {ok: false}
-                                              │            │
-                                      stop batch,    write to DLQ,
-                                      hold checkpoint skip doc,
-                                                      continue batch
+document → output.send() → classify error
+                               │
+                    ┌──────────┴──────────┐
+                data error             infrastructure error
+                    │                         │
+          data_error_action?          halt_on_failure?
+          ┌────┴────┐              ┌─────┴─────┐
+        "dlq"     "skip"         true         false
+          │         │              │            │
+     write DLQ,  log warn,     raise         return
+     advance    advance     OutputEndpointDown {ok: false}
+     checkpoint checkpoint        │            │
+                            stop batch,    write to DLQ,
+                            hold checkpoint advance checkpoint
 ```
 
 ### Specific triggers
 
-| Scenario | What the output returns | DLQ entry created? |
-|---|---|---|
-| HTTP 5xx after all retries | `{ok: false, status: 500, error: "..."}` | ✅ Yes |
-| HTTP 4xx (client error) | `{ok: false, status: 400, error: "..."}` | ✅ Yes |
-| HTTP 3xx (redirect, `follow_redirects=false`) | `{ok: false, status: 301, error: "..."}` | ✅ Yes |
-| Connection refused / timeout after retries | `{ok: false, status: 0, error: "..."}` | ✅ Yes |
-| DB constraint violation (RDBMS mode) | `{ok: false, error: "UniqueViolation"}` | ✅ Yes |
-| DB connection lost (RDBMS mode) | `{ok: false, error: "ConnectionError"}` | ✅ Yes |
-| Shutdown with `dlq_inflight_on_shutdown: true` | `{status: 0, error: "shutdown_inflight"}` | ✅ Yes |
-| Successful delivery (2xx) | `{ok: true, status: 200}` | ❌ No |
-| `halt_on_failure: true` + any failure | Exception raised, batch stops | ❌ No (checkpoint held instead) |
+| Scenario | What the output returns | `reason` field | DLQ entry created? |
+|---|---|---|---|
+| DB data type mismatch (e.g., int32 overflow) | `{ok: false, error_class: "data_type"}` | `data_error:data_type` | ✅ If `data_error_action: "dlq"` |
+| DB constraint violation | `{ok: false, error_class: "constraint"}` | `data_error:constraint` | ✅ If `data_error_action: "dlq"` |
+| HTTP 4xx (client error) | `{ok: false, status: 400}` | `client_error:400` | ✅ If `data_error_action: "dlq"` |
+| HTTP 5xx after all retries | `{ok: false, status: 500}` | `server_error:500` | ✅ If `halt_on_failure: false` |
+| HTTP 3xx (redirect, `follow_redirects=false`) | `{ok: false, status: 301}` | `redirect:301` | ✅ If `halt_on_failure: false` |
+| Connection refused / timeout after retries | `{ok: false, status: 0}` | `connection_failure` | ✅ If `halt_on_failure: false` |
+| Shutdown with `dlq_inflight_on_shutdown: true` | `{status: 0, error: "shutdown_inflight"}` | `shutdown_inflight` | ✅ Yes |
+| Successful delivery (2xx) | `{ok: true, status: 200}` | — | ❌ No |
+| Infrastructure failure + `halt_on_failure: true` | Exception raised, batch stops | — | ❌ No (checkpoint held instead) |
+| Data error + `data_error_action: "skip"` | `{ok: false}` — logged and skipped | — | ❌ No (dropped) |
 
 ---
 
@@ -78,11 +92,28 @@ Each failed document is written individually to the DLQ via `DeadLetterQueue.wri
 | `method` | `PUT` or `DELETE` | What operation was attempted |
 | `status` | HTTP status code (0 = connection failure) | Classify the error type |
 | `error` | Error message or response body | Debug the root cause |
+| `reason` | Classification string (e.g., `data_error:data_type`, `server_error:500`) | Why this doc is in the DLQ — answers "what went wrong?" at a glance |
 | `time` | Unix epoch when the failure occurred | Timeline of failures |
 | `retried` | `false` | Tracks whether replay has been attempted |
 | `replay_attempts` | `0` | Number of times replay has been attempted (incremented each failure) |
 | `target_url` | The output URL at write time | Detect orphaned entries after endpoint changes |
 | `doc_data` | Full document body (JSON string) | The actual data to retry |
+
+### Reason codes
+
+The `reason` field provides a machine-readable classification for why a document ended up in the DLQ:
+
+| Reason | Meaning | Likely fix |
+|---|---|---|
+| `data_error:data_type` | Value doesn't fit the target column type (e.g., int64 → int32) | Fix the schema mapping or the source data |
+| `data_error:constraint` | Unique/foreign key constraint violation | Resolve the conflict in the target DB |
+| `data_error:permission` | DB permission denied | Grant the necessary privileges |
+| `client_error:4xx` | HTTP output target returned a 4xx status | Fix the request payload or endpoint config |
+| `server_error:5xx` | HTTP output target returned a 5xx after all retries | Wait for the server to recover, then replay |
+| `redirect:3xx` | Unexpected redirect (and `follow_redirects=false`) | Update `target_url` or enable redirects |
+| `connection_failure` | TCP connection refused or timed out after all retries | Check network/firewall, then replay |
+| `shutdown_inflight` | Worker was shut down while this doc was in-flight | Replay on next startup (automatic) |
+| `unknown` | Unclassified error | Inspect the `error` field for details |
 
 ### CBL storage
 
@@ -94,11 +125,19 @@ doc_id: "dlq:order::12345:1713456789"
          prefix  original ID   epoch timestamp
 ```
 
-A manifest document (`manifest:dlq`) maintains a JSON array of all DLQ entry IDs — this acts as an index since CBL CE Python bindings don't support N1QL queries.
+DLQ entries are queried directly via **N1QL** against the `changes-worker.dlq` collection. Three collection-level value indexes are created at startup for efficient querying:
+
+| Index | Columns | Used by |
+|---|---|---|
+| `idx_dlq_type_time` | `type, time` | Page listing, purge expired, timeline |
+| `idx_dlq_type_reason_time` | `type, reason, time` | Reason filtering, GROUP BY aggregation |
+| `idx_dlq_type_retried` | `type, retried` | Count queries, retried filtering |
+
+All queries use `SEARCH` (index seek) — there are no full collection scans. The query plans can be inspected via `GET /api/dlq/explain`.
 
 ### Document expiration (TTL)
 
-Each DLQ document is created with a **CBL document expiration** via the C API (`CBLDatabase_SetDocumentExpiration`). When the TTL expires, CBL automatically purges the document — no manual cleanup needed.
+Each DLQ document is created with a **CBL document expiration** via the C API (`CBLCollection_SetDocumentExpiration`). This sets the TTL directly on the `changes-worker.dlq` collection, ensuring CBL automatically purges the document when it expires — no manual cleanup needed.
 
 - **Default TTL:** 86,400 seconds (24 hours)
 - **Configurable:** Set `output.dlq.retention_seconds` in config
@@ -170,7 +209,7 @@ The replay first purges expired entries, then iterates every pending entry (wher
        doc = entry.doc_data
        result = output.send(doc, entry.method)
        if result.ok:
-           dlq.purge(entry.id)   ← removes from CBL + manifest
+           dlq.purge(entry.id)   ← purges from CBL collection
            succeeded++
        else:
            entry.replay_attempts++  ← increment attempt counter
@@ -574,8 +613,10 @@ The DLQ node in the architecture diagram shows:
 ```jsonc
 {
     "output": {
-        "halt_on_failure": true,          // true = stop on failure (no DLQ)
+        "halt_on_failure": true,          // true = stop on infrastructure failure (no DLQ)
                                            // false = skip + DLQ
+        "data_error_action": "dlq",       // "dlq" = store data errors in DLQ (default)
+                                           // "skip" = drop data errors and move on
         "dead_letter_path": "failed_docs.jsonl",  // file fallback (ignored when CBL available)
         "dlq": {
             "retention_seconds": 86400,    // 24h — how long entries live before auto-purge (0 = forever)
@@ -611,6 +652,84 @@ The DLQ node in the architecture diagram shows:
 
 ---
 
+## DLQ Explorer UI (`/dlq`)
+
+The DLQ Explorer is a dedicated admin UI page for inspecting, diagnosing, and managing dead letter queue entries. It answers the key questions an operator has when documents are stuck:
+
+- **What is in the DLQ?** — Sortable table of all entries with doc ID, reason, error, time, replay attempts
+- **When did it get in?** — Timestamp column + timeline chart showing arrival patterns (burst vs. steady trickle)
+- **Did it ever try to get out?** — `replay_attempts` count and `retried` status badge
+- **Why is it here?** — `reason` field displayed as a color-coded badge (data error, server error, connection failure, etc.)
+- **How can I fix it?** — The reason code table maps each reason to a suggested fix; the inspector panel shows the full document body and error detail
+
+### Layout
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  DLQ Explorer                                    [Clear All]│
+├──────────────────────┬──────────────────────────────────────┤
+│                      │                                      │
+│  Summary Cards       │  Charts                              │
+│  ┌──────┐ ┌───────┐  │  ┌────────────────┐ ┌─────────────┐ │
+│  │Total │ │Pending│  │  │ Arrivals Over  │ │ Reasons Pie │ │
+│  │  42  │ │  38   │  │  │ Time (line)    │ │             │ │
+│  └──────┘ └───────┘  │  └────────────────┘ └─────────────┘ │
+│  ┌──────┐ ┌───────┐  │                                      │
+│  │Retried│ │Oldest │  │                                      │
+│  │   4  │ │ 3h ago│  │                                      │
+│  └──────┘ └───────┘  │                                      │
+├──────────────────────┴──────────────────────────────────────┤
+│  Entry Table (sortable, filterable by reason)               │
+│  ┌────────┬──────────┬────────┬───────┬────────┬──────────┐ │
+│  │ Doc ID │ Reason   │ Error  │ Time  │Replays │ Actions  │ │
+│  ├────────┼──────────┼────────┼───────┼────────┼──────────┤ │
+│  │ ord_01 │ data_err │ int32  │ 3m    │ 0      │ [Inspect]│ │
+│  │ ord_02 │ srv_500  │ timeout│ 1h    │ 2      │ [Inspect]│ │
+│  └────────┴──────────┴────────┴───────┴────────┴──────────┘ │
+├─────────────────────────────────────────────────────────────┤
+│  Inspector Panel (read-only, slides open when row clicked)  │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │ Metadata: doc_id, seq, method, status, reason, target  │ │
+│  │ Error Detail: full error string                        │ │
+│  │ Document Body: JSON viewer (syntax highlighted)        │ │
+│  │ Suggested Fix: based on reason code                    │ │
+│  └─────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Charts
+
+1. **Arrivals Over Time** (line chart) — plots DLQ entries by their `time` field, bucketed by minute. Reveals whether failures arrived as a burst (outage) or steady trickle (data quality issue).
+
+2. **Reasons Breakdown** (pie chart) — groups entries by `reason` field. Immediately shows the dominant failure mode (e.g., "80% are data_error:data_type" → schema mapping issue).
+
+### Data sources
+
+| API | Used for |
+|---|---|
+| `GET /api/dlq` | Paginated entry list with server-side sort/filter (N1QL `LIMIT`/`OFFSET`) |
+| `GET /api/dlq/stats` | Lightweight aggregation for summary cards + charts (N1QL `COUNT`/`MIN`/`GROUP BY`) |
+| `GET /api/dlq/{id}` | Full entry with doc body (inspector) |
+| `GET /api/dlq/meta` | Last inserted/drained timestamps |
+| `GET /api/dlq/count` | Total count (N1QL `COUNT(*)`) |
+| `GET /api/dlq/explain` | N1QL query plans for all DLQ queries (index verification) |
+| `DELETE /api/dlq/{id}` | Delete single entry (× button in each row) |
+| `DELETE /api/dlq` | Clear all (header button, uses transaction for atomicity) |
+
+### Reason badge colors
+
+| Reason prefix | Badge color | Meaning |
+|---|---|---|
+| `data_error:*` | 🟡 Warning/yellow | Data problem — fix the source or mapping |
+| `client_error:*` | 🟠 Orange | Client sent bad request — fix config |
+| `server_error:*` | 🔴 Error/red | Server-side failure — may self-heal |
+| `connection_failure` | 🔴 Error/red | Network issue — check connectivity |
+| `shutdown_inflight` | 🔵 Info/blue | Expected during shutdown — auto-replays |
+| `redirect:*` | ⚫ Neutral/gray | Redirect issue — update URL |
+| `unknown` | ⚫ Neutral/gray | Inspect error field for details |
+
+---
+
 ## FAQ
 
 ### Q: Can I lose data with the DLQ?
@@ -631,7 +750,7 @@ Use `halt_on_failure: true` instead. The worker will keep retrying the entire ba
 
 With the default `retention_seconds: 86400` (24 hours), the DLQ is bounded by how many documents fail within one day. CBL document expiration automatically purges old entries, and the startup sweep catches anything that slipped through.
 
-Without retention (`retention_seconds: 0`), each entry is a few KB (document body + metadata). A DLQ with 100,000 entries would be roughly 100–500 MB depending on document size. The CBL database handles this fine, but replay on startup would take time (each entry is sent individually to the output). Additionally, entries that exceed `max_replay_attempts` are skipped during replay, so poison pills don't consume unbounded time.
+Without retention (`retention_seconds: 0`), each entry is a few KB (document body + metadata). A DLQ with 100,000 entries would be roughly 100–500 MB depending on document size. The CBL database handles this fine — all DLQ queries use N1QL with collection-level indexes (no full scans), so pagination and stats remain fast even with millions of entries. Replay on startup would take time (each entry is sent individually to the output). Additionally, entries that exceed `max_replay_attempts` are skipped during replay, so poison pills don't consume unbounded time.
 
 Monitor `cbl_db_size_bytes`, `system_disk_percent`, and `changes_worker_dlq_pending_count` to watch for growth.
 

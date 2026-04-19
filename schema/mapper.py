@@ -67,14 +67,17 @@ _TRANSFORM_RE = re.compile(r"^(\w+)\(([^)]*)\)$")
 def apply_transform(value: Any, transform: str) -> Any:
     """Apply a transform string to *value*.
 
-    Supported transforms:
-        trim(), ltrim(), rtrim(), uppercase(), lowercase(),
-        to_int(), to_float(), to_decimal(,N), to_string(),
-        coalesce(,default), json_stringify().
+    Supported transforms (ECMA-262 names):
+        trim(), trimStart(), trimEnd(),
+        toUpperCase(), toLowerCase(),
+        parseInt(), parseFloat(),
+        toFixed(,N), toString(),
+        coalesce(,default), json_stringify(),
+        includes().
 
     Transform arguments that look like a JSON path (start with ``$``) are
     stripped so that only the function parameters remain (e.g.
-    ``to_decimal($.total,2)`` → precision ``2``).
+    ``toFixed($.total,2)`` → precision ``2``).
     """
     m = _TRANSFORM_RE.match(transform.strip())
     if not m:
@@ -89,25 +92,25 @@ def apply_transform(value: Any, transform: str) -> Any:
 
     if func == "trim":
         return str(value).strip() if value is not None else value
-    if func == "ltrim":
+    if func == "trimstart":
         return str(value).lstrip() if value is not None else value
-    if func == "rtrim":
+    if func == "trimend":
         return str(value).rstrip() if value is not None else value
-    if func == "uppercase":
+    if func == "touppercase":
         return str(value).upper() if value is not None else value
-    if func == "lowercase":
+    if func == "tolowercase":
         return str(value).lower() if value is not None else value
-    if func == "to_int":
+    if func == "parseint":
         try:
             return int(value)
         except (TypeError, ValueError):
             return None
-    if func == "to_float":
+    if func == "parsefloat":
         try:
             return float(value)
         except (TypeError, ValueError):
             return None
-    if func == "to_decimal":
+    if func == "tofixed":
         try:
             d = Decimal(str(value))
             if args:
@@ -116,7 +119,7 @@ def apply_transform(value: Any, transform: str) -> Any:
             return d
         except (TypeError, ValueError, InvalidOperation):
             return None
-    if func == "to_string":
+    if func == "tostring":
         return str(value) if value is not None else None
     if func == "coalesce":
         if value is not None:
@@ -188,7 +191,7 @@ def apply_transform(value: Any, transform: str) -> Any:
         if len(suffix) >= 2 and suffix[0] in ('"', "'") and suffix[-1] == suffix[0]:
             suffix = suffix[1:-1]
         return str(value).endswith(suffix)
-    if func == "contains":
+    if func == "includes":
         if value is None:
             return False
         substr = args[0] if args else ""

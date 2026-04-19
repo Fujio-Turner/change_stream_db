@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Changes Worker -- Logs &amp; Debugging</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
+  <script src="/static/js/tailwind.js"></script>
+  <script src="/static/js/echarts.min.js"></script>
+  <script>
+    (function(){
+      var t = localStorage.getItem('cw_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <style>
+    .border-process { border-left: 3px solid var(--color-info); }
+    .log-line { cursor: pointer; transition: background 0.1s; border-bottom: 1px solid oklch(var(--b3)); border-left: 3px solid transparent; }
+    .log-line:hover { filter: brightness(1.15); }
+    .log-line.selected { outline: 1px solid oklch(var(--p)); filter: brightness(1.2); }
+    /* Pipeline stage background colors */
+    .log-stage-source  { background: rgba(30, 120, 70, 0.18); border-left-color: #36d399; }
+    .log-stage-process { background: rgba(30, 80, 160, 0.18); border-left-color: #3abff8; }
+    .log-stage-output  { background: rgba(160, 120, 10, 0.18); border-left-color: #fbbd23; }
+    .log-stage-dlq     { background: rgba(160, 50, 50, 0.18); border-left-color: #f87272; }
+    .log-viewer { height: 520px; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; font-size: 0.8rem; line-height: 1.6; }
+    .log-ts { color: oklch(var(--bc) / 0.4); white-space: nowrap; }
+    .log-msg { word-break: break-word; }
+    .filter-btn { transition: opacity 0.15s; }
+    .filter-btn.off { opacity: 0.3; }
+    .insight-panel { max-height: 300px; overflow-y: auto; }
+    /* Stage filter buttons */
+    .stage-btn { border-width: 2px; }
+    .stage-btn.off { opacity: 0.3; }
+    /* Stakes */
+    .log-line.staked { border-right: 3px dashed oklch(var(--wa)); }
+    .stake-tag { font-size: 0.6rem; border-radius: 3px; padding: 0 4px; background: oklch(var(--wa)); color: oklch(var(--wac)); font-weight: 700; margin-left: 2px; white-space: nowrap; }
+    /* Dual range slider */
+    #rangeContainer input[type=range] { -webkit-appearance: none; appearance: none; background: transparent; }
+    #rangeContainer input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 18px; height: 18px; border-radius: 50%;
+      background: oklch(var(--p)); border: 2px solid oklch(var(--b1));
+      cursor: pointer; pointer-events: auto; position: relative; z-index: 5;
+    }
+    #rangeContainer input[type=range]::-moz-range-thumb {
+      width: 18px; height: 18px; border-radius: 50%;
+      background: oklch(var(--p)); border: 2px solid oklch(var(--b1));
+      cursor: pointer; pointer-events: auto;
+    }
+    #rangeContainer input[type=range]::-webkit-slider-runnable-track { height: 0; }
+    #rangeContainer input[type=range]::-moz-range-track { height: 0; }
+  </style>
+</head>
+<body class="min-h-screen bg-base-200">
+  <div id="sidebar-root"></div>
+
+  <div class="sidebar-main">
+  <main class="w-full mx-auto p-4 space-y-3">
+
+    <!-- Header Card -->
+    <div class="card bg-base-100 shadow rounded-2xl border-process">
+      <div class="card-body p-3 gap-1">
+        <!-- Row 1: Title + file picker + search + controls -->
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <h1 class="text-lg font-bold whitespace-nowrap">Logs &amp; Debugging</h1>
+            <button class="btn btn-xs" id="btnPauseFeed" onclick="toggleFeed()">
+              <span id="feedIcon" style="color:#36d399">●</span>
+              <span id="feedLabel">Online</span>
+            </button>
+          </div>
+          <div class="flex items-center gap-2">
+            <select id="logFileSelect" class="select select-bordered select-xs w-48" onchange="onFileChange()">
+              <option value="changes_worker.log">changes_worker.log</option>
+            </select>
+            <span class="text-xs opacity-50 whitespace-nowrap hidden lg:inline" id="logFileMeta"></span>
+            <span class="badge badge-ghost badge-xs" id="countBadge">0 / 0</span>
+            <input type="text" id="logSearch" class="input input-bordered input-xs w-44" placeholder="Search logs..." />
+            <button class="btn btn-xs btn-primary gap-1" id="btnTail" onclick="toggleTail()">Tail</button>
+            <button class="btn btn-xs btn-ghost" onclick="refreshLogs()" id="btnRefresh"></button>
+          </div>
+        </div>
+
+        <!-- Row 2: Pipeline + Level + Log Key (all one row) -->
+        <div class="flex flex-wrap items-center gap-1.5">
+          <span class="text-xs font-semibold opacity-60">Pipeline:</span>
+          <button class="btn btn-xs stage-btn" data-stage="source"  style="border-color:#36d399;color:#36d399;" onclick="toggleStage('source')">● Source <span class="stage-count" data-stage-count="source"></span></button>
+          <button class="btn btn-xs stage-btn" data-stage="process" style="border-color:#3abff8;color:#3abff8;" onclick="toggleStage('process')">● Process <span class="stage-count" data-stage-count="process"></span></button>
+          <button class="btn btn-xs stage-btn" data-stage="dlq"     style="border-color:#f87272;color:#f87272;" onclick="toggleStage('dlq')">● DLQ <span class="stage-count" data-stage-count="dlq"></span></button>
+          <button class="btn btn-xs stage-btn" data-stage="output"  style="border-color:#fbbd23;color:#fbbd23;" onclick="toggleStage('output')">● Output <span class="stage-count" data-stage-count="output"></span></button>
+          <span class="text-xs font-semibold opacity-60 ml-2">Level:</span>
+          <button class="btn btn-xs filter-btn" data-filter="level" data-value="ERROR"   style="background:#f87272;color:#1d232a;border:none;">ERROR <span class="level-count" data-level-count="ERROR"></span></button>
+          <button class="btn btn-xs filter-btn" data-filter="level" data-value="WARNING" style="background:#fbbd23;color:#1d232a;border:none;">WARNING <span class="level-count" data-level-count="WARNING"></span></button>
+          <button class="btn btn-xs filter-btn" data-filter="level" data-value="INFO"    style="background:#3abff8;color:#1d232a;border:none;">INFO <span class="level-count" data-level-count="INFO"></span></button>
+          <button class="btn btn-xs filter-btn" data-filter="level" data-value="DEBUG"   style="background:#6b7280;color:#e5e7eb;border:none;">DEBUG <span class="level-count" data-level-count="DEBUG"></span></button>
+
+        </div>
+
+        <!-- Row 3: Time Range Slider -->
+        <div class="flex items-center gap-3">
+          <span class="text-xs font-semibold opacity-60 whitespace-nowrap">Time:</span>
+          <div class="relative h-6 flex items-center flex-1" id="rangeContainer">
+            <div class="absolute left-0 right-0 h-1.5 rounded-full bg-base-300" id="rangeTrack"></div>
+            <div class="absolute h-1.5 rounded-full bg-primary" id="rangeFill" style="left:0%;right:0%"></div>
+            <input type="range" id="rangeMin" class="range range-primary range-xs absolute w-full" min="0" max="100" value="0" style="pointer-events:none;background:transparent;-webkit-appearance:none;z-index:2" />
+            <input type="range" id="rangeMax" class="range range-primary range-xs absolute w-full" min="0" max="100" value="100" style="pointer-events:none;background:transparent;-webkit-appearance:none;z-index:3" />
+          </div>
+          <span class="text-xs font-mono opacity-60 whitespace-nowrap" id="rangeLabel">— to —</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log Viewer + Inline Insight -->
+    <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-3">
+        <div class="log-viewer" id="logViewer">
+          <div class="text-center opacity-40 py-12">No log entries loaded. Click <strong>Refresh</strong> or enable <strong>Tail</strong>.</div>
+        </div>
+        <!-- Inline Insight Panel (appears below log viewer, inside same card) -->
+        <div class="hidden border-t border-base-300 mt-3 pt-3" id="insightPanel">
+          <div class="flex items-center justify-between mb-2">
+            <h2 class="text-sm font-bold flex items-center gap-2">
+              <span class="badge badge-error badge-sm">Error Insight</span>
+            </h2>
+            <div class="flex gap-2">
+              <button class="btn btn-xs btn-ghost gap-1" onclick="copyError()" id="btnCopyError">Copy</button>
+              <button class="btn btn-xs btn-ghost" onclick="closeInsight()" id="btnCloseInsight"></button>
+            </div>
+          </div>
+          <div class="insight-panel" id="insightContent"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="space-y-4">
+      <!-- Line charts side by side -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center justify-between mb-1">
+              <div class="flex items-center gap-1">
+                <h3 class="text-sm font-semibold opacity-70">Activity Timeline</h3>
+                <div class="dropdown dropdown-hover dropdown-right" style="z-index:9999;">
+                  <label tabindex="0"><svg class="opacity-40 cursor-help" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></label>
+                  <div tabindex="0" class="dropdown-content rounded-xl shadow-lg p-4 w-72 text-xs leading-relaxed border border-base-content/10" style="background:oklch(var(--b1));">
+                    <p class="font-bold mb-2">How to read this chart</p>
+                    <p class="mb-1"><span style="color:#7c3aed;">■</span> <strong>Pending</strong> shows the doc backlog (docs in − docs out).</p>
+                    <p class="mb-1"><span style="color:#f87272;">┅</span> <strong>Fail %</strong> shows what percentage of output attempts are errors.</p>
+                    <hr class="my-2 border-base-content/10"/>
+                    <p class="mb-1"><strong>Pending flat at 0</strong> → healthy, every doc processed</p>
+                    <p class="mb-1"><strong>Pending rising + Fail % high</strong> → errors are causing the backlog</p>
+                    <p class="mb-1"><strong>Pending rising + Fail % low</strong> → system is slow, not failing</p>
+                    <p><strong>Pending dropping</strong> → system is catching up</p>
+                  </div>
+                </div>
+              </div>
+              <div class="hidden items-center gap-1" id="stakesBadge">
+                <span class="badge badge-warning badge-sm font-mono" id="stakesCount">0 stakes</span>
+                <button class="btn btn-xs btn-circle btn-ghost text-warning" onclick="clearStakes()" title="Clear all stakes" id="btnClearStakes"></button>
+              </div>
+            </div>
+            <div id="chartTimeline" style="width:100%;height:280px"></div>
+          </div>
+        </div>
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center justify-between mb-1">
+              <h3 class="text-sm font-semibold opacity-70">Pipeline Timeline</h3>
+              <button class="btn btn-xs btn-outline font-mono" id="btnScaleToggle" onclick="toggleYScale()">Y: Linear</button>
+            </div>
+            <div id="chartPipeline" style="width:100%;height:280px"></div>
+          </div>
+        </div>
+      </div>
+      <!-- Bar charts side by side -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <h3 class="text-sm font-semibold opacity-70 mb-1">Log Levels</h3>
+            <div id="chartLevels" style="width:100%;height:220px"></div>
+          </div>
+        </div>
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <h3 class="text-sm font-semibold opacity-70 mb-1">Pipeline Stages</h3>
+            <div id="chartStages" style="width:100%;height:220px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+
+  </main>
+  </div><!-- /sidebar-main -->
+
+  <script>
+  // ── Inline SVG icons (Lucide style, 14×14) ──────────────
+  var ICO = {
+    doc:       '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>',
+    clipboard: '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>',
+    pin:       '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>',
+    hash:      '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>',
+    ruler:     '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/></svg>',
+    alert:     '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    plug:      '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a6 6 0 0 1-12 0V8Z"/></svg>',
+    database:  '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></svg>',
+    wrench:    '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z"/></svg>',
+    key:       '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.3 9.3"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>',
+    lock:      '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+    clock:     '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+    bulb:      '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>',
+    play:      '<svg class="inline-block" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>',
+    pause:     '<svg class="inline-block" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="8" y1="4" x2="8" y2="20"/><line x1="16" y1="4" x2="16" y2="20"/></svg>',
+    refresh:   '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>',
+    x:         '<svg class="inline-block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  };
+
+  // ── Error hint patterns ──────────────────────────────────
+  var ERROR_HINTS = [
+    { pattern: /out of int32 range/i,
+      hint: 'The value exceeds PostgreSQL INTEGER max (2,147,483,647). Change the column type to BIGINT.',
+      icon: ICO.hash },
+    { pattern: /out of .* range/i,
+      hint: 'Value exceeds the range of the target column type. Check your column DDL and consider using a larger type.',
+      icon: ICO.ruler },
+    { pattern: /DataError|data_type/i,
+      hint: 'Data type mismatch between source value and target column. Check your schema mapping transforms.',
+      icon: ICO.alert },
+    { pattern: /connection refused|could not connect/i,
+      hint: 'Cannot connect to the target database. Verify host, port, and that the database is running.',
+      icon: ICO.plug },
+    { pattern: /does not exist/i,
+      hint: 'The referenced table or column does not exist. Run your CREATE TABLE DDL against the target database.',
+      icon: ICO.database },
+    { pattern: /unrecogni[sz]ed transform/i,
+      hint: 'Unknown transform function. Check the Glossary page for available transforms.',
+      icon: ICO.wrench },
+    { pattern: /duplicate key|unique.*violation|already exists/i,
+      hint: 'Primary key conflict. Check that your primary_key column is correctly mapped to a unique source field.',
+      icon: ICO.key },
+    { pattern: /permission denied|authentication failed/i,
+      hint: 'Database authentication failed. Check username and password in Settings.',
+      icon: ICO.lock },
+    { pattern: /timeout|timed out/i,
+      hint: 'Operation timed out. Check network connectivity and database performance.',
+      icon: ICO.clock }
+  ];
+
+  // ── Pipeline stage mapping ────────────────────────────────
+  // Maps log_key → pipeline stage for coloring
+  var LOG_KEY_STAGE = {
+    CHANGES: 'source', HTTP: 'source', CHECKPOINT: 'source',
+    PROCESSING: 'process', MAPPING: 'process', METRICS: 'process', CBL: 'process',
+    OUTPUT: 'output', RETRY: 'output',
+    DLQ: 'dlq'
+  };
+
+  // ── State ────────────────────────────────────────────────
+  var allLogs = [];
+  var filteredLogs = [];
+  var selectedEntry = null;
+  var tailing = false;
+  var tailTimer = null;
+  var feedOnline = true;
+  var MAX_LINES = 1000;
+
+  var activeLevels   = { ERROR: true, WARNING: true, INFO: true, DEBUG: true };
+  var activeLogKeys  = { CHANGES: true, PROCESSING: true, MAPPING: true, OUTPUT: true, HTTP: true, CHECKPOINT: true, RETRY: true, METRICS: true, CBL: true, DLQ: true };
+  var activeStages   = { source: true, process: true, output: true, dlq: true };
+
+  var currentFile = 'changes_worker.log';
+  var timeRangeMin = null;
+  var timeRangeMax = null;
+  var chartLevels = null;
+  var chartStages = null;
+  var chartTimeline = null;
+  var chartPipeline = null;
+  var yAxisLog = false;
+  var lastBucketKeys = [];
+  var stakes = []; // array of { timestamp, bucketKey, stakeId }
+  var stakeCounter = 0;
+  var STAKE_COLORS = ['#e879f9','#22d3ee','#fb923c','#a3e635','#f472b6','#60a5fa'];
+  var totalFileLines = 0;
+
+  // ── Log line parser ──────────────────────────────────────
+  // Pattern: TIMESTAMP [LEVEL] LOGGER: MESSAGE [LOG_KEY] key=value key=value...
+  var LOG_RE = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[.,]\d+)\s+\[(\w+)\]\s+(\S+?):\s+(.*)$/;
+
+  function parseLogLine(raw) {
+    var m = LOG_RE.exec(raw);
+    if (!m) return { timestamp: '', level: 'INFO', logger: '', message: raw, log_key: '', fields: {}, raw: raw };
+
+    var timestamp = m[1];
+    var level = m[2];
+    var logger = m[3];
+    var rest = m[4];
+
+    // Extract [LOG_KEY]
+    var log_key = '';
+    var keyMatch = rest.match(/\[([A-Z_]+)\]/);
+    if (keyMatch) {
+      log_key = keyMatch[1];
+      rest = rest.replace(keyMatch[0], '').trim();
+    }
+
+    // Extract key=value fields from the end
+    // error_detail is always last and can contain spaces
+    var fields = {};
+    var message = rest;
+
+    var detailMatch = rest.match(/\s+error_detail=(.+)$/);
+    if (detailMatch) {
+      fields['error_detail'] = detailMatch[1];
+      rest = rest.substring(0, rest.length - detailMatch[0].length);
+    }
+
+    // Parse remaining simple key=value pairs (no spaces in values)
+    var kvRe = /\s+(\w+)=(\S+)/g;
+    var kvMatch;
+    var lastKvStart = rest.length;
+    var kvPairs = [];
+    while ((kvMatch = kvRe.exec(rest)) !== null) {
+      kvPairs.push({ key: kvMatch[1], value: kvMatch[2], index: kvMatch.index });
+      if (kvMatch.index < lastKvStart) lastKvStart = kvMatch.index;
+    }
+    for (var i = 0; i < kvPairs.length; i++) {
+      fields[kvPairs[i].key] = kvPairs[i].value;
+    }
+    if (kvPairs.length > 0) {
+      message = rest.substring(0, lastKvStart).trim();
+    } else if (!detailMatch) {
+      message = rest;
+    } else {
+      message = rest.trim();
+    }
+
+    return { timestamp: timestamp, level: level, logger: logger, message: message, log_key: log_key, fields: fields, raw: raw };
+  }
+
+  // ── Filter logic ─────────────────────────────────────────
+  function applyFilters() {
+    var search = document.getElementById('logSearch').value.toLowerCase();
+    // Time range filter
+    var minVal = parseInt(document.getElementById('rangeMin').value);
+    var maxVal = parseInt(document.getElementById('rangeMax').value);
+    var useTimeFilter = (minVal > 0 || maxVal < 100) && timeRangeMin && timeRangeMax;
+    var span = useTimeFilter ? (timeRangeMax.getTime() - timeRangeMin.getTime()) : 0;
+    var tFrom = useTimeFilter ? timeRangeMin.getTime() + span * minVal / 100 : 0;
+    var tTo = useTimeFilter ? timeRangeMin.getTime() + span * maxVal / 100 : 0;
+    filteredLogs = [];
+    for (var i = 0; i < allLogs.length; i++) {
+      var e = allLogs[i];
+      if (useTimeFilter) {
+        var ts = parseTS(e.timestamp);
+        if (ts && (ts.getTime() < tFrom || ts.getTime() > tTo)) continue;
+      }
+      if (!activeLevels[e.level]) continue;
+      if (e.log_key && !activeLogKeys[e.log_key]) continue;
+      // Stage filter
+      var stage = LOG_KEY_STAGE[e.log_key] || 'process';
+      if (!activeStages[stage]) continue;
+      if (search && (e.raw || (e.message + ' ' + JSON.stringify(e.fields))).toLowerCase().indexOf(search) === -1) continue;
+      filteredLogs.push(e);
+    }
+    renderLogs();
+    updateCharts();
+  }
+
+  // ── Render ───────────────────────────────────────────────
+  function renderLogs() {
+    var viewer = document.getElementById('logViewer');
+    if (filteredLogs.length === 0) {
+      viewer.innerHTML = '<div class="text-center opacity-40 py-12">No matching log entries.</div>';
+      document.getElementById('countBadge').textContent = '0 / ' + allLogs.length + (totalFileLines ? ' of ' + totalFileLines : '');
+      return;
+    }
+
+    var html = '';
+    for (var i = 0; i < filteredLogs.length; i++) {
+      var e = filteredLogs[i];
+      var sel = (selectedEntry && selectedEntry.raw === e.raw && selectedEntry.timestamp === e.timestamp) ? ' selected' : '';
+      var stage = LOG_KEY_STAGE[e.log_key] || '';
+      var stageCls = stage ? ' log-stage-' + stage : '';
+      var stakeInfo = getStakeForEntry(e);
+      var stakedCls = stakeInfo ? ' staked' : '';
+      html += '<div class="log-line flex flex-wrap items-start gap-2 px-3 py-1' + sel + stageCls + stakedCls + '" data-idx="' + i + '" onclick="onLogClick(' + i + ')">';
+      if (stakeInfo) {
+        html += '<span class="stake-tag" style="background:' + stakeInfo.color + '">' + ICO.pin + ' S' + stakeInfo.stakeId + '</span>';
+      }
+      html += '<span class="log-ts">' + esc(e.timestamp) + '</span>';
+      html += levelBadge(e.level);
+      if (e.log_key) {
+        html += '<span class="badge badge-outline badge-xs">' + esc(e.log_key) + '</span>';
+      }
+      if (e.fields && e.fields.doc_id) {
+        html += '<span class="badge badge-primary badge-xs font-mono">' + ICO.doc + ' ' + esc(e.fields.doc_id) + '</span>';
+      }
+      html += '<span class="log-msg flex-1">' + esc(e.message) + '</span>';
+      // Extra fields as small badges
+      var keys = Object.keys(e.fields);
+      for (var j = 0; j < keys.length; j++) {
+        if (keys[j] === 'doc_id') continue;
+        var v = e.fields[keys[j]];
+        if (v.length > 60) v = v.substring(0, 57) + '…';
+        html += '<span class="badge badge-ghost badge-xs font-mono">' + esc(keys[j]) + '=' + esc(v) + '</span>';
+      }
+      html += '</div>';
+    }
+    viewer.innerHTML = html;
+    document.getElementById('countBadge').textContent = filteredLogs.length + ' / ' + allLogs.length + (totalFileLines ? ' of ' + totalFileLines : '');
+
+    if (tailing) {
+      viewer.scrollTop = viewer.scrollHeight;
+    }
+  }
+
+  function levelBadge(level) {
+    var cls = 'badge badge-xs ';
+    if (level === 'ERROR')        cls += 'badge-error';
+    else if (level === 'WARNING') cls += 'badge-warning';
+    else if (level === 'INFO')    cls += 'badge-info';
+    else                          cls += 'badge-ghost';
+    return '<span class="' + cls + '">' + esc(level) + '</span>';
+  }
+
+  function esc(s) {
+    if (!s) return '';
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Select / Insight ─────────────────────────────────────
+  var _clickTimer = null;
+  var _lastClickIdx = -1;
+
+  function onLogClick(idx) {
+    if (_clickTimer && _lastClickIdx === idx) {
+      // Double-click detected
+      clearTimeout(_clickTimer);
+      _clickTimer = null;
+      _lastClickIdx = -1;
+      addStake(idx);
+      return;
+    }
+    _lastClickIdx = idx;
+    _clickTimer = setTimeout(function() {
+      _clickTimer = null;
+      _lastClickIdx = -1;
+      selectLog(idx);
+    }, 250);
+  }
+
+  function selectLog(idx) {
+    selectedEntry = filteredLogs[idx];
+    renderLogs();
+    showInsight(selectedEntry);
+  }
+
+  function showInsight(entry) {
+    var panel = document.getElementById('insightPanel');
+    var content = document.getElementById('insightContent');
+
+    if (entry.level !== 'ERROR') {
+      panel.classList.remove('hidden');
+      var html = '<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">';
+      html += '<div><span class="font-semibold opacity-70 text-xs">Full Message</span><pre class="bg-base-200 p-2 rounded-lg text-xs mt-1 whitespace-pre-wrap max-h-32 overflow-y-auto">' + esc(entry.raw) + '</pre></div>';
+      html += '<div>' + renderFields(entry) + '</div>';
+      html += '</div>';
+      content.innerHTML = html;
+      return;
+    }
+
+    panel.classList.remove('hidden');
+    var html = '<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">';
+
+    // Left: Full error message
+    html += '<div><span class="font-semibold opacity-70 text-xs">Full Error Message</span>';
+    html += '<pre class="bg-base-200 p-2 rounded-lg text-xs mt-1 whitespace-pre-wrap max-h-32 overflow-y-auto">' + esc(entry.raw) + '</pre></div>';
+
+    // Right: Structured fields
+    html += '<div>' + renderFields(entry) + '</div>';
+    html += '</div>';
+
+    // Smart hints (full width below)
+    var textToSearch = (entry.message || '') + ' ' + (entry.fields.error_detail || '');
+    var hints = [];
+    for (var i = 0; i < ERROR_HINTS.length; i++) {
+      if (ERROR_HINTS[i].pattern.test(textToSearch)) {
+        hints.push(ERROR_HINTS[i]);
+      }
+    }
+    if (hints.length > 0) {
+      html += '<div class="mt-2"><span class="font-semibold opacity-70 text-xs">' + ICO.bulb + ' Suggestions</span>';
+      html += '<div class="space-y-1 mt-1">';
+      for (var h = 0; h < hints.length; h++) {
+        html += '<div class="alert alert-info text-xs py-1"><span>' + hints[h].icon + ' ' + esc(hints[h].hint) + '</span></div>';
+      }
+      html += '</div></div>';
+    }
+
+    content.innerHTML = html;
+  }
+
+  function renderFields(entry) {
+    var keys = Object.keys(entry.fields);
+    if (keys.length === 0) return '';
+    var html = '<div class="mb-3"><span class="font-semibold opacity-70 text-sm">Structured Fields</span>';
+    html += '<div class="overflow-x-auto mt-1"><table class="table table-xs"><tbody>';
+    for (var i = 0; i < keys.length; i++) {
+      html += '<tr><td class="font-mono font-semibold text-xs">' + esc(keys[i]) + '</td><td class="text-xs">' + esc(entry.fields[keys[i]]) + '</td></tr>';
+    }
+    html += '</tbody></table></div></div>';
+    return html;
+  }
+
+  function closeInsight() {
+    document.getElementById('insightPanel').classList.add('hidden');
+    selectedEntry = null;
+    renderLogs();
+  }
+
+  function copyError() {
+    if (!selectedEntry) return;
+    var text = selectedEntry.raw;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+  }
+
+  // ── Tail / Refresh ───────────────────────────────────────
+  function toggleTail() {
+    tailing = !tailing;
+    var btn = document.getElementById('btnTail');
+    if (tailing) {
+      btn.innerHTML = ICO.pause + ' Pause';
+      btn.classList.remove('btn-primary');
+      btn.classList.add('btn-warning');
+      refreshLogs();
+      tailTimer = setInterval(refreshLogs, 3000);
+    } else {
+      btn.innerHTML = ICO.play + ' Tail';
+      btn.classList.remove('btn-warning');
+      btn.classList.add('btn-primary');
+      if (tailTimer) { clearInterval(tailTimer); tailTimer = null; }
+    }
+  }
+
+  function refreshLogs() {
+    var fetchUrl = '/api/logs?file=' + encodeURIComponent(currentFile);
+    // Server-side level filter: if DEBUG is off, skip it server-side too
+    if (!activeLevels.DEBUG) fetchUrl += '&level=INFO';
+    fetch(fetchUrl)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var entries = data;
+        if (data && !Array.isArray(data) && Array.isArray(data.entries)) {
+          entries = data.entries;
+          totalFileLines = data.total_lines || 0;
+        }
+        if (Array.isArray(entries)) {
+          allLogs = [];
+          for (var i = 0; i < entries.length; i++) {
+            if (typeof entries[i] === 'string') {
+              allLogs.push(parseLogLine(entries[i]));
+            } else {
+              allLogs.push(entries[i]);
+            }
+          }
+        }
+        // Keep last N lines
+        if (allLogs.length > MAX_LINES) {
+          allLogs = allLogs.slice(allLogs.length - MAX_LINES);
+        }
+        applyFilters();
+        updateTimeRange();
+      })
+      .catch(function(err) {
+        console.error('Failed to fetch logs:', err);
+      });
+  }
+
+  // ── Stage filter toggle ──────────────────────────────────
+  function toggleStage(stage) {
+    activeStages[stage] = !activeStages[stage];
+    var btn = document.querySelector('.stage-btn[data-stage="' + stage + '"]');
+    if (btn) btn.classList.toggle('off', !activeStages[stage]);
+    applyFilters();
+  }
+
+  // ── Feed Online/Offline toggle ──────────────────────────
+  function toggleFeed() {
+    var action = feedOnline ? 'offline' : 'online';
+    var msg = feedOnline
+      ? 'Pause the feed? The worker stays alive but stops processing changes.'
+      : 'Resume the feed? The worker will reconnect and process changes.';
+    if (!confirm(msg)) return;
+    fetch('/api/' + action, { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok || data.message) {
+          feedOnline = !feedOnline;
+          updateFeedUI();
+        }
+      })
+      .catch(function() {});
+  }
+
+  function updateFeedUI() {
+    document.getElementById('feedIcon').style.color = feedOnline ? '#36d399' : '#f87272';
+    document.getElementById('feedLabel').textContent = feedOnline ? 'Online' : 'Offline';
+  }
+
+  // Poll worker status to sync feed button
+  function pollFeedStatus() {
+    fetch('/api/worker-status')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (typeof data.online === 'boolean') {
+          feedOnline = data.online;
+          updateFeedUI();
+        }
+      })
+      .catch(function() {});
+  }
+  pollFeedStatus();
+  setInterval(pollFeedStatus, 10000);
+
+  // ── Filter button handlers ───────────────────────────────
+  document.querySelectorAll('.filter-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var type = btn.getAttribute('data-filter');
+      var value = btn.getAttribute('data-value');
+      if (type === 'level') {
+        activeLevels[value] = !activeLevels[value];
+      } else if (type === 'log_key') {
+        activeLogKeys[value] = !activeLogKeys[value];
+      }
+      btn.classList.toggle('off', type === 'level' ? !activeLevels[value] : !activeLogKeys[value]);
+      // Toggling DEBUG on/off changes the server-side filter, so refetch
+      if (type === 'level' && value === 'DEBUG') {
+        refreshLogs();
+      } else {
+        applyFilters();
+      }
+    });
+  });
+
+  document.getElementById('logSearch').addEventListener('input', function() {
+    applyFilters();
+  });
+
+  document.getElementById('rangeMin').addEventListener('input', function() {
+    var minV = parseInt(this.value);
+    var maxV = parseInt(document.getElementById('rangeMax').value);
+    if (minV > maxV - 1) this.value = maxV - 1;
+    updateRangeLabel();
+    applyFilters();
+  });
+
+  document.getElementById('rangeMax').addEventListener('input', function() {
+    var maxV = parseInt(this.value);
+    var minV = parseInt(document.getElementById('rangeMin').value);
+    if (maxV < minV + 1) this.value = minV + 1;
+    updateRangeLabel();
+    applyFilters();
+  });
+
+  // ── File picker ─────────────────────────────────────────
+  function loadFileList() {
+    fetch('/api/log-files')
+      .then(function(r) { return r.json(); })
+      .then(function(files) {
+        var sel = document.getElementById('logFileSelect');
+        sel.innerHTML = '';
+        for (var i = 0; i < files.length; i++) {
+          var opt = document.createElement('option');
+          opt.value = files[i].name;
+          opt.textContent = files[i].name;
+          if (files[i].name === currentFile) opt.selected = true;
+          sel.appendChild(opt);
+        }
+        updateFileMeta(files);
+      })
+      .catch(function() {});
+  }
+
+  function updateFileMeta(files) {
+    var meta = document.getElementById('logFileMeta');
+    for (var i = 0; i < files.length; i++) {
+      if (files[i].name === currentFile) {
+        var kb = (files[i].size_bytes / 1024).toFixed(1);
+        meta.textContent = kb + ' KB — modified ' + files[i].modified;
+        break;
+      }
+    }
+  }
+
+  function onFileChange() {
+    currentFile = document.getElementById('logFileSelect').value;
+    loadFileList();
+    refreshLogs();
+  }
+
+  // ── Date range ──────────────────────────────────────────
+  function updateTimeRange() {
+    if (allLogs.length === 0) return;
+    var first = parseTS(allLogs[0].timestamp);
+    var last = parseTS(allLogs[allLogs.length - 1].timestamp);
+    if (!first || !last) return;
+    timeRangeMin = first;
+    timeRangeMax = last;
+    document.getElementById('rangeMin').value = 0;
+    document.getElementById('rangeMax').value = 100;
+    updateRangeLabel();
+  }
+
+  function parseTS(ts) {
+    if (!ts) return null;
+    var s = ts.replace(',', '.');
+    return new Date(s.replace(' ', 'T'));
+  }
+
+  function updateRangeLabel() {
+    var minVal = parseInt(document.getElementById('rangeMin').value);
+    var maxVal = parseInt(document.getElementById('rangeMax').value);
+    if (!timeRangeMin || !timeRangeMax) return;
+
+    var span = timeRangeMax.getTime() - timeRangeMin.getTime();
+    var fromDate = new Date(timeRangeMin.getTime() + span * minVal / 100);
+    var toDate = new Date(timeRangeMin.getTime() + span * maxVal / 100);
+
+    var label = document.getElementById('rangeLabel');
+    label.textContent = fmtDT(fromDate) + '  →  ' + fmtDT(toDate);
+
+    document.getElementById('rangeFill').style.left = minVal + '%';
+    document.getElementById('rangeFill').style.right = (100 - maxVal) + '%';
+  }
+
+  function fmtDT(d) {
+    var mo = String(d.getMonth() + 1).padStart(2, '0');
+    var dy = String(d.getDate()).padStart(2, '0');
+    var h = String(d.getHours()).padStart(2, '0');
+    var m = String(d.getMinutes()).padStart(2, '0');
+    var s = String(d.getSeconds()).padStart(2, '0');
+    return mo + '-' + dy + ' ' + h + ':' + m + ':' + s;
+  }
+
+  // ── Charts ──────────────────────────────────────────────
+  function initCharts() {
+    chartLevels = echarts.init(document.getElementById('chartLevels'));
+    chartStages = echarts.init(document.getElementById('chartStages'));
+    chartTimeline = echarts.init(document.getElementById('chartTimeline'));
+    chartPipeline = echarts.init(document.getElementById('chartPipeline'));
+
+    // Sync crosshair between the two line charts
+    echarts.connect([chartTimeline, chartPipeline]);
+
+    // Double-click anywhere on chart → scroll log viewer to that timestamp
+    function scrollLogsToBucket(bucketKey) {
+      if (!bucketKey) return;
+      var viewer = document.getElementById('logViewer');
+      var lines = viewer.querySelectorAll('.log-line');
+      for (var i = 0; i < filteredLogs.length; i++) {
+        var ts = parseTS(filteredLogs[i].timestamp);
+        if (!ts) continue;
+        var key = ts.getFullYear() + '-' + String(ts.getMonth()+1).padStart(2,'0') + '-' + String(ts.getDate()).padStart(2,'0') + ' ' + String(ts.getHours()).padStart(2,'0') + ':' + String(ts.getMinutes()).padStart(2,'0');
+        if (key === bucketKey) {
+          if (lines[i]) {
+            lines[i].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            lines[i].classList.add('selected');
+            setTimeout(function(el) { el.classList.remove('selected'); }, 1500, lines[i]);
+          }
+          break;
+        }
+      }
+    }
+
+    function onChartDblClick(chart) {
+      chart.getZr().on('dblclick', function(params) {
+        if (!lastBucketKeys.length) return;
+        var px = params.offsetX;
+        var xAxis = chart.getModel().getComponent('xAxis', 0);
+        if (!xAxis) return;
+        var coordSys = chart.getModel().getSeriesByIndex(0).coordinateSystem;
+        if (!coordSys) return;
+        var dataIdx = coordSys.getAxis('x').getExtent ? null : null;
+        // Convert pixel to data index via containPoint + pointToData
+        var point = [px, params.offsetY];
+        var data = coordSys.pointToData(point);
+        if (data == null) return;
+        var idx = Math.round(data[0]);
+        if (idx < 0) idx = 0;
+        if (idx >= lastBucketKeys.length) idx = lastBucketKeys.length - 1;
+        scrollLogsToBucket(lastBucketKeys[idx]);
+      });
+    }
+    onChartDblClick(chartTimeline);
+    onChartDblClick(chartPipeline);
+
+    window.addEventListener('resize', function() {
+      if (chartLevels) chartLevels.resize();
+      if (chartStages) chartStages.resize();
+      if (chartTimeline) chartTimeline.resize();
+      if (chartPipeline) chartPipeline.resize();
+    });
+  }
+
+  function toggleYScale() {
+    yAxisLog = !yAxisLog;
+    document.getElementById('btnScaleToggle').textContent = yAxisLog ? 'Y: Log' : 'Y: Linear';
+    updateCharts();
+  }
+
+  // ── Stakes ──────────────────────────────────────────────
+  function getStakeForEntry(entry) {
+    for (var i = 0; i < stakes.length; i++) {
+      if (stakes[i].timestamp === entry.timestamp && stakes[i].raw === entry.raw) return stakes[i];
+    }
+    return null;
+  }
+
+  function addStake(idx) {
+    var entry = filteredLogs[idx];
+    // Toggle: if already staked, remove it
+    for (var i = 0; i < stakes.length; i++) {
+      if (stakes[i].timestamp === entry.timestamp && stakes[i].raw === entry.raw) {
+        stakes.splice(i, 1);
+        updateStakeUI();
+        return;
+      }
+    }
+    stakeCounter++;
+    var ts = parseTS(entry.timestamp);
+    var bucketKey = '';
+    if (ts) {
+      bucketKey = ts.getFullYear() + '-' + String(ts.getMonth()+1).padStart(2,'0') + '-' + String(ts.getDate()).padStart(2,'0') + ' ' + String(ts.getHours()).padStart(2,'0') + ':' + String(ts.getMinutes()).padStart(2,'0');
+    }
+    var color = STAKE_COLORS[(stakeCounter - 1) % STAKE_COLORS.length];
+    stakes.push({ timestamp: entry.timestamp, raw: entry.raw, bucketKey: bucketKey, stakeId: stakeCounter, color: color });
+    updateStakeUI();
+  }
+
+  function clearStakes() {
+    stakes = [];
+    updateStakeUI();
+  }
+
+  function updateStakeUI() {
+    var badge = document.getElementById('stakesBadge');
+    if (stakes.length > 0) {
+      badge.classList.remove('hidden');
+      badge.classList.add('flex');
+      document.getElementById('stakesCount').innerHTML = ICO.pin + ' ' + stakes.length + ' stake' + (stakes.length > 1 ? 's' : '');
+    } else {
+      badge.classList.add('hidden');
+      badge.classList.remove('flex');
+    }
+    renderLogs();
+    updateCharts();
+  }
+
+  function buildMarkLines() {
+    if (stakes.length === 0) return undefined;
+    var lines = [];
+    for (var i = 0; i < stakes.length; i++) {
+      var s = stakes[i];
+      lines.push({
+        xAxis: s.bucketKey,
+        lineStyle: { type: 'dashed', color: s.color, width: 2 },
+        label: { formatter: 'S' + s.stakeId, color: s.color, fontSize: 10, fontWeight: 'bold', position: 'insideStartTop' }
+      });
+    }
+    return { symbol: 'none', data: lines };
+  }
+
+  function updateBadgeCounts() {
+    var logs = filteredLogs;
+    // Level counts
+    var lc = { ERROR: 0, WARNING: 0, INFO: 0, DEBUG: 0 };
+    var sc = { source: 0, process: 0, output: 0, dlq: 0 };
+    var kc = {};
+    for (var i = 0; i < logs.length; i++) {
+      var e = logs[i];
+      if (lc.hasOwnProperty(e.level)) lc[e.level]++;
+      var st = LOG_KEY_STAGE[e.log_key] || 'process';
+      if (sc.hasOwnProperty(st)) sc[st]++;
+      if (e.log_key) kc[e.log_key] = (kc[e.log_key] || 0) + 1;
+    }
+    document.querySelectorAll('.level-count').forEach(function(el) {
+      var v = el.getAttribute('data-level-count');
+      el.textContent = '(' + (lc[v] || 0) + ')';
+    });
+    document.querySelectorAll('.stage-count').forEach(function(el) {
+      var v = el.getAttribute('data-stage-count');
+      el.textContent = '(' + (sc[v] || 0) + ')';
+    });
+    document.querySelectorAll('.key-count').forEach(function(el) {
+      var v = el.getAttribute('data-key-count');
+      el.textContent = '(' + (kc[v] || 0) + ')';
+    });
+  }
+
+  function updateCharts() {
+    if (!chartLevels) return;
+    var logs = filteredLogs;
+
+    // --- Badge counts ---
+    updateBadgeCounts();
+
+    // --- Aggregate counts ---
+    var levelCounts = { ERROR: 0, WARNING: 0, INFO: 0, DEBUG: 0 };
+    var stageCounts = { source: 0, process: 0, output: 0, dlq: 0 };
+    for (var i = 0; i < logs.length; i++) {
+      var lv = logs[i].level;
+      if (levelCounts.hasOwnProperty(lv)) levelCounts[lv]++;
+      var st = LOG_KEY_STAGE[logs[i].log_key] || 'process';
+      if (stageCounts.hasOwnProperty(st)) stageCounts[st]++;
+    }
+
+    // --- Bar: Log Levels ---
+    chartLevels.setOption({
+      tooltip: { trigger: 'axis' },
+      grid: { left: 60, right: 20, top: 10, bottom: 25 },
+      xAxis: { type: 'category', data: ['ERROR', 'WARNING', 'INFO', 'DEBUG'], axisLabel: { color: '#aaa', fontSize: 11 }, axisLine: { lineStyle: { color: '#555' } } },
+      yAxis: { type: 'value', axisLabel: { color: '#888', fontSize: 10 }, splitLine: { lineStyle: { color: '#333' } } },
+      series: [{
+        type: 'bar', barWidth: '50%',
+        data: [
+          { value: levelCounts.ERROR,   itemStyle: { color: '#f87272' } },
+          { value: levelCounts.WARNING, itemStyle: { color: '#fbbd23' } },
+          { value: levelCounts.INFO,    itemStyle: { color: '#3abff8' } },
+          { value: levelCounts.DEBUG,   itemStyle: { color: '#6b7280' } }
+        ],
+        label: { show: true, position: 'top', color: '#aaa', fontSize: 11 }
+      }]
+    });
+
+    // --- Bar: Pipeline Stages ---
+    chartStages.setOption({
+      tooltip: { trigger: 'axis' },
+      grid: { left: 60, right: 20, top: 10, bottom: 25 },
+      xAxis: { type: 'category', data: ['Source', 'Process', 'DLQ', 'Output'], axisLabel: { color: '#aaa', fontSize: 11 }, axisLine: { lineStyle: { color: '#555' } } },
+      yAxis: { type: 'value', axisLabel: { color: '#888', fontSize: 10 }, splitLine: { lineStyle: { color: '#333' } } },
+      series: [{
+        type: 'bar', barWidth: '50%',
+        data: [
+          { value: stageCounts.source,  itemStyle: { color: '#36d399' } },
+          { value: stageCounts.process, itemStyle: { color: '#3abff8' } },
+          { value: stageCounts.dlq,     itemStyle: { color: '#f87272' } },
+          { value: stageCounts.output,  itemStyle: { color: '#fbbd23' } }
+        ],
+        label: { show: true, position: 'top', color: '#aaa', fontSize: 11 }
+      }]
+    });
+
+    // --- Time buckets (shared by both line charts) ---
+    var buckets = {};
+    var bucketKeys = [];
+    for (var i = 0; i < logs.length; i++) {
+      var ts = parseTS(logs[i].timestamp);
+      if (!ts) continue;
+      var key = ts.getFullYear() + '-' + String(ts.getMonth()+1).padStart(2,'0') + '-' + String(ts.getDate()).padStart(2,'0') + ' ' + String(ts.getHours()).padStart(2,'0') + ':' + String(ts.getMinutes()).padStart(2,'0');
+      if (!buckets[key]) {
+        buckets[key] = { errors: 0, warnings: 0, info: 0, debug: 0, source: 0, process: 0, output: 0, dlq: 0, changes: 0, total: 0, docs_in: 0, docs_out_ok: 0, docs_out_fail: 0, retries: 0 };
+        bucketKeys.push(key);
+      }
+      var b = buckets[key];
+      var e = logs[i];
+      b.total++;
+      if (e.level === 'ERROR') b.errors++;
+      if (e.level === 'WARNING') b.warnings++;
+      if (e.level === 'INFO') b.info++;
+      if (e.level === 'DEBUG') b.debug++;
+      var stg = LOG_KEY_STAGE[e.log_key] || 'process';
+      b[stg]++;
+      if (e.log_key === 'CHANGES') b.changes++;
+      // Actual document counts for pipeline correlation
+      if (e.fields && e.fields.doc_count) b.docs_in += parseInt(e.fields.doc_count, 10) || 0;
+      if (stg === 'output' && e.fields && e.fields.doc_id) {
+        if (e.level === 'ERROR') b.docs_out_fail++; else b.docs_out_ok++;
+      }
+      if (e.log_key === 'RETRY') b.retries++;
+    }
+
+    var xData = bucketKeys;
+    lastBucketKeys = bucketKeys;
+    var docsInData = [], docsOutData = [], retriesData = [], pendingData = [], failRateData = [];
+    var srcData = [], prcData = [], outStgData = [], dlqData = [];
+    var cumDocsIn = 0, cumDocsOutOk = 0, cumDocsOutFail = 0;
+    for (var i = 0; i < xData.length; i++) {
+      var b = buckets[xData[i]];
+      docsInData.push(b.docs_in);
+      docsOutData.push(b.docs_out_ok);
+      retriesData.push(b.retries);
+      srcData.push(b.source);
+      prcData.push(b.process);
+      outStgData.push(b.output);
+      dlqData.push(b.dlq);
+      cumDocsIn += b.docs_in;
+      cumDocsOutOk += b.docs_out_ok;
+      cumDocsOutFail += b.docs_out_fail;
+      pendingData.push(cumDocsIn - cumDocsOutOk);
+      var totalAttempts = cumDocsOutOk + cumDocsOutFail;
+      failRateData.push(totalAttempts > 0 ? Math.round((cumDocsOutFail / totalAttempts) * 100) : 0);
+    }
+
+    var yType = yAxisLog ? 'log' : 'value';
+    var yAxisOpt = { type: yType, axisLabel: { color: '#888', fontSize: 10 }, splitLine: { lineStyle: { color: '#333' } } };
+    if (yAxisLog) yAxisOpt.min = 1;
+    var crosshairTooltip = { trigger: 'axis', backgroundColor: 'rgba(30,30,30,0.9)', borderColor: '#555', textStyle: { color: '#ddd' }, axisPointer: { type: 'cross', crossStyle: { color: '#666' }, lineStyle: { color: '#666' } } };
+
+    var stakeMarkLine = buildMarkLines();
+
+    // --- Line: Activity Timeline ---
+    chartTimeline.setOption({
+      tooltip: crosshairTooltip,
+      legend: { data: ['Docs In', 'Docs Out', 'Retries', 'Pending', 'Fail %'], textStyle: { color: '#aaa', fontSize: 11 }, top: 0 },
+      grid: { left: 50, right: 55, top: 30, bottom: 20 },
+      xAxis: { type: 'category', data: xData, axisLabel: { color: '#888', fontSize: 10, rotate: 30 }, axisLine: { lineStyle: { color: '#555' } }, axisPointer: { label: { show: true } } },
+      yAxis: [
+        yAxisOpt,
+        { type: 'value', position: 'right', min: 0, max: 100, axisLabel: { color: '#f87272', fontSize: 10, formatter: '{value}%' }, axisLine: { lineStyle: { color: '#f87272' } }, splitLine: { show: false } }
+      ],
+      series: [
+        { name: 'Docs In',  type: 'line', data: docsInData,  smooth: true, lineStyle: { width: 2, color: '#36d399' }, itemStyle: { color: '#36d399' }, symbol: 'none', markLine: stakeMarkLine },
+        { name: 'Docs Out', type: 'line', data: docsOutData, smooth: true, lineStyle: { width: 2, color: '#3abff8' }, itemStyle: { color: '#3abff8' }, symbol: 'none' },
+        { name: 'Retries',  type: 'line', data: retriesData, smooth: true, lineStyle: { width: 2, color: '#fbbd23' }, itemStyle: { color: '#fbbd23' }, symbol: 'none' },
+        { name: 'Pending',  type: 'line', data: pendingData, smooth: true, lineStyle: { width: 2, color: '#7c3aed' }, itemStyle: { color: '#7c3aed' }, symbol: 'none', areaStyle: { color: 'rgba(124,58,237,0.08)' } },
+        { name: 'Fail %',   type: 'line', data: failRateData, smooth: true, lineStyle: { width: 2, color: '#f87272', type: 'dashed' }, itemStyle: { color: '#f87272' }, symbol: 'none', yAxisIndex: 1, connectNulls: true }
+      ]
+    });
+
+    // --- Line: Pipeline Timeline ---
+    chartPipeline.setOption({
+      tooltip: crosshairTooltip,
+      legend: { data: ['Source', 'Process', 'DLQ', 'Output'], textStyle: { color: '#aaa', fontSize: 11 }, top: 0 },
+      grid: { left: 50, right: 20, top: 30, bottom: 20 },
+      xAxis: { type: 'category', data: xData, axisLabel: { color: '#888', fontSize: 10, rotate: 30 }, axisLine: { lineStyle: { color: '#555' } }, axisPointer: { label: { show: true } } },
+      yAxis: yAxisOpt,
+      series: [
+        { name: 'Source',  type: 'line', data: srcData,    smooth: true, lineStyle: { width: 2, color: '#36d399' }, itemStyle: { color: '#36d399' }, symbol: 'none', areaStyle: { color: 'rgba(54,211,153,0.08)' }, markLine: stakeMarkLine },
+        { name: 'Process', type: 'line', data: prcData,    smooth: true, lineStyle: { width: 2, color: '#3abff8' }, itemStyle: { color: '#3abff8' }, symbol: 'none', areaStyle: { color: 'rgba(58,191,248,0.08)' } },
+        { name: 'DLQ',     type: 'line', data: dlqData,    smooth: true, lineStyle: { width: 2, color: '#f87272' }, itemStyle: { color: '#f87272' }, symbol: 'none', areaStyle: { color: 'rgba(248,114,114,0.08)' } },
+        { name: 'Output',  type: 'line', data: outStgData, smooth: true, lineStyle: { width: 2, color: '#fbbd23' }, itemStyle: { color: '#fbbd23' }, symbol: 'none', areaStyle: { color: 'rgba(251,189,35,0.08)' } }
+      ]
+    });
+  }
+
+  // ── Inject SVG icons into static buttons ─────────────────
+  document.getElementById('btnTail').innerHTML = ICO.play + ' Tail';
+  document.getElementById('btnRefresh').innerHTML = ICO.refresh;
+  document.getElementById('btnCopyError').innerHTML = ICO.clipboard + ' Copy';
+  document.getElementById('btnCloseInsight').innerHTML = ICO.x;
+  document.getElementById('btnClearStakes').innerHTML = ICO.x;
+
+  initCharts();
+  loadFileList();
+  </script>
+
+  <script src="/static/js/sidebar.js"></script>
+
+</body>
+</html>

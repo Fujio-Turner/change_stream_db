@@ -20,6 +20,8 @@
     { type: 'divider' },
 
     { type: 'section', label: 'System' },
+    { href: '/dlq',        label: 'Dead Letters',      icon: '/static/icons/dlq.svg'      },
+    { href: '/logs',       label: 'Logs',              icon: '/static/icons/logs.svg'     },
     { href: '/settings',   label: 'Settings',         icon: '/static/icons/settings.svg' },
 
     { type: 'section', label: 'Reference' },

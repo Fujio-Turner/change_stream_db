@@ -1490,6 +1490,12 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
                 "docs will be skipped and the checkpoint will still advance"
             )
 
+        data_error_action = out_cfg.get("data_error_action", "dlq")
+        if data_error_action not in ("dlq", "skip"):
+            errors.append(
+                f"output.data_error_action must be 'dlq' or 'skip', got '{data_error_action}'"
+            )
+
     # -- retry -----------------------------------------------------------------
     retry_cfg = cfg.get("retry", {})
     max_retries = retry_cfg.get("max_retries", 5)

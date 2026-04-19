@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Changes Worker -- DLQ Explorer</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
+  <script src="/static/js/tailwind.js"></script>
+  <script src="/static/js/echarts.min.js"></script>
+  <script>
+    (function(){
+      var t = localStorage.getItem('cw_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <style>
+    .dlq-row { cursor: pointer; transition: background 0.1s; }
+    .dlq-row:hover { filter: brightness(1.15); }
+    .dlq-row.selected { outline: 1px solid oklch(var(--p)); filter: brightness(1.2); }
+    .inspector-pre { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; font-size: 0.8rem; max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; background: oklch(var(--b3)); padding: 1rem; border-radius: 0.5rem; }
+    .error-pre { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; background: oklch(var(--b3)); padding: 0.75rem; border-radius: 0.5rem; }
+    .sortable { cursor: pointer; user-select: none; }
+    .sortable:hover { opacity: 0.8; }
+    .sort-arrow { font-size: 0.6rem; margin-left: 2px; }
+    .countdown { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; font-size: 0.75rem; white-space: nowrap; }
+    .countdown-urgent { color: #f87272; animation: pulse-countdown 1s ease-in-out infinite; }
+    .countdown-warning { color: #fbbd23; }
+    .countdown-ok { color: #36d399; }
+    .countdown-none { opacity: 0.4; }
+    @keyframes pulse-countdown { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  </style>
+</head>
+<body class="min-h-screen bg-base-200">
+  <div id="sidebar-root"></div>
+
+  <div class="sidebar-main">
+  <main class="w-full mx-auto p-6 space-y-4">
+
+    <!-- Header row -->
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <h1 class="text-xl font-bold">DLQ Explorer</h1>
+        <div class="tooltip tooltip-right" data-tip="Dead Letter Queue — entries that failed to send to the output endpoint. Inspect, replay, or clear them here.">
+          <button class="btn btn-ghost btn-xs btn-circle text-base-content/50">?</button>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="btn btn-sm btn-ghost" onclick="loadDlqData()">⟳ Refresh</button>
+        <button class="btn btn-sm btn-error btn-outline" onclick="clearAll()">Clear All</button>
+      </div>
+    </div>
+
+    <!-- Summary stat cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div class="stat bg-base-100 rounded-2xl shadow p-4">
+        <div class="stat-title text-xs">Total</div>
+        <div class="stat-value text-2xl" id="statTotal">0</div>
+      </div>
+      <div class="stat bg-base-100 rounded-2xl shadow p-4">
+        <div class="stat-title text-xs">Pending</div>
+        <div class="stat-value text-2xl text-warning" id="statPending">0</div>
+      </div>
+      <div class="stat bg-base-100 rounded-2xl shadow p-4">
+        <div class="stat-title text-xs">Retried</div>
+        <div class="stat-value text-2xl text-success" id="statRetried">0</div>
+      </div>
+      <div class="stat bg-base-100 rounded-2xl shadow p-4">
+        <div class="stat-title text-xs">Oldest</div>
+        <div class="stat-value text-2xl" id="statOldest">—</div>
+      </div>
+    </div>
+
+    <!-- Charts row -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="card bg-base-100 shadow rounded-2xl">
+        <div class="card-body p-4">
+          <h2 class="card-title text-sm">Arrivals Over Time</h2>
+          <div id="chartArrivals" style="height:260px;"></div>
+        </div>
+      </div>
+      <div class="card bg-base-100 shadow rounded-2xl">
+        <div class="card-body p-4">
+          <h2 class="card-title text-sm">Reasons Breakdown</h2>
+          <div id="chartReasons" style="height:260px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Filter + Table -->
+    <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="card-title text-sm">Entries</h2>
+          <select id="reasonFilter" class="select select-bordered select-sm w-48" onchange="filterByReason(this.value)">
+            <option value="">All Reasons</option>
+            <option value="data_error">Data Error</option>
+            <option value="client_error">Client Error</option>
+            <option value="server_error">Server Error</option>
+            <option value="connection">Connection Failure</option>
+            <option value="shutdown">Shutdown In-flight</option>
+            <option value="redirect">Redirect</option>
+            <option value="unknown">Unknown</option>
+          </select>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="table table-sm w-full" id="dlqTable">
+            <thead>
+              <tr>
+                <th class="sortable" onclick="sortTable('doc_id_original')">Doc ID <span class="sort-arrow" id="sort-doc_id_original"></span></th>
+                <th class="sortable" onclick="sortTable('reason')">Reason <span class="sort-arrow" id="sort-reason"></span></th>
+                <th class="sortable" onclick="sortTable('error')">Error <span class="sort-arrow" id="sort-error"></span></th>
+                <th class="sortable" onclick="sortTable('time')">Time <span class="sort-arrow" id="sort-time"></span></th>
+                <th class="sortable" onclick="sortTable('expires_at')">Expires <span class="sort-arrow" id="sort-expires_at"></span></th>
+                <th class="sortable" onclick="sortTable('replay_attempts')">Replays <span class="sort-arrow" id="sort-replay_attempts"></span></th>
+                <th class="sortable" onclick="sortTable('retried')">Status <span class="sort-arrow" id="sort-retried"></span></th>
+                <th class="w-10"></th>
+              </tr>
+            </thead>
+            <tbody id="dlqTableBody">
+              <tr><td colspan="8" class="text-center opacity-50 py-8">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="flex items-center justify-between mt-3">
+          <div class="text-xs opacity-50" id="pageInfo">—</div>
+          <div class="join" id="pagination"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Inspector panel (hidden by default) -->
+    <div id="inspectorPanel" class="card bg-base-100 shadow rounded-2xl hidden">
+      <div class="card-body p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="card-title text-sm">Entry Inspector</h2>
+          <button class="btn btn-ghost btn-sm btn-circle" onclick="closeInspector()">✕</button>
+        </div>
+
+        <!-- Metadata grid -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-4">
+          <div>
+            <div class="opacity-50 text-xs">Doc ID</div>
+            <div class="font-mono" id="insDocId">—</div>
+          </div>
+          <div>
+            <div class="opacity-50 text-xs">Sequence</div>
+            <div class="font-mono" id="insSeq">—</div>
+          </div>
+          <div>
+            <div class="opacity-50 text-xs">Method</div>
+            <div class="font-mono" id="insMethod">—</div>
+          </div>
+          <div>
+            <div class="opacity-50 text-xs">Status</div>
+            <div class="font-mono" id="insStatus">—</div>
+          </div>
+          <div>
+            <div class="opacity-50 text-xs">Reason</div>
+            <div id="insReason">—</div>
+          </div>
+          <div>
+            <div class="opacity-50 text-xs">Target URL</div>
+            <div class="font-mono truncate" id="insTargetUrl">—</div>
+          </div>
+          <div>
+            <div class="opacity-50 text-xs">Time</div>
+            <div id="insTime">—</div>
+          </div>
+          <div>
+            <div class="opacity-50 text-xs">Replay Attempts</div>
+            <div id="insReplays">—</div>
+          </div>
+          <div>
+            <div class="opacity-50 text-xs">Expires In</div>
+            <div id="insExpires" class="font-mono">—</div>
+          </div>
+        </div>
+
+        <!-- Error Detail -->
+        <div class="mb-4">
+          <div class="opacity-50 text-xs mb-1">Error Detail</div>
+          <div class="error-pre" id="insError">—</div>
+        </div>
+
+        <!-- Suggested Fix -->
+        <div class="mb-4">
+          <div class="opacity-50 text-xs mb-1">Suggested Fix</div>
+          <div class="alert alert-info text-sm" id="insSuggestedFix">—</div>
+        </div>
+
+        <!-- Document Body -->
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <div class="opacity-50 text-xs">Document Body</div>
+            <button class="btn btn-ghost btn-xs gap-1 opacity-60 hover:opacity-100" onclick="copyDocBody()">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+              Copy
+            </button>
+          </div>
+          <pre class="inspector-pre" id="insDocBody">—</pre>
+        </div>
+      </div>
+    </div>
+
+  </main>
+  </div><!-- /sidebar-main -->
+
+  <!-- Toast container -->
+  <div id="toastContainer" class="toast toast-end toast-bottom z-50"></div>
+
+<script>
+var pageEntries = [];
+var currentSort = { col: 'time', asc: false };
+var currentFilter = '';
+var currentPage = 0;
+var PAGE_SIZE = 20;
+var totalFiltered = 0;
+var totalAll = 0;
+var arrivalsChart = null;
+var reasonsChart = null;
+
+// ── Utilities ───────────────────────────────────────────
+
+function timeAgo(epoch) {
+  if (!epoch) return '—';
+  var now = Date.now() / 1000;
+  var diff = now - epoch;
+  if (diff < 0) diff = 0;
+  if (diff < 60) return Math.floor(diff) + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+function formatTime(epoch) {
+  if (!epoch) return '—';
+  return new Date(epoch * 1000).toLocaleString();
+}
+
+function truncate(str, len) {
+  if (!str) return '';
+  return str.length > len ? str.substring(0, len) + '…' : str;
+}
+
+function countdownStr(expiresAt) {
+  if (!expiresAt) return { text: 'never', cls: 'countdown-none' };
+  var now = Date.now() / 1000;
+  var remaining = expiresAt - now;
+  if (remaining <= 0) return { text: 'expired', cls: 'countdown-urgent' };
+  var d = Math.floor(remaining / 86400);
+  var h = Math.floor((remaining % 86400) / 3600);
+  var m = Math.floor((remaining % 3600) / 60);
+  var s = Math.floor(remaining % 60);
+  var text = '';
+  if (d > 0) text += d + 'd ';
+  if (d > 0 || h > 0) text += String(h).padStart(2, '0') + ':';
+  text += String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  var cls = 'countdown-ok';
+  if (remaining < 3600) cls = 'countdown-urgent';
+  else if (remaining < 14400) cls = 'countdown-warning';
+  return { text: text.trim(), cls: cls };
+}
+
+function countdownHtml(expiresAt) {
+  var c = countdownStr(expiresAt);
+  return '<span class="countdown ' + c.cls + '" data-expires="' + (expiresAt || 0) + '">' + c.text + '</span>';
+}
+
+var _countdownTimer = null;
+function startCountdownTicker() {
+  if (_countdownTimer) return;
+  _countdownTimer = setInterval(function() {
+    var els = document.querySelectorAll('.countdown[data-expires]');
+    for (var i = 0; i < els.length; i++) {
+      var exp = parseInt(els[i].getAttribute('data-expires'), 10);
+      if (!exp) continue;
+      var c = countdownStr(exp);
+      els[i].textContent = c.text;
+      els[i].className = 'countdown ' + c.cls;
+    }
+  }, 1000);
+}
+
+function reasonBadge(reason) {
+  if (!reason) return '<span class="badge badge-ghost badge-sm">unknown</span>';
+  var r = reason.toLowerCase();
+  if (r.startsWith('data_error')) return '<span class="badge badge-warning badge-sm">' + escHtml(reason) + '</span>';
+  if (r.startsWith('client_error')) return '<span class="badge badge-warning badge-sm" style="color:#fb923c;border-color:#fb923c;">' + escHtml(reason) + '</span>';
+  if (r.startsWith('server_error')) return '<span class="badge badge-error badge-sm">' + escHtml(reason) + '</span>';
+  if (r.startsWith('connection_failure')) return '<span class="badge badge-error badge-sm">' + escHtml(reason) + '</span>';
+  if (r.startsWith('shutdown_inflight')) return '<span class="badge badge-info badge-sm">' + escHtml(reason) + '</span>';
+  if (r.startsWith('redirect')) return '<span class="badge badge-ghost badge-sm">' + escHtml(reason) + '</span>';
+  return '<span class="badge badge-ghost badge-sm">' + escHtml(reason) + '</span>';
+}
+
+function statusBadge(retried) {
+  if (retried) return '<span class="badge badge-success badge-sm">retried</span>';
+  return '<span class="badge badge-warning badge-sm badge-outline">pending</span>';
+}
+
+function suggestedFix(reason) {
+  if (!reason) return 'Inspect the error detail above for more information';
+  var r = reason.toLowerCase();
+  if (r.startsWith('data_error')) return 'Fix the schema mapping or correct the source data, then replay';
+  if (r.startsWith('client_error')) return 'Check the output endpoint configuration and request format';
+  if (r.startsWith('server_error')) return 'The output server had an error. It may self-heal — try replaying later';
+  if (r.startsWith('connection_failure')) return 'Check network connectivity and firewall rules to the output target';
+  if (r.startsWith('shutdown_inflight')) return 'This doc was in-flight during shutdown. It will auto-replay on next startup';
+  return 'Inspect the error detail above for more information';
+}
+
+function escHtml(str) {
+  var d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+function showToast(message, type) {
+  var container = document.getElementById('toastContainer');
+  var alertClass = type === 'success' ? 'alert-success' : type === 'error' ? 'alert-error' : 'alert-info';
+  var toast = document.createElement('div');
+  toast.className = 'alert ' + alertClass;
+  toast.innerHTML = '<span>' + message + '</span>';
+  container.appendChild(toast);
+  setTimeout(function() { toast.remove(); }, 3000);
+}
+
+// ── Data loading ────────────────────────────────────────
+
+function loadDlqData() {
+  // Stats (cards + charts) — lightweight, scans all entries server-side
+  fetch('/api/dlq/stats').then(function(r) { return r.json(); })
+    .then(function(stats) {
+      renderStats(stats);
+      renderCharts(stats);
+    }).catch(function(err) {
+      console.error('Failed to load DLQ stats:', err);
+    });
+  // Table page
+  currentPage = 0;
+  loadPage();
+}
+
+function loadPage() {
+  var offset = currentPage * PAGE_SIZE;
+  var order = currentSort.asc ? 'asc' : 'desc';
+  var url = '/api/dlq?limit=' + PAGE_SIZE + '&offset=' + offset
+    + '&sort=' + encodeURIComponent(currentSort.col)
+    + '&order=' + order;
+  if (currentFilter) url += '&reason=' + encodeURIComponent(currentFilter);
+
+  fetch(url).then(function(r) { return r.json(); })
+    .then(function(data) {
+      pageEntries = data.entries || [];
+      totalFiltered = data.filtered || 0;
+      totalAll = data.total || 0;
+      renderTable();
+      renderPagination();
+      updateSortArrows();
+    }).catch(function(err) {
+      console.error('Failed to load DLQ page:', err);
+      showToast('Failed to load DLQ entries', 'error');
+    });
+}
+
+// ── Stats ───────────────────────────────────────────────
+
+function renderStats(stats) {
+  document.getElementById('statTotal').textContent = stats.total || 0;
+  document.getElementById('statPending').textContent = stats.pending || 0;
+  document.getElementById('statRetried').textContent = stats.retried || 0;
+  document.getElementById('statOldest').textContent = stats.oldest_time ? timeAgo(stats.oldest_time) : '—';
+}
+
+// ── Charts ──────────────────────────────────────────────
+
+function renderCharts(stats) {
+  renderArrivalsChart(stats.timeline || {});
+  renderReasonsChart(stats.reason_counts || {});
+}
+
+function renderArrivalsChart(timeline) {
+  var el = document.getElementById('chartArrivals');
+  if (!arrivalsChart) arrivalsChart = echarts.init(el);
+
+  var keys = Object.keys(timeline).sort();
+  if (keys.length === 0) {
+    arrivalsChart.setOption({
+      backgroundColor: 'transparent',
+      title: { text: 'No data', left: 'center', top: 'center', textStyle: { color: '#888', fontSize: 14 } },
+      xAxis: { show: false },
+      yAxis: { show: false },
+      series: []
+    });
+    return;
+  }
+
+  var vals = keys.map(function(k) { return timeline[k]; });
+
+  arrivalsChart.setOption({
+    backgroundColor: 'transparent',
+    grid: { left: 50, right: 20, top: 20, bottom: 50 },
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(30,30,30,0.9)', borderColor: '#555', textStyle: { color: '#ddd' } },
+    xAxis: {
+      type: 'category',
+      data: keys,
+      axisLabel: { color: '#888', fontSize: 10, rotate: 30 },
+      axisLine: { lineStyle: { color: '#555' } }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: '#888' },
+      splitLine: { lineStyle: { color: '#333' } }
+    },
+    series: [{
+      type: 'line',
+      data: vals,
+      smooth: true,
+      lineStyle: { width: 2, color: '#f87272' },
+      itemStyle: { color: '#f87272' },
+      symbol: 'none',
+      areaStyle: { color: 'rgba(248,114,114,0.08)' }
+    }]
+  });
+}
+
+function renderReasonsChart(reasonCounts) {
+  var el = document.getElementById('chartReasons');
+  if (!reasonsChart) reasonsChart = echarts.init(el);
+
+  var reasons = Object.keys(reasonCounts);
+  if (reasons.length === 0) {
+    reasonsChart.setOption({
+      backgroundColor: 'transparent',
+      title: { text: 'No data', left: 'center', top: 'center', textStyle: { color: '#888', fontSize: 14 } },
+      series: []
+    });
+    return;
+  }
+
+  var colorMap = {
+    data_error: '#fbbd23',
+    client_error: '#fb923c',
+    server_error: '#f87272',
+    connection_failure: '#f87272',
+    shutdown_inflight: '#3abff8',
+    redirect: '#6b7280',
+    unknown: '#6b7280'
+  };
+
+  var pieData = [];
+  for (var i = 0; i < reasons.length; i++) {
+    var r = reasons[i];
+    var prefix = r.toLowerCase();
+    var color = '#6b7280';
+    for (var key in colorMap) {
+      if (prefix.startsWith(key)) { color = colorMap[key]; break; }
+    }
+    pieData.push({ name: r, value: reasonCounts[r], itemStyle: { color: color } });
+  }
+
+  reasonsChart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+    series: [{
+      type: 'pie',
+      radius: ['35%', '65%'],
+      data: pieData,
+      label: { color: '#888', fontSize: 11 },
+      emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0,0,0,0.5)' } }
+    }]
+  });
+}
+
+// ── Filter & Sort ───────────────────────────────────────
+
+function filterByReason(prefix) {
+  currentFilter = prefix;
+  currentPage = 0;
+  loadPage();
+}
+
+function goToPage(p) {
+  currentPage = p;
+  loadPage();
+}
+
+function sortTable(col) {
+  if (currentSort.col === col) {
+    currentSort.asc = !currentSort.asc;
+  } else {
+    currentSort.col = col;
+    currentSort.asc = true;
+  }
+  currentPage = 0;
+  loadPage();
+}
+
+function updateSortArrows() {
+  var cols = ['doc_id_original', 'reason', 'error', 'time', 'expires_at', 'replay_attempts', 'retried'];
+  for (var i = 0; i < cols.length; i++) {
+    var el = document.getElementById('sort-' + cols[i]);
+    if (el) el.textContent = cols[i] === currentSort.col ? (currentSort.asc ? '▲' : '▼') : '';
+  }
+}
+
+// ── Table rendering ─────────────────────────────────────
+
+function renderTable() {
+  var tbody = document.getElementById('dlqTableBody');
+  if (pageEntries.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center opacity-50 py-8">No entries in the DLQ</td></tr>';
+    document.getElementById('pageInfo').textContent = totalAll === 0 ? '—' : 'No matches (total: ' + totalAll + ')';
+    return;
+  }
+
+  var start = currentPage * PAGE_SIZE;
+  var end = start + pageEntries.length;
+
+  var html = '';
+  for (var i = 0; i < pageEntries.length; i++) {
+    var e = pageEntries[i];
+    html += '<tr class="dlq-row" data-id="' + escHtml(e.id) + '" onclick="inspectEntry(\'' + escHtml(e.id) + '\')">'
+      + '<td class="font-mono text-xs">' + escHtml(e.doc_id_original || e.id) + '</td>'
+      + '<td>' + reasonBadge(e.reason) + '</td>'
+      + '<td class="text-xs opacity-70">' + escHtml(truncate(e.error, 60)) + '</td>'
+      + '<td class="text-xs whitespace-nowrap">' + timeAgo(e.time) + '</td>'
+      + '<td>' + countdownHtml(e.expires_at) + '</td>'
+      + '<td class="text-center">' + (e.replay_attempts || 0) + '</td>'
+      + '<td>' + statusBadge(e.retried) + '</td>'
+      + '<td><button class="btn btn-ghost btn-xs text-error" onclick="event.stopPropagation();deleteEntry(\'' + escHtml(e.id) + '\')">×</button></td>'
+      + '</tr>';
+  }
+  tbody.innerHTML = html;
+  document.getElementById('pageInfo').textContent = 'Showing ' + (start + 1) + '–' + end + ' of ' + totalFiltered + (totalFiltered !== totalAll ? ' (total: ' + totalAll + ')' : '');
+  startCountdownTicker();
+}
+
+function renderPagination() {
+  var container = document.getElementById('pagination');
+  var totalPages = Math.ceil(totalFiltered / PAGE_SIZE) || 1;
+
+  if (totalPages <= 1) { container.innerHTML = ''; return; }
+
+  var html = '';
+  // Previous
+  html += '<button class="join-item btn btn-sm' + (currentPage === 0 ? ' btn-disabled' : '') + '"'
+    + (currentPage > 0 ? ' onclick="goToPage(' + (currentPage - 1) + ')"' : '') + '>«</button>';
+
+  // Page numbers — show up to 7 buttons with ellipsis
+  var pages = [];
+  if (totalPages <= 7) {
+    for (var i = 0; i < totalPages; i++) pages.push(i);
+  } else {
+    pages.push(0);
+    if (currentPage > 2) pages.push(-1); // ellipsis
+    var start = Math.max(1, currentPage - 1);
+    var end = Math.min(totalPages - 2, currentPage + 1);
+    for (var i = start; i <= end; i++) pages.push(i);
+    if (currentPage < totalPages - 3) pages.push(-1); // ellipsis
+    pages.push(totalPages - 1);
+  }
+
+  for (var i = 0; i < pages.length; i++) {
+    var p = pages[i];
+    if (p === -1) {
+      html += '<button class="join-item btn btn-sm btn-disabled">…</button>';
+    } else {
+      html += '<button class="join-item btn btn-sm' + (p === currentPage ? ' btn-active' : '') + '"'
+        + ' onclick="goToPage(' + p + ')">' + (p + 1) + '</button>';
+    }
+  }
+
+  // Next
+  html += '<button class="join-item btn btn-sm' + (currentPage >= totalPages - 1 ? ' btn-disabled' : '') + '"'
+    + (currentPage < totalPages - 1 ? ' onclick="goToPage(' + (currentPage + 1) + ')"' : '') + '>»</button>';
+
+  container.innerHTML = html;
+}
+
+// ── Inspector ───────────────────────────────────────────
+
+function inspectEntry(id) {
+  // Highlight row
+  var rows = document.querySelectorAll('.dlq-row');
+  for (var i = 0; i < rows.length; i++) {
+    rows[i].classList.toggle('selected', rows[i].getAttribute('data-id') === id);
+  }
+
+  fetch('/api/dlq/' + encodeURIComponent(id))
+    .then(function(r) { return r.json(); })
+    .then(function(entry) {
+      document.getElementById('insDocId').textContent = entry.doc_id_original || entry.id;
+      document.getElementById('insSeq').textContent = entry.seq || '—';
+      document.getElementById('insMethod').textContent = entry.method || '—';
+      document.getElementById('insStatus').textContent = entry.status || '—';
+      document.getElementById('insReason').innerHTML = reasonBadge(entry.reason);
+      document.getElementById('insTargetUrl').textContent = entry.target_url || '—';
+      document.getElementById('insTime').textContent = entry.time ? formatTime(entry.time) + ' (' + timeAgo(entry.time) + ')' : '—';
+      document.getElementById('insReplays').textContent = entry.replay_attempts || 0;
+      document.getElementById('insExpires').innerHTML = countdownHtml(entry.expires_at);
+      document.getElementById('insError').textContent = entry.error || '—';
+      document.getElementById('insSuggestedFix').textContent = suggestedFix(entry.reason);
+      document.getElementById('insDocBody').textContent = entry.doc_data ? JSON.stringify(entry.doc_data, null, 2) : '—';
+
+      document.getElementById('inspectorPanel').classList.remove('hidden');
+      document.getElementById('inspectorPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    })
+    .catch(function(err) {
+      console.error('Failed to load entry:', err);
+      showToast('Failed to load entry details', 'error');
+    });
+}
+
+function closeInspector() {
+  document.getElementById('inspectorPanel').classList.add('hidden');
+  var rows = document.querySelectorAll('.dlq-row');
+  for (var i = 0; i < rows.length; i++) rows[i].classList.remove('selected');
+}
+
+// ── Copy doc body ───────────────────────────────────────
+
+function copyDocBody() {
+  var text = document.getElementById('insDocBody').textContent;
+  if (!text || text === '—') return;
+  navigator.clipboard.writeText(text).then(function() {
+    showToast('Copied to clipboard', 'success');
+  }).catch(function() {
+    showToast('Failed to copy', 'error');
+  });
+}
+
+// ── Delete single entry ─────────────────────────────────
+
+function deleteEntry(id) {
+  if (!confirm('Delete this DLQ entry? This cannot be undone.')) return;
+  fetch('/api/dlq/' + encodeURIComponent(id), { method: 'DELETE' })
+    .then(function(r) { return r.json(); })
+    .then(function() {
+      showToast('Entry deleted', 'success');
+      if (document.getElementById('inspectorPanel').classList.contains('hidden') === false) {
+        closeInspector();
+      }
+      loadDlqData();
+    })
+    .catch(function(err) {
+      console.error('Failed to delete entry:', err);
+      showToast('Failed to delete entry', 'error');
+    });
+}
+
+// ── Clear All ───────────────────────────────────────────
+
+function clearAll() {
+  if (!confirm('Are you sure you want to clear ALL DLQ entries? This cannot be undone.')) return;
+  fetch('/api/dlq', { method: 'DELETE' })
+    .then(function(r) { return r.json(); })
+    .then(function() {
+      showToast('All DLQ entries cleared', 'success');
+      closeInspector();
+      loadDlqData();
+    })
+    .catch(function(err) {
+      console.error('Failed to clear DLQ:', err);
+      showToast('Failed to clear DLQ', 'error');
+    });
+}
+
+// ── Resize charts on window resize ─────────────────────
+
+window.addEventListener('resize', function() {
+  if (arrivalsChart) arrivalsChart.resize();
+  if (reasonsChart) reasonsChart.resize();
+});
+
+// ── Init ────────────────────────────────────────────────
+
+loadDlqData();
+</script>
+
+  <script src="/static/js/sidebar.js"></script>
+
+</body>
+</html>

@@ -19,6 +19,7 @@ try:
     from CouchbaseLite.Document import MutableDocument
     from CouchbaseLite._PyCBL import ffi, lib
     from CouchbaseLite.common import stringParam, gError as _cbl_gError
+    from CouchbaseLite.Query import N1QLQuery
 
     USE_CBL = True
 except ImportError:
@@ -189,25 +190,217 @@ def _coll_save_doc(db, collection_name: str, doc) -> None:
 
 
 def _coll_purge_doc(db, collection_name: str, doc_id: str) -> None:
-    """Purge a document from a specific collection by ID."""
+    """Purge a document from a specific collection by ID.
+
+    Raises RuntimeError if purge fails.
+    """
     coll = _get_collection(db, CBL_SCOPE, collection_name)
-    lib.CBLCollection_PurgeDocumentByID(coll, stringParam(doc_id), _cbl_gError)
+    err = ffi.new("CBLError*")
+    ok = lib.CBLCollection_PurgeDocumentByID(coll, stringParam(doc_id), err)
+    if not ok:
+        log_event(
+            logger,
+            "error",
+            "CBL",
+            f"Failed to purge document from {collection_name}",
+            doc_id=doc_id,
+            collection=collection_name,
+        )
+        raise RuntimeError(f"Failed to purge document {doc_id} from {collection_name}")
 
 
-def _set_doc_expiration(db, doc_id: str, ttl_seconds: int) -> bool:
-    """Set document expiration (TTL) using the CBL C API.
+def _create_collection_value_index(
+    db, collection_name: str, index_name: str, expressions: str
+) -> bool:
+    """Create a value index on a collection using the CBL C API.
 
     Args:
         db: CBL database handle.
+        collection_name: Collection within CBL_SCOPE.
+        index_name: Name of the index (idempotent — recreates if identical).
+        expressions: N1QL comma-separated property list, e.g. ``"time"``.
+    """
+    coll = _get_collection(db, CBL_SCOPE, collection_name)
+    err = ffi.new("CBLError*")
+    config = (lib.kCBLN1QLLanguage, stringParam(expressions))
+    ok = lib.CBLCollection_CreateValueIndex(coll, stringParam(index_name), config, err)
+    if ok:
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "index ensured",
+            scope=CBL_SCOPE,
+            collection=collection_name,
+            index=index_name,
+        )
+    else:
+        log_event(
+            logger,
+            "warn",
+            "CBL",
+            "index creation failed",
+            scope=CBL_SCOPE,
+            collection=collection_name,
+            index=index_name,
+        )
+    return bool(ok)
+
+
+def _run_n1ql(db, sql: str, params: dict | None = None) -> list[dict]:
+    """Execute a N1QL (SQL++) query and return all rows as dicts.
+
+    Raises RuntimeError on query failure.
+    """
+    try:
+        q = N1QLQuery(db, sql)
+        if params:
+            q.setParameters(params)
+        return [row.asDictionary() for row in q.execute()]
+    except Exception as e:
+        log_event(
+            logger,
+            "error",
+            "CBL",
+            f"N1QL query failed: {type(e).__name__}: {str(e)[:200]}",
+            sql=sql[:200],
+            params=str(params)[:100] if params else None,
+        )
+        raise RuntimeError(f"N1QL query failed: {e}") from e
+
+
+def _run_n1ql_scalar(db, sql: str, params: dict | None = None):
+    """Execute a N1QL (SQL++) query and return the first column of the first row.
+
+    Returns None if no rows match.
+    Raises RuntimeError on query failure.
+    """
+    try:
+        q = N1QLQuery(db, sql)
+        if params:
+            q.setParameters(params)
+        for row in q.execute():
+            return row[0]
+        return None
+    except Exception as e:
+        log_event(
+            logger,
+            "error",
+            "CBL",
+            f"N1QL scalar query failed: {type(e).__name__}: {str(e)[:200]}",
+            sql=sql[:200],
+            params=str(params)[:100] if params else None,
+        )
+        raise RuntimeError(f"N1QL scalar query failed: {e}") from e
+
+
+def _run_n1ql_explain(db, sql: str, params: dict | None = None) -> str:
+    """Return the CBLQuery_Explain output for a N1QL (SQL++) query.
+
+    Raises RuntimeError if explain fails.
+    """
+    try:
+        q = N1QLQuery(db, sql)
+        if params:
+            q.setParameters(params)
+        return q.explanation or ""
+    except Exception as e:
+        log_event(
+            logger,
+            "error",
+            "CBL",
+            f"N1QL explain failed: {type(e).__name__}: {str(e)[:200]}",
+            sql=sql[:200],
+        )
+        raise RuntimeError(f"N1QL explain failed: {e}") from e
+
+
+# N1QL FROM clause for the DLQ collection (scope name needs backtick-quoting)
+_DLQ_FROM = "`changes-worker`.dlq"
+
+_DLQ_INDEXES_ENSURED = False
+
+
+def _ensure_dlq_indexes(db) -> None:
+    """Create value indexes on the DLQ collection (idempotent, once per process).
+
+    ``type`` must be the leading column so the planner can use the index
+    for ``WHERE d.type = 'dlq'`` which appears in every DLQ query.
+    """
+    global _DLQ_INDEXES_ENSURED
+    if _DLQ_INDEXES_ENSURED:
+        return
+    _create_collection_value_index(db, COLL_DLQ, "idx_dlq_type_time", "type, time")
+    _create_collection_value_index(
+        db, COLL_DLQ, "idx_dlq_type_reason_time", "type, reason, time"
+    )
+    _create_collection_value_index(
+        db, COLL_DLQ, "idx_dlq_type_retried", "type, retried"
+    )
+    _DLQ_INDEXES_ENSURED = True
+    log_event(logger, "info", "CBL", "DLQ indexes ensured")
+
+
+class _transaction:
+    """Context manager for CBL database transactions.
+
+    Wraps ``CBLDatabase_BeginTransaction`` / ``CBLDatabase_EndTransaction``.
+    Commits on clean exit, rolls back on exception.
+
+    Usage::
+
+        with _transaction(db):
+            _coll_save_doc(db, coll, doc1)
+            _coll_save_doc(db, coll, doc2)
+    """
+
+    __slots__ = ("_db_ref",)
+
+    def __init__(self, db):
+        self._db_ref = db._ref
+
+    def __enter__(self):
+        err = ffi.new("CBLError*")
+        if not lib.CBLDatabase_BeginTransaction(self._db_ref, err):
+            raise RuntimeError("Failed to begin CBL transaction")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        commit = exc_type is None
+        err = ffi.new("CBLError*")
+        ok = lib.CBLDatabase_EndTransaction(self._db_ref, commit, err)
+        if not ok:
+            log_event(
+                logger,
+                "error",
+                "CBL",
+                f"Failed to end CBL transaction (commit={commit})",
+                error_code=err.code if err else None,
+            )
+            # Don't raise — the transaction state may be inconsistent
+            # Log the error but allow any original exception to propagate
+        return False  # don't suppress exceptions
+
+
+def _set_doc_expiration(
+    db, collection_name: str, doc_id: str, ttl_seconds: int
+) -> bool:
+    """Set document expiration (TTL) on a specific collection using the CBL C API.
+
+    Args:
+        db: CBL database handle.
+        collection_name: Collection within CBL_SCOPE.
         doc_id: Document ID.
         ttl_seconds: Seconds from now until the document expires and is auto-purged.
                      Pass 0 to clear expiration.
     """
     if ttl_seconds <= 0:
         return True
+    coll = _get_collection(db, CBL_SCOPE, collection_name)
     expiration_ms = int((time.time() + ttl_seconds) * 1000)
-    ok = lib.CBLDatabase_SetDocumentExpiration(
-        db._ref, stringParam(doc_id), expiration_ms, _cbl_gError
+    err = ffi.new("CBLError*")
+    ok = lib.CBLCollection_SetDocumentExpiration(
+        coll, stringParam(doc_id), expiration_ms, err
     )
     return bool(ok)
 
@@ -217,8 +410,58 @@ class CBLStore:
 
     def __init__(self):
         self.db = get_db()
+        _ensure_dlq_indexes(self.db)
 
     # ── Info / diagnostics ────────────────────────────────────
+
+    def dlq_explain_queries(self) -> dict[str, str]:
+        """Return EXPLAIN output for the key DLQ queries to verify index usage."""
+        f = _DLQ_FROM
+        return {
+            "list_page_by_time": _run_n1ql_explain(
+                self.db,
+                f"SELECT META(d).id AS id, d.doc_id_original, d.seq, d.method,"
+                f" d.status, d.error, d.reason, d.time, d.expires_at,"
+                f" d.retried, d.replay_attempts, d.target_url"
+                f" FROM {f} AS d WHERE d.type = 'dlq'"
+                f" ORDER BY d.time DESC, META(d).id DESC"
+                f" LIMIT 20 OFFSET 0",
+            ),
+            "list_page_by_reason_filter": _run_n1ql_explain(
+                self.db,
+                f"SELECT META(d).id AS id, d.doc_id_original"
+                f" FROM {f} AS d"
+                f" WHERE d.type = 'dlq' AND LOWER(d.reason) LIKE $reason_like"
+                f" ORDER BY d.time DESC, META(d).id DESC"
+                f" LIMIT 20 OFFSET 0",
+                {"reason_like": "data_error%"},
+            ),
+            "count_total": _run_n1ql_explain(
+                self.db, f"SELECT COUNT(*) FROM {f} AS d WHERE d.type = 'dlq'"
+            ),
+            "count_retried": _run_n1ql_explain(
+                self.db,
+                f"SELECT COUNT(*) FROM {f} AS d"
+                f" WHERE d.type = 'dlq' AND d.retried = true",
+            ),
+            "stats_totals": _run_n1ql_explain(
+                self.db,
+                f"SELECT COUNT(*) AS total, MIN(d.time) AS oldest_time"
+                f" FROM {f} AS d WHERE d.type = 'dlq'",
+            ),
+            "stats_reason_group": _run_n1ql_explain(
+                self.db,
+                f"SELECT d.reason AS reason, COUNT(*) AS count"
+                f" FROM {f} AS d WHERE d.type = 'dlq'"
+                f" GROUP BY d.reason",
+            ),
+            "purge_expired": _run_n1ql_explain(
+                self.db,
+                f"SELECT META(d).id AS id FROM {f} AS d"
+                f" WHERE d.type = 'dlq' AND d.time > 0 AND d.time < $cutoff",
+                {"cutoff": 1000000000},
+            ),
+        }
 
     def db_info(self) -> dict:
         """Return database path, size, and document counts."""
@@ -232,7 +475,7 @@ class CBLStore:
             "mappings_count": len(
                 self._get_manifest(COLL_MAPPINGS, "manifest:mappings")
             ),
-            "dlq_count": len(self._get_manifest(COLL_DLQ, "manifest:dlq")),
+            "dlq_count": self.dlq_count(),
             "checkpoint_manifest": len(
                 self._get_manifest(COLL_CHECKPOINTS, "manifest:checkpoints")
             ),
@@ -578,6 +821,7 @@ class CBLStore:
         doc: dict,
         target_url: str = "",
         ttl_seconds: int = 0,
+        reason: str = "",
     ) -> None:
         ic("add_dlq_entry: entry", doc_id)
         ts = int(time.time())
@@ -590,20 +834,17 @@ class CBLStore:
         dlq_doc["method"] = method
         dlq_doc["status"] = status
         dlq_doc["error"] = error
+        dlq_doc["reason"] = reason
         dlq_doc["time"] = ts
+        dlq_doc["expires_at"] = (ts + ttl_seconds) if ttl_seconds > 0 else 0
         dlq_doc["retried"] = False
         dlq_doc["replay_attempts"] = 0
         dlq_doc["target_url"] = target_url
         dlq_doc["doc_data"] = json.dumps(doc)
         _coll_save_doc(self.db, COLL_DLQ, dlq_doc)
         if ttl_seconds > 0:
-            _set_doc_expiration(self.db, dlq_id, ttl_seconds)
+            _set_doc_expiration(self.db, COLL_DLQ, dlq_id, ttl_seconds)
         elapsed = (time.monotonic() - t0) * 1000
-
-        # Update manifest
-        ids = self._get_manifest(COLL_DLQ, "manifest:dlq")
-        ids.append(dlq_id)
-        self._save_manifest(COLL_DLQ, "manifest:dlq", ids)
 
         log_event(
             logger,
@@ -619,26 +860,14 @@ class CBLStore:
         )
 
     def list_dlq(self) -> list[dict]:
-        ids = self._get_manifest(COLL_DLQ, "manifest:dlq")
-        result = []
-        for dlq_id in ids:
-            doc = _coll_get_doc(self.db, COLL_DLQ, dlq_id)
-            if doc:
-                props = doc.properties
-                result.append(
-                    {
-                        "id": dlq_id,
-                        "doc_id_original": props.get("doc_id_original", ""),
-                        "seq": props.get("seq", ""),
-                        "method": props.get("method", ""),
-                        "status": props.get("status", 0),
-                        "error": props.get("error", ""),
-                        "time": props.get("time", 0),
-                        "retried": props.get("retried", False),
-                        "replay_attempts": props.get("replay_attempts", 0),
-                        "target_url": props.get("target_url", ""),
-                    }
-                )
+        sql = (
+            f"SELECT META(d).id AS id, d.doc_id_original, d.seq, d.method,"
+            f" d.status, d.error, d.reason, d.time, d.expires_at,"
+            f" d.retried, d.replay_attempts, d.target_url"
+            f" FROM {_DLQ_FROM} AS d WHERE d.type = 'dlq'"
+            f" ORDER BY d.time DESC, META(d).id DESC"
+        )
+        result = _run_n1ql(self.db, sql)
         log_event(
             logger,
             "debug",
@@ -650,43 +879,253 @@ class CBLStore:
         )
         return result
 
-    def get_dlq_entry(self, dlq_id: str) -> dict | None:
-        doc = _coll_get_doc(self.db, COLL_DLQ, dlq_id)
-        if not doc:
+    # Whitelist of allowed sort columns for N1QL ORDER BY
+    _DLQ_SORT_COLS = {
+        "time": "d.time",
+        "expires_at": "d.expires_at",
+        "replay_attempts": "d.replay_attempts",
+        "status": "d.status",
+        "reason": "d.reason",
+        "method": "d.method",
+        "doc_id_original": "d.doc_id_original",
+        "error": "d.error",
+        "retried": "d.retried",
+    }
+
+    def list_dlq_page(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        sort: str = "time",
+        order: str = "desc",
+        reason_filter: str = "",
+    ) -> dict:
+        """Return a page of DLQ entries with server-side sort/filter/pagination.
+
+        Uses N1QL queries with collection-level indexes.  Returns
+        ``{"entries": [...], "total": N, "filtered": N}``.
+        Returns empty page on query error.
+        """
+        try:
+            sort_col = self._DLQ_SORT_COLS.get(sort, "d.time")
+            direction = "ASC" if order.lower() == "asc" else "DESC"
+
+            # Build WHERE clause
+            where = "d.type = 'dlq'"
+            params: dict | None = None
+            if reason_filter:
+                where += " AND LOWER(d.reason) LIKE $reason_like"
+                params = {"reason_like": reason_filter.lower() + "%"}
+
+            # Page query (LIMIT/OFFSET must be literal ints in CBL N1QL)
+            sql = (
+                f"SELECT META(d).id AS id, d.doc_id_original, d.seq, d.method,"
+                f" d.status, d.error, d.reason, d.time, d.expires_at,"
+                f" d.retried, d.replay_attempts, d.target_url"
+                f" FROM {_DLQ_FROM} AS d WHERE {where}"
+                f" ORDER BY {sort_col} {direction}, META(d).id {direction}"
+                f" LIMIT {int(limit)} OFFSET {int(offset)}"
+            )
+            entries = _run_n1ql(self.db, sql, params)
+
+            # Count queries
+            total_sql = f"SELECT COUNT(*) FROM {_DLQ_FROM} AS d WHERE d.type = 'dlq'"
+            total_count = _run_n1ql_scalar(self.db, total_sql) or 0
+
+            if reason_filter:
+                filter_sql = f"SELECT COUNT(*) FROM {_DLQ_FROM} AS d WHERE {where}"
+                filtered_count = _run_n1ql_scalar(self.db, filter_sql, params) or 0
+            else:
+                filtered_count = total_count
+
             log_event(
                 logger,
                 "debug",
                 "DLQ",
-                "entry not found",
+                "listed page",
+                operation="SELECT",
+                doc_type="dlq",
+                offset=offset,
+                limit=limit,
+                filtered=filtered_count,
+                total=total_count,
+            )
+            return {
+                "entries": entries,
+                "total": total_count,
+                "filtered": filtered_count,
+            }
+        except Exception as e:
+            log_event(
+                logger,
+                "error",
+                "DLQ",
+                f"Failed to list DLQ page: {type(e).__name__}: {str(e)[:200]}",
+                operation="SELECT",
+                doc_type="dlq",
+                offset=offset,
+                limit=limit,
+            )
+            # Return empty page on error
+            return {
+                "entries": [],
+                "total": 0,
+                "filtered": 0,
+            }
+
+    def dlq_stats(self) -> dict:
+        """Return lightweight aggregation data for DLQ charts and summary cards.
+
+        Uses N1QL aggregation queries instead of scanning all documents.
+        Returns defaults on query error.
+        """
+        try:
+            f = _DLQ_FROM
+
+            # Totals + oldest in one query
+            row = (
+                _run_n1ql(
+                    self.db,
+                    f"SELECT COUNT(*) AS total, MIN(d.time) AS oldest_time"
+                    f" FROM {f} AS d WHERE d.type = 'dlq'",
+                )
+                or [{}]
+            )[0]
+            total = row.get("total", 0)
+            oldest_time = row.get("oldest_time")
+
+            # Retried count
+            retried = (
+                _run_n1ql_scalar(
+                    self.db,
+                    f"SELECT COUNT(*) FROM {f} AS d"
+                    f" WHERE d.type = 'dlq' AND d.retried = true",
+                )
+                or 0
+            )
+            pending = total - retried
+
+            # Reason breakdown
+            reason_rows = _run_n1ql(
+                self.db,
+                f"SELECT d.reason AS reason, COUNT(*) AS count"
+                f" FROM {f} AS d WHERE d.type = 'dlq'"
+                f" GROUP BY d.reason",
+            )
+            reason_counts: dict[str, int] = {}
+            for r in reason_rows:
+                key = r.get("reason", "") or "unknown"
+                reason_counts[key] = r.get("count", 0)
+
+            # Timeline — fetch timestamps and bucket in Python
+            time_rows = _run_n1ql(
+                self.db,
+                f"SELECT d.time AS t FROM {f} AS d WHERE d.type = 'dlq' AND d.time > 0",
+            )
+            timeline: dict[str, int] = {}
+            for r in time_rows:
+                t = r.get("t", 0)
+                if t:
+                    minute_key = time.strftime("%Y-%m-%d %H:%M", time.gmtime(t))
+                    timeline[minute_key] = timeline.get(minute_key, 0) + 1
+
+            return {
+                "total": total,
+                "pending": pending,
+                "retried": retried,
+                "oldest_time": oldest_time,
+                "reason_counts": reason_counts,
+                "timeline": timeline,
+            }
+        except Exception as e:
+            log_event(
+                logger,
+                "error",
+                "DLQ",
+                f"DLQ stats query failed: {type(e).__name__}: {str(e)[:200]}",
+                operation="SELECT",
+            )
+            # Return empty stats on error
+            return {
+                "total": 0,
+                "pending": 0,
+                "retried": 0,
+                "oldest_time": None,
+                "reason_counts": {},
+                "timeline": {},
+            }
+
+    def get_dlq_entry(self, dlq_id: str) -> dict | None:
+        """Get a DLQ entry by ID. Returns dict or None if not found.
+
+        Handles JSON parsing errors gracefully.
+        """
+        try:
+            doc = _coll_get_doc(self.db, COLL_DLQ, dlq_id)
+            if not doc:
+                log_event(
+                    logger,
+                    "debug",
+                    "DLQ",
+                    "entry not found",
+                    operation="SELECT",
+                    doc_id=dlq_id,
+                    doc_type="dlq",
+                )
+                return None
+            props = doc.properties
+            doc_data = props.get("doc_data", "{}")
+
+            # Parse JSON with error handling
+            try:
+                parsed_data = json.loads(doc_data)
+            except json.JSONDecodeError as e:
+                log_event(
+                    logger,
+                    "warn",
+                    "DLQ",
+                    f"doc_data is malformed JSON: {e}",
+                    operation="SELECT",
+                    doc_id=dlq_id,
+                    doc_type="dlq",
+                )
+                parsed_data = {}
+
+            log_event(
+                logger,
+                "debug",
+                "DLQ",
+                "entry loaded",
+                operation="SELECT",
+                doc_id=dlq_id,
+                doc_type="dlq",
+            )
+            return {
+                "id": dlq_id,
+                "doc_id_original": props.get("doc_id_original", ""),
+                "seq": props.get("seq", ""),
+                "method": props.get("method", ""),
+                "status": props.get("status", 0),
+                "error": props.get("error", ""),
+                "reason": props.get("reason", ""),
+                "time": props.get("time", 0),
+                "expires_at": props.get("expires_at", 0),
+                "retried": props.get("retried", False),
+                "replay_attempts": props.get("replay_attempts", 0),
+                "target_url": props.get("target_url", ""),
+                "doc_data": parsed_data,
+            }
+        except Exception as e:
+            log_event(
+                logger,
+                "error",
+                "DLQ",
+                f"Failed to get DLQ entry: {type(e).__name__}: {str(e)[:200]}",
                 operation="SELECT",
                 doc_id=dlq_id,
                 doc_type="dlq",
             )
             return None
-        props = doc.properties
-        doc_data = props.get("doc_data", "{}")
-        log_event(
-            logger,
-            "debug",
-            "DLQ",
-            "entry loaded",
-            operation="SELECT",
-            doc_id=dlq_id,
-            doc_type="dlq",
-        )
-        return {
-            "id": dlq_id,
-            "doc_id_original": props.get("doc_id_original", ""),
-            "seq": props.get("seq", ""),
-            "method": props.get("method", ""),
-            "status": props.get("status", 0),
-            "error": props.get("error", ""),
-            "time": props.get("time", 0),
-            "retried": props.get("retried", False),
-            "replay_attempts": props.get("replay_attempts", 0),
-            "target_url": props.get("target_url", ""),
-            "doc_data": json.loads(doc_data),
-        }
 
     def mark_dlq_retried(self, dlq_id: str) -> None:
         doc = _coll_get_mutable_doc(self.db, COLL_DLQ, dlq_id)
@@ -721,11 +1160,6 @@ class CBLStore:
             return
         _coll_purge_doc(self.db, COLL_DLQ, dlq_id)
 
-        # Update manifest
-        ids = self._get_manifest(COLL_DLQ, "manifest:dlq")
-        ids = [i for i in ids if i != dlq_id]
-        self._save_manifest(COLL_DLQ, "manifest:dlq", ids)
-
         log_event(
             logger,
             "info",
@@ -737,14 +1171,17 @@ class CBLStore:
         )
 
     def clear_dlq(self) -> None:
-        ids = self._get_manifest(COLL_DLQ, "manifest:dlq")
+        rows = _run_n1ql(
+            self.db,
+            f"SELECT META(d).id AS id FROM {_DLQ_FROM} AS d WHERE d.type = 'dlq'",
+        )
         count = 0
-        for dlq_id in ids:
-            doc = _coll_get_doc(self.db, COLL_DLQ, dlq_id)
-            if doc:
-                _coll_purge_doc(self.db, COLL_DLQ, dlq_id)
-                count += 1
-        self._save_manifest(COLL_DLQ, "manifest:dlq", [])
+        with _transaction(self.db):
+            for row in rows:
+                dlq_id = row.get("id")
+                if dlq_id:
+                    _coll_purge_doc(self.db, COLL_DLQ, dlq_id)
+                    count += 1
         if count > 0:
             self.update_dlq_meta("last_drained_at")
         log_event(
@@ -758,28 +1195,32 @@ class CBLStore:
         )
 
     def dlq_count(self) -> int:
-        return len(self._get_manifest(COLL_DLQ, "manifest:dlq"))
+        return (
+            _run_n1ql_scalar(
+                self.db, f"SELECT COUNT(*) FROM {_DLQ_FROM} AS d WHERE d.type = 'dlq'"
+            )
+            or 0
+        )
 
     def purge_expired_dlq(self, max_age_seconds: int) -> int:
         """Purge DLQ entries older than max_age_seconds. Returns count purged."""
         if max_age_seconds <= 0:
             return 0
         cutoff = int(time.time()) - max_age_seconds
-        ids = self._get_manifest(COLL_DLQ, "manifest:dlq")
+        rows = _run_n1ql(
+            self.db,
+            f"SELECT META(d).id AS id FROM {_DLQ_FROM} AS d"
+            f" WHERE d.type = 'dlq' AND d.time > 0 AND d.time < $cutoff",
+            {"cutoff": cutoff},
+        )
         purged = 0
-        remaining = []
-        for dlq_id in ids:
-            doc = _coll_get_doc(self.db, COLL_DLQ, dlq_id)
-            if doc:
-                entry_time = doc.properties.get("time", 0)
-                if entry_time > 0 and entry_time < cutoff:
+        with _transaction(self.db):
+            for row in rows:
+                dlq_id = row.get("id")
+                if dlq_id:
                     _coll_purge_doc(self.db, COLL_DLQ, dlq_id)
                     purged += 1
-                else:
-                    remaining.append(dlq_id)
-            # If doc doesn't exist, don't keep in manifest
         if purged > 0:
-            self._save_manifest(COLL_DLQ, "manifest:dlq", remaining)
             log_event(
                 logger,
                 "info",
@@ -872,34 +1313,51 @@ class CBLStore:
         """Full index scan to gather comprehensive query statistics."""
         return self._run_maintenance("full_optimize", "performMaintenance")
 
-    def _run_maintenance(self, maint_type: str, method_name: str) -> bool:
-        """
-        Run a CBL maintenance operation.
+    # Map maintenance type names to CBL C API enum constants
+    _MAINT_TYPES = {
+        "compact": "kCBLMaintenanceTypeCompact",
+        "reindex": "kCBLMaintenanceTypeReindex",
+        "integrity_check": "kCBLMaintenanceTypeIntegrityCheck",
+        "optimize": "kCBLMaintenanceTypeOptimize",
+        "full_optimize": "kCBLMaintenanceTypeFullOptimize",
+    }
 
-        The Python CBL SDK may expose maintenance via different method names
-        depending on the version. We try common patterns and degrade gracefully.
-        """
+    def _run_maintenance(self, maint_type: str, method_name: str = "") -> bool:
+        """Run a CBL maintenance operation via the C API directly."""
+        enum_name = self._MAINT_TYPES.get(maint_type)
+        if not enum_name or not hasattr(lib, enum_name):
+            log_event(
+                logger,
+                "warn",
+                "CBL",
+                "unknown maintenance type: %s" % maint_type,
+                maintenance_type=maint_type,
+            )
+            return False
+
         size_before = _db_size_mb()
         t0 = time.monotonic()
 
         try:
-            # Try the standard performMaintenance API
-            if hasattr(self.db, "performMaintenance"):
-                self.db.performMaintenance(maint_type)
-            elif hasattr(self.db, "compact") and maint_type == "compact":
-                self.db.compact()
-            else:
+            err = ffi.new("CBLError*")
+            ok = lib.CBLDatabase_PerformMaintenance(
+                self.db._ref, getattr(lib, enum_name), err
+            )
+            elapsed = (time.monotonic() - t0) * 1000
+
+            if not ok:
                 log_event(
                     logger,
-                    "warn",
+                    "error",
                     "CBL",
-                    "maintenance operation not available in this CBL SDK version",
+                    "maintenance failed: %s" % maint_type,
+                    operation="MAINTENANCE",
                     maintenance_type=maint_type,
-                    error_detail="no performMaintenance or compact method",
+                    db_name=CBL_DB_NAME,
+                    duration_ms=round(elapsed, 1),
                 )
                 return False
 
-            elapsed = (time.monotonic() - t0) * 1000
             size_after = _db_size_mb()
             log_event(
                 logger,
@@ -1047,41 +1505,44 @@ def migrate_default_to_collections() -> None:
     )
     migrated = 0
 
-    # Config
-    old_doc = db.getDocument("config")
-    if old_doc:
-        new_doc = MutableDocument("config")
-        new_doc["type"] = "config"
-        new_doc["data"] = old_doc.properties.get("data", "{}")
-        new_doc["updated_at"] = old_doc.properties.get("updated_at", int(time.time()))
-        _coll_save_doc(db, COLL_CONFIG, new_doc)
-        migrated += 1
-
-    # Manifests + their referenced docs
-    for manifest_id, coll_name in [
-        ("manifest:mappings", COLL_MAPPINGS),
-        ("manifest:dlq", COLL_DLQ),
-        ("manifest:checkpoints", COLL_CHECKPOINTS),
-    ]:
-        old_manifest = db.getDocument(manifest_id)
-        if old_manifest:
-            raw_ids = old_manifest.properties.get("ids")
-            ids = json.loads(raw_ids) if raw_ids else []
-            # Copy each referenced doc
-            for doc_id in ids:
-                old = db.getDocument(doc_id)
-                if old:
-                    new_doc = MutableDocument(doc_id)
-                    for key, val in old.properties.items():
-                        new_doc[key] = val
-                    _coll_save_doc(db, coll_name, new_doc)
-                    migrated += 1
-            # Copy manifest itself
-            new_manifest = MutableDocument(manifest_id)
-            new_manifest["type"] = "manifest"
-            new_manifest["ids"] = raw_ids or "[]"
-            _coll_save_doc(db, coll_name, new_manifest)
+    with _transaction(db):
+        # Config
+        old_doc = db.getDocument("config")
+        if old_doc:
+            new_doc = MutableDocument("config")
+            new_doc["type"] = "config"
+            new_doc["data"] = old_doc.properties.get("data", "{}")
+            new_doc["updated_at"] = old_doc.properties.get(
+                "updated_at", int(time.time())
+            )
+            _coll_save_doc(db, COLL_CONFIG, new_doc)
             migrated += 1
+
+        # Manifests + their referenced docs
+        for manifest_id, coll_name in [
+            ("manifest:mappings", COLL_MAPPINGS),
+            ("manifest:dlq", COLL_DLQ),
+            ("manifest:checkpoints", COLL_CHECKPOINTS),
+        ]:
+            old_manifest = db.getDocument(manifest_id)
+            if old_manifest:
+                raw_ids = old_manifest.properties.get("ids")
+                ids = json.loads(raw_ids) if raw_ids else []
+                # Copy each referenced doc
+                for doc_id in ids:
+                    old = db.getDocument(doc_id)
+                    if old:
+                        new_doc = MutableDocument(doc_id)
+                        for key, val in old.properties.items():
+                            new_doc[key] = val
+                        _coll_save_doc(db, coll_name, new_doc)
+                        migrated += 1
+                # Copy manifest itself
+                new_manifest = MutableDocument(manifest_id)
+                new_manifest["type"] = "manifest"
+                new_manifest["ids"] = raw_ids or "[]"
+                _coll_save_doc(db, coll_name, new_manifest)
+                migrated += 1
 
     log_event(
         logger,

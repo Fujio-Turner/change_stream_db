@@ -106,6 +106,7 @@
       "retry_on_status": [500, 502, 503, 504]
     },
     "halt_on_failure": true,
+    "data_error_action": "dlq",
     "log_response_times": true,
     "output_format": "json",
     "dead_letter_path": "failed_docs.jsonl",
