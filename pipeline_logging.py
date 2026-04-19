@@ -215,6 +215,7 @@ class RedactingFormatter(logging.Formatter):
         self, redactor: Redactor, fmt: str | None = None, datefmt: str | None = None
     ):
         super().__init__(fmt=fmt, datefmt=datefmt)
+        self.default_msec_format = "%s.%03d"
         self.redactor = redactor
 
     def format(self, record: logging.LogRecord) -> str:

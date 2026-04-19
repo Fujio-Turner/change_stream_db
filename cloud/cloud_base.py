@@ -212,6 +212,7 @@ class BaseCloudForwarder(abc.ABC):
     def __init__(self, out_cfg: dict, dry_run: bool = False, metrics=None):
         self._dry_run = dry_run
         self._halt_on_failure = out_cfg.get("halt_on_failure", True)
+        self._data_error_action = out_cfg.get("data_error_action", "dlq")
         self._metrics_global = metrics
 
         cfg = self._get_provider_cfg(out_cfg)
@@ -742,13 +743,6 @@ class BaseCloudForwarder(abc.ABC):
                         error_detail=f"{type(exc).__name__}: {exc}",
                     )
 
-                    if self._halt_on_failure:
-                        from rest import OutputEndpointDown
-
-                        raise OutputEndpointDown(
-                            f"{self._provider.upper()} error for {doc_id} "
-                            f"[{eclass}]: {exc}"
-                        ) from exc
                     return {
                         "ok": False,
                         "doc_id": doc_id,
@@ -756,6 +750,7 @@ class BaseCloudForwarder(abc.ABC):
                         "error": str(exc)[:500],
                         "retryable": False,
                         "error_class": eclass,
+                        "data_error_action": self._data_error_action,
                     }
 
                 # Transient error — retry

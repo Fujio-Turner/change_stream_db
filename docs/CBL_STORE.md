@@ -30,7 +30,7 @@ What **stays the same:**
 
 One database: `changes_worker_db`, stored at `/app/data/changes_worker_db.cblite2/`.
 
-Data is organized into **scoped collections** under the `changes-worker` scope. The Python CBL bindings don't expose the collections API, so `cbl_store.py` calls the raw CFFI functions (`lib.CBLDatabase_CreateCollection`, `lib.CBLCollection_SaveDocument`, etc.) directly.
+Data is organized into **scoped collections** under the `changes-worker` scope. The Python CBL bindings don't expose all APIs directly, so `cbl_store.py` calls raw CFFI functions for collection management, N1QL queries, collection-level indexes, document expiration, database transactions, and maintenance operations. The DLQ collection uses N1QL queries with value indexes instead of manifests.
 
 ### Scope & Collection Schema
 
@@ -72,19 +72,28 @@ Data is organized into **scoped collections** under the `changes-worker` scope. 
 │      │   ├── method: "PUT"                                   │
 │      │   ├── status: 500                                     │
 │      │   ├── error: "Internal Server Error"                  │
+│      │   ├── reason: "server_error:500"                      │
 │      │   ├── time: 1768521600                                │
+│      │   ├── expires_at: 1768608000                          │
 │      │   ├── retried: false                                  │
+│      │   ├── replay_attempts: 0                              │
+│      │   ├── target_url: "https://api.example.com"           │
 │      │   └── doc_data: "{...}"                               │
-│      └── doc_id: "manifest:dlq"                              │
-│          ├── type: "manifest"                                │
-│          └── ids: "[\"dlq:order::12345:1768521600\",...]"    │
+│      ├── doc_id: "dlq:meta"                                  │
+│      │   ├── type: "dlq_meta"                                │
+│      │   ├── last_inserted_at: 1768521600                    │
+│      │   └── last_drained_at: 1768525200                     │
+│      └── Indexes:                                            │
+│          ├── idx_dlq_type_time (type, time)                  │
+│          ├── idx_dlq_type_reason_time (type, reason, time)   │
+│          └── idx_dlq_type_retried (type, retried)            │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### Why Manifests?
+### Manifests vs. N1QL Queries
 
-CBL CE Python bindings don't expose N1QL queries. To list all documents within a collection, we maintain manifest documents that track known doc IDs per type. The manifest lives in the same collection as the documents it indexes (e.g., `manifest:mappings` lives in the `mappings` collection). The manifest is updated atomically whenever a doc is created or deleted.
+Mappings and checkpoints use **manifest documents** to track known doc IDs (since these collections have few entries and simple access patterns). The DLQ collection uses **N1QL queries** with collection-level value indexes instead — this scales to millions of entries without the write amplification of maintaining a manifest. The N1QL queries are executed via the `N1QLQuery` class from the CBL Python bindings, and indexes are created via raw CFFI calls to `CBLCollection_CreateValueIndex`.
 
 ### Value Storage Rules
 
@@ -160,22 +169,32 @@ class CBLStore:
     def save_mapping(self, name: str, content: str) -> None:
     def delete_mapping(self, name: str) -> None:
 
-    # ── Dead Letter Queue ─────────────────────────────────────
+    # ── Dead Letter Queue (N1QL-powered) ──────────────────────
     def add_dlq_entry(self, doc_id: str, seq: str, method: str,
-                      status: int, error: str, doc: dict) -> None:
-    def list_dlq(self) -> list[dict]:
+                      status: int, error: str, doc: dict,
+                      target_url: str = "", ttl_seconds: int = 0,
+                      reason: str = "") -> None:
+    def list_dlq(self) -> list[dict]:           # N1QL SELECT
+    def list_dlq_page(self, limit, offset, sort, order,
+                      reason_filter) -> dict:   # N1QL with LIMIT/OFFSET
+    def dlq_stats(self) -> dict:                # N1QL COUNT/MIN/GROUP BY
+    def dlq_explain_queries(self) -> dict:      # CBLQuery_Explain for all queries
     def get_dlq_entry(self, dlq_id: str) -> dict | None:
     def mark_dlq_retried(self, dlq_id: str) -> None:
+    def increment_dlq_replay_attempts(self, dlq_id: str) -> int:
     def delete_dlq_entry(self, dlq_id: str) -> None:
-    def clear_dlq(self) -> None:
-    def dlq_count(self) -> int:
+    def clear_dlq(self) -> None:                # transactional batch purge
+    def dlq_count(self) -> int:                 # N1QL COUNT(*)
+    def purge_expired_dlq(self, max_age_seconds: int) -> int:  # N1QL + transactional purge
+    def get_dlq_meta(self) -> dict:
+    def update_dlq_meta(self, field: str, job_id: str = "") -> None:
 
-    # ── Maintenance ───────────────────────────────────────────
-    def compact(self) -> bool:
-    def reindex(self) -> bool:
-    def integrity_check(self) -> bool:
-    def optimize(self) -> bool:
-    def full_optimize(self) -> bool:
+    # ── Maintenance (direct C API) ────────────────────────────
+    def compact(self) -> bool:       # kCBLMaintenanceTypeCompact
+    def reindex(self) -> bool:       # kCBLMaintenanceTypeReindex
+    def integrity_check(self) -> bool:  # kCBLMaintenanceTypeIntegrityCheck
+    def optimize(self) -> bool:      # kCBLMaintenanceTypeOptimize
+    def full_optimize(self) -> bool: # kCBLMaintenanceTypeFullOptimize
     def run_all_maintenance(self) -> dict[str, bool]:
 ```
 

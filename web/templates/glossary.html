@@ -25,7 +25,7 @@
     <div class="card bg-base-100 shadow rounded-2xl">
       <div class="card-body p-6">
         <h1 class="text-2xl font-bold mb-2">Glossary: Schema Mapping - Transform Functions Reference</h1>
-        <p class="opacity-70 mb-4">These functions can be applied to field values during schema mapping. Select from the dropdown or type directly in the transform input. Functions can be chained: <code class="bg-base-200 px-1 rounded">trim().lowercase()</code></p>
+        <p class="opacity-70 mb-4">These functions can be applied to field values during schema mapping. Select from the dropdown or type directly in the transform input. Functions can be chained: <code class="bg-base-200 px-1 rounded">trim().toLowerCase()</code></p>
 
         <!-- Quick jump -->
         <div class="flex flex-wrap gap-2 mb-4">
@@ -78,7 +78,7 @@
               <tr>
                 <td><code class="text-xs">{"name":" Alice  "}</code></td>
                 <td class="font-mono text-sm">$.name</td>
-                <td class="font-mono text-sm">trim().uppercase()</td>
+                <td class="font-mono text-sm">trim().toUpperCase()</td>
                 <td class="text-center align-middle" style="color:#22c55e;font-size:1.25rem;">➜</td>
                 <td class="font-mono text-sm">ALICE</td>
                 <td><code class="text-xs">name VARCHAR(100)</code></td>
@@ -101,9 +101,9 @@
         <h3 class="font-semibold mb-2">Chaining Transforms</h3>
         <p class="opacity-70 mb-3">Transforms can be chained using dot notation. Each function receives the output of the previous one:</p>
         <div class="mockup-code bg-success text-success-content">
-          <pre data-prefix="▸"><code>trim().lowercase()                      — trim whitespace, then lowercase</code></pre>
-          <pre data-prefix="▸"><code>trim().replace("-"," ").propercase()     — clean and title-case a name</code></pre>
-          <pre data-prefix="▸"><code>to_float().to_decimal(2)                — parse number then format to 2 decimals</code></pre>
+          <pre data-prefix="▸"><code>trim().toLowerCase()                      — trim whitespace, then lowercase</code></pre>
+          <pre data-prefix="▸"><code>trim().replace("-"," ").toTitleCase()     — clean and title-case a name</code></pre>
+          <pre data-prefix="▸"><code>parseFloat().toFixed(2)                — parse number then format to 2 decimals</code></pre>
           <pre data-prefix="▸"><code>split(",")[0].trim()                    — take first CSV value and trim it</code></pre>
         </div>
 
@@ -115,9 +115,9 @@
           <pre data-prefix="1"><code>{</code></pre>
           <pre data-prefix="2"><code>  "columns": {</code></pre>
           <pre data-prefix="3"><code>    "doc_id": "$._id",</code></pre>
-          <pre data-prefix="4"><code>    "email": { "path": "$.email", "transform": "trim().lowercase()" },</code></pre>
-          <pre data-prefix="5"><code>    "price": { "path": "$.price", "transform": "to_decimal(2)" },</code></pre>
-          <pre data-prefix="6"><code>    "state": { "path": "$.address.state", "transform": "uppercase()" }</code></pre>
+          <pre data-prefix="4"><code>    "email": { "path": "$.email", "transform": "trim().toLowerCase()" },</code></pre>
+          <pre data-prefix="5"><code>    "price": { "path": "$.price", "transform": "toFixed(2)" },</code></pre>
+          <pre data-prefix="6"><code>    "state": { "path": "$.address.state", "transform": "toUpperCase()" }</code></pre>
           <pre data-prefix="7"><code>  }</code></pre>
           <pre data-prefix="8"><code>}</code></pre>
         </div>
@@ -142,22 +142,22 @@
                 <td><code>" hello " → "hello"</code></td>
               </tr>
               <tr>
-                <td class="font-mono font-semibold">ltrim()</td>
-                <td>Remove leading (left) whitespace only.</td>
+                <td class="font-mono font-semibold">trimStart()</td>
+                <td>Remove leading whitespace (ES2019 <code>String.prototype.trimStart()</code>).</td>
                 <td><code>" hello " → "hello "</code></td>
               </tr>
               <tr>
-                <td class="font-mono font-semibold">rtrim()</td>
-                <td>Remove trailing (right) whitespace only.</td>
+                <td class="font-mono font-semibold">trimEnd()</td>
+                <td>Remove trailing whitespace (ES2019 <code>String.prototype.trimEnd()</code>).</td>
                 <td><code>" hello " → " hello"</code></td>
               </tr>
               <tr>
-                <td class="font-mono font-semibold">uppercase()</td>
+                <td class="font-mono font-semibold">toUpperCase()</td>
                 <td>Convert entire string to upper case.</td>
                 <td><code>"hello" → "HELLO"</code></td>
               </tr>
               <tr>
-                <td class="font-mono font-semibold">lowercase()</td>
+                <td class="font-mono font-semibold">toLowerCase()</td>
                 <td>Convert entire string to lower case.</td>
                 <td><code>"HELLO" → "hello"</code></td>
               </tr>
@@ -167,7 +167,7 @@
                 <td><code>"first_name" → "firstName"</code></td>
               </tr>
               <tr>
-                <td class="font-mono font-semibold">propercase()</td>
+                <td class="font-mono font-semibold">toTitleCase()</td>
                 <td>Capitalize the first letter of each word.</td>
                 <td><code>"jane doe" → "Jane Doe"</code></td>
               </tr>
@@ -192,19 +192,19 @@
                 <td><code>strip_chars(,"#") on "##id##" → "id"</code></td>
               </tr>
               <tr>
-                <td class="font-mono font-semibold">pad_left(,length,char)</td>
-                <td>Pad the string on the left to reach the target length.</td>
-                <td><code>pad_left(,5,"0") on "42" → "00042"</code></td>
+                <td class="font-mono font-semibold">padStart(,length,char)</td>
+                <td>Pad the string on the left to reach the target length (ES2017 <code>padStart</code>).</td>
+                <td><code>padStart(,5,"0") on "42" → "00042"</code></td>
               </tr>
               <tr>
-                <td class="font-mono font-semibold">pad_right(,length,char)</td>
-                <td>Pad the string on the right to reach the target length.</td>
-                <td><code>pad_right(,8," ") on "hello" → "hello   "</code></td>
+                <td class="font-mono font-semibold">padEnd(,length,char)</td>
+                <td>Pad the string on the right to reach the target length (ES2017 <code>padEnd</code>).</td>
+                <td><code>padEnd(,8," ") on "hello" → "hello   "</code></td>
               </tr>
               <tr>
-                <td class="font-mono font-semibold">substr(,start,length)</td>
+                <td class="font-mono font-semibold">substring(,start,length)</td>
                 <td>Extract a substring starting at <em>start</em> index for <em>length</em> characters.</td>
-                <td><code>substr(,0,4) on "2025-09-15" → "2025"</code></td>
+                <td><code>substring(,0,4) on "2025-09-15" → "2025"</code></td>
               </tr>
               <tr>
                 <td class="font-mono font-semibold">split(,sep)[index]</td>
@@ -222,13 +222,33 @@
                 <td><code>"hello" → 5</code></td>
               </tr>
               <tr>
-                <td class="font-mono font-semibold">urlencode()</td>
-                <td>Percent-encode the string for use in URLs.</td>
+                <td class="font-mono font-semibold">startsWith(,prefix)</td>
+                <td>Return <code>true</code> if the string begins with <em>prefix</em> (ES6 <code>String.prototype.startsWith()</code>).</td>
+                <td><code>startsWith(,"inv") on "invoice::1" → true</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">endsWith(,suffix)</td>
+                <td>Return <code>true</code> if the string ends with <em>suffix</em> (ES6 <code>String.prototype.endsWith()</code>).</td>
+                <td><code>endsWith(,".pdf") on "report.pdf" → true</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">includes(,substr)</td>
+                <td>Return <code>true</code> if the string contains <em>substr</em> (ES6 <code>String.prototype.includes()</code>).</td>
+                <td><code>includes(,"error") on "fatal error found" → true</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">regex_match(,pattern)</td>
+                <td>Return <code>true</code> if the string matches the regex pattern.</td>
+                <td><code>regex_match(,"^\d{4}-\d{2}") on "2025-09-15" → true</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">encodeURIComponent()</td>
+                <td>Percent-encode the string for use in URLs (ES <code>encodeURIComponent</code>).</td>
                 <td><code>"hello world" → "hello%20world"</code></td>
               </tr>
               <tr>
-                <td class="font-mono font-semibold">urldecode()</td>
-                <td>Decode a percent-encoded URL string.</td>
+                <td class="font-mono font-semibold">decodeURIComponent()</td>
+                <td>Decode a percent-encoded URL string (ES <code>decodeURIComponent</code>).</td>
                 <td><code>"hello%20world" → "hello world"</code></td>
               </tr>
             </tbody>
@@ -250,22 +270,22 @@
             </thead>
             <tbody>
               <tr>
-                <td class="font-mono font-semibold">to_int()</td>
+                <td class="font-mono font-semibold">parseInt()</td>
                 <td>Convert the value to an integer. Truncates decimals, parses strings.</td>
                 <td><code>"42.7" → 42</code></td>
               </tr>
               <tr>
-                <td class="font-mono font-semibold">to_float()</td>
-                <td>Convert the value to a floating-point number. Handles scientific notation and comma-separated numbers.</td>
+                <td class="font-mono font-semibold">parseFloat()</td>
+                <td>Convert the value to a floating-point number.</td>
                 <td><code>"1,234.56" → 1234.56</code></td>
               </tr>
               <tr>
-                <td class="font-mono font-semibold">to_decimal(,places)</td>
+                <td class="font-mono font-semibold">toFixed(,places)</td>
                 <td>Convert to a decimal number with the specified number of decimal places.</td>
-                <td><code>to_decimal(,2) on 24.999 → 25.00</code></td>
+                <td><code>toFixed(,2) on 24.999 → 25.00</code></td>
               </tr>
               <tr>
-                <td class="font-mono font-semibold">to_string()</td>
+                <td class="font-mono font-semibold">toString()</td>
                 <td>Convert any value to its string representation.</td>
                 <td><code>42 → "42"</code></td>
               </tr>
@@ -313,7 +333,12 @@
             </thead>
             <tbody>
               <tr>
-                <td class="font-mono font-semibold">to_iso8601()</td>
+                <td class="font-mono font-semibold">to_date()</td>
+                <td>Parse an ISO date string into a date object. Accepts formats like <code>yyyy-MM-dd</code>.</td>
+                <td><code>"2025-09-15" → 2025-09-15 (date)</code></td>
+              </tr>
+              <tr>
+                <td class="font-mono font-semibold">toISOString()</td>
                 <td>Convert a date value to ISO 8601 format (<code>yyyy-MM-ddTHH:mm:ssZ</code>).</td>
                 <td><code>"Sep 15, 2025" → "2025-09-15T00:00:00Z"</code></td>
               </tr>
@@ -376,8 +401,8 @@
             </thead>
             <tbody>
               <tr>
-                <td class="font-mono font-semibold">flatten()</td>
-                <td>Flatten a nested array into a single-level array.</td>
+                <td class="font-mono font-semibold">flat()</td>
+                <td>Flatten a nested array into a single-level array (ES2019 <code>Array.prototype.flat()</code>).</td>
                 <td><code>[[1,2],[3,4]] → [1,2,3,4]</code></td>
               </tr>
               <tr>

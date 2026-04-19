@@ -200,6 +200,7 @@ class BaseOutputForwarder(abc.ABC):
     def __init__(self, out_cfg: dict, dry_run: bool = False, metrics=None):
         self._dry_run = dry_run
         self._halt_on_failure = out_cfg.get("halt_on_failure", True)
+        self._data_error_action = out_cfg.get("data_error_action", "dlq")
         self._metrics_global = metrics
 
         # Engine-specific config is read by the subclass __init__.
@@ -664,18 +665,13 @@ class BaseOutputForwarder(abc.ABC):
                         error_detail=f"{type(exc).__name__}: {exc}",
                     )
 
-                    if self._halt_on_failure:
-                        from rest import OutputEndpointDown
-
-                        raise OutputEndpointDown(
-                            f"{self._engine.upper()} error for {doc_id} [{eclass}]: {exc}"
-                        ) from exc
                     return {
                         "ok": False,
                         "doc_id": doc_id,
                         "error": str(exc)[:500],
                         "retryable": False,
                         "error_class": eclass,
+                        "data_error_action": self._data_error_action,
                     }
 
                 # Transient error — retry

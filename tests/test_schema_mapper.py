@@ -83,54 +83,56 @@ class TestApplyTransform(unittest.TestCase):
     def test_trim(self):
         self.assertEqual(apply_transform("  hello  ", "trim()"), "hello")
 
-    def test_ltrim(self):
-        self.assertEqual(apply_transform("  hello  ", "ltrim()"), "hello  ")
+    def test_trimStart(self):
+        self.assertEqual(apply_transform("  hello  ", "trimStart()"), "hello  ")
 
-    def test_rtrim(self):
-        self.assertEqual(apply_transform("  hello  ", "rtrim()"), "  hello")
+    def test_trimEnd(self):
+        self.assertEqual(apply_transform("  hello  ", "trimEnd()"), "  hello")
 
-    def test_uppercase(self):
-        self.assertEqual(apply_transform("hello", "uppercase()"), "HELLO")
+    def test_toUpperCase(self):
+        self.assertEqual(apply_transform("hello", "toUpperCase()"), "HELLO")
 
-    def test_lowercase(self):
-        self.assertEqual(apply_transform("HELLO", "lowercase()"), "hello")
+    def test_toLowerCase(self):
+        self.assertEqual(apply_transform("HELLO", "toLowerCase()"), "hello")
+
+    def test_includes(self):
+        self.assertTrue(apply_transform("hello world", "includes(,world)"))
+        self.assertFalse(apply_transform("hello world", "includes(,xyz)"))
 
     # -- Numeric transforms --
 
-    def test_to_int(self):
-        self.assertEqual(apply_transform("42", "to_int()"), 42)
+    def test_parseInt(self):
+        self.assertEqual(apply_transform("42", "parseInt()"), 42)
 
-    def test_to_int_invalid(self):
-        self.assertIsNone(apply_transform("abc", "to_int()"))
+    def test_parseInt_invalid(self):
+        self.assertIsNone(apply_transform("abc", "parseInt()"))
 
-    def test_to_float(self):
-        self.assertAlmostEqual(apply_transform("3.14", "to_float()"), 3.14)
+    def test_parseFloat(self):
+        self.assertAlmostEqual(apply_transform("3.14", "parseFloat()"), 3.14)
 
-    def test_to_float_invalid(self):
-        self.assertIsNone(apply_transform("abc", "to_float()"))
+    def test_parseFloat_invalid(self):
+        self.assertIsNone(apply_transform("abc", "parseFloat()"))
 
-    def test_to_decimal(self):
-        result = apply_transform("19.99", "to_decimal()")
+    def test_toFixed(self):
+        result = apply_transform("19.99", "toFixed()")
         self.assertEqual(result, Decimal("19.99"))
 
-    def test_to_decimal_with_precision(self):
-        result = apply_transform("19.999", "to_decimal(,2)")
+    def test_toFixed_with_precision(self):
+        result = apply_transform("19.999", "toFixed(,2)")
         self.assertEqual(result, Decimal("20.00"))
 
-    def test_to_decimal_strips_json_path_arg(self):
-        result = apply_transform("19.999", "to_decimal($.field,2)")
+    def test_toFixed_strips_json_path_arg(self):
+        result = apply_transform("19.999", "toFixed($.field,2)")
         self.assertEqual(result, Decimal("20.00"))
 
-    def test_to_decimal_invalid(self):
-        self.assertIsNone(apply_transform("abc", "to_decimal()"))
+    def test_toFixed_invalid(self):
+        self.assertIsNone(apply_transform("abc", "toFixed()"))
 
-    # -- to_string --
+    def test_toString(self):
+        self.assertEqual(apply_transform(42, "toString()"), "42")
 
-    def test_to_string(self):
-        self.assertEqual(apply_transform(42, "to_string()"), "42")
-
-    def test_to_string_none(self):
-        self.assertIsNone(apply_transform(None, "to_string()"))
+    def test_toString_none(self):
+        self.assertIsNone(apply_transform(None, "toString()"))
 
     # -- coalesce --
 
@@ -166,11 +168,11 @@ class TestApplyTransform(unittest.TestCase):
     def test_none_with_trim(self):
         self.assertIsNone(apply_transform(None, "trim()"))
 
-    def test_none_with_uppercase(self):
-        self.assertIsNone(apply_transform(None, "uppercase()"))
+    def test_none_with_toUpperCase(self):
+        self.assertIsNone(apply_transform(None, "toUpperCase()"))
 
-    def test_none_with_to_int(self):
-        self.assertIsNone(apply_transform(None, "to_int()"))
+    def test_none_with_parseInt(self):
+        self.assertIsNone(apply_transform(None, "parseInt()"))
 
     # -- Unknown transform --
 
@@ -344,7 +346,10 @@ class TestSchemaMapperMatches(unittest.TestCase):
         m = SchemaMapper(
             {
                 "source": {
-                    "match": {"expression": "lowercase($._id)", "value": "invoice::abc"}
+                    "match": {
+                        "expression": "toLowerCase($._id)",
+                        "value": "invoice::abc",
+                    }
                 }
             }
         )

@@ -232,6 +232,7 @@ class OutputForwarder:
         self._target_url = out_cfg.get("target_url", "").rstrip("/")
         self._dry_run = dry_run
         self._halt_on_failure = out_cfg.get("halt_on_failure", True)
+        self._data_error_action = out_cfg.get("data_error_action", "dlq")
         ic("OutputForwarder init", self._mode, self._target_url, self._dry_run)
         self._log_response_times = out_cfg.get("log_response_times", True)
         self._output_format = out_cfg.get("output_format", "json")
@@ -405,6 +406,15 @@ class OutputForwarder:
             status = resp.status
             resp.release()
 
+            # Track outbound auth metrics
+            if self._metrics:
+                self._metrics.inc("outbound_auth_total")
+                self._metrics.record_outbound_auth_time(elapsed_ms / 1000)
+                if status in (401, 403):
+                    self._metrics.inc("outbound_auth_failure_total")
+                else:
+                    self._metrics.inc("outbound_auth_success_total")
+
             ic("send: response", doc_id, status, round(elapsed_ms, 1))
             await self._record_time(elapsed_ms)
             if self._metrics:
@@ -435,6 +445,12 @@ class OutputForwarder:
             ic("send: client HTTP error", doc_id, exc.status, exc.body[:200])
             await self._record_time(elapsed_ms)
             if self._metrics:
+                self._metrics.inc("outbound_auth_total")
+                self._metrics.record_outbound_auth_time(elapsed_ms / 1000)
+                if exc.status in (401, 403):
+                    self._metrics.inc("outbound_auth_failure_total")
+                else:
+                    self._metrics.inc("outbound_auth_success_total")
                 self._metrics.inc("output_errors_total")
                 self._metrics.inc(f"output_{mk}_errors_total")
                 self._metrics.inc("bytes_output_total", body_len)
@@ -452,29 +468,14 @@ class OutputForwarder:
                 elapsed_ms=round(elapsed_ms, 1),
                 error_detail=exc.body[:500],
             )
-            if self._halt_on_failure:
-                if self._metrics:
-                    self._metrics.set("output_endpoint_up", 0)
-                raise OutputEndpointDown(
-                    f"Output endpoint returned {exc.status} for {method} {url} – "
-                    f"halting to preserve checkpoint"
-                ) from exc
-            else:
-                log_event(
-                    logger,
-                    "warn",
-                    "OUTPUT",
-                    "halt_on_failure=false – skipping doc",
-                    doc_id=doc_id,
-                    status=exc.status,
-                )
-                return {
-                    "ok": False,
-                    "doc_id": doc_id,
-                    "method": method,
-                    "status": exc.status,
-                    "error": exc.body[:500],
-                }
+            return {
+                "ok": False,
+                "doc_id": doc_id,
+                "method": method,
+                "status": exc.status,
+                "error": exc.body[:500],
+                "data_error_action": self._data_error_action,
+            }
 
         except _RedirectHTTPError as exc:
             elapsed_ms = (time.monotonic() - t_start) * 1000
@@ -975,6 +976,25 @@ def determine_method(
     return write_method
 
 
+def _build_dlq_reason(result: dict) -> str:
+    """Build a human-readable reason string for a DLQ entry."""
+    error_class = result.get("error_class", "")
+    status = result.get("status", 0)
+    if error_class:
+        return f"data_error:{error_class}"
+    if isinstance(status, int) and 400 <= status < 500:
+        return f"client_error:{status}"
+    if isinstance(status, int) and 300 <= status < 400:
+        return f"redirect:{status}"
+    if isinstance(status, int) and status >= 500:
+        return f"server_error:{status}"
+    if result.get("error") == "shutdown_inflight":
+        return "shutdown_inflight"
+    if isinstance(status, int) and status == 0:
+        return "connection_failure"
+    return "unknown"
+
+
 class DeadLetterQueue:
     """
     Dead letter queue for documents that failed output delivery.
@@ -1011,6 +1031,7 @@ class DeadLetterQueue:
         metrics=None,
     ) -> None:
         ic("DLQ.write", result.get("doc_id"), seq, "cbl" if self._use_cbl else "file")
+        reason = _build_dlq_reason(result)
         if self._use_cbl and self._store:
             self._store.add_dlq_entry(
                 doc_id=result.get("doc_id", "unknown"),
@@ -1021,6 +1042,7 @@ class DeadLetterQueue:
                 doc=doc,
                 target_url=target_url,
                 ttl_seconds=self._retention_seconds,
+                reason=reason,
             )
             log_event(
                 logger,
@@ -1044,6 +1066,7 @@ class DeadLetterQueue:
             "method": result.get("method", "PUT"),
             "status": result.get("status", 0),
             "error": result.get("error", ""),
+            "reason": reason,
             "time": int(time.time()),
             "target_url": target_url,
             "replay_attempts": 0,

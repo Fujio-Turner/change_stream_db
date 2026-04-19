@@ -220,12 +220,23 @@
             <div class="label">
               <span class="label-text flex items-center gap-2">
                 Throttle Feed
-                <div class="tooltip tooltip-right tooltip-wide" data-tip="Artificial delay in seconds inserted between _changes poll cycles. Use to reduce load on the source server when near-real-time processing is not required. 0 = no throttle (default).">
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="Maximum number of changes per _changes request. Caps batch size to prevent memory spikes during floods. The worker loops immediately for the next batch when a full result is returned, so throughput stays high. Default: 5,000. Set to 0 to disable throttling.">
                   <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
                 </div>
               </span>
             </div>
             <input type="number" id="changes_feed_throttle_feed" class="input input-bordered w-full" min="0" />
+          </label>
+          <label class="form-control w-full">
+            <div class="label">
+              <span class="label-text flex items-center gap-2">
+                Flood Threshold
+                <div class="tooltip tooltip-right tooltip-wide" data-tip="Batch size above which the worker logs a FLOOD warning and increments the flood_batches_total metric. Used for monitoring — does not throttle or limit processing. Default: 10,000.">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+                </div>
+              </span>
+            </div>
+            <input type="number" id="changes_feed_flood_threshold" class="input input-bordered w-full" min="0" />
           </label>
           <label class="form-control w-full">
             <div class="label">
@@ -966,8 +977,28 @@
 
           <div class="form-control">
            <label class="label cursor-pointer justify-start gap-4">
-             <span class="label-text">Halt on Failure</span>
+             <span class="label-text flex items-center gap-2">
+               Halt on Failure
+               <div class="tooltip tooltip-right" data-tip="Controls what happens when the output target has an INFRASTRUCTURE error (5xx, connection refused, timeout after retries). &#10;&#10;ON (default): The pipeline stops and holds the checkpoint — no data is lost. The same batch retries on the next poll cycle. Use this when data integrity is critical. &#10;&#10;OFF: The pipeline skips the failed document, writes it to the Dead Letter Queue, and advances the checkpoint. Use this when you prefer availability over consistency. &#10;&#10;Note: This setting does NOT affect data errors (type mismatches, constraint violations, 4xx). Those are controlled separately by Data Error Action.">
+                 <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+               </div>
+             </span>
               <input type="checkbox" id="output_halt_on_failure" class="toggle toggle-success" />
+            </label>
+          </div>
+
+          <div class="form-control">
+           <label class="label cursor-pointer justify-start gap-4">
+             <span class="label-text flex items-center gap-2">
+               Data Error Action
+               <div class="tooltip tooltip-right" data-tip="Controls what happens when the output target rejects a document due to a PERMANENT DATA error — e.g., a value that overflows an int32 column, a constraint violation, or an HTTP 4xx response. &#10;&#10;These are 'you messed up' errors: the data itself is wrong and retrying will never fix it. &#10;&#10;DLQ (default): Store the rejected document in the Dead Letter Queue with full error context. You can inspect it at /dlq, fix the source data or schema mapping, and replay. &#10;&#10;Skip: Drop the document silently and move on. The checkpoint advances. Use this only if you are OK losing documents that don't match the target schema. &#10;&#10;This setting applies regardless of Halt on Failure — data errors never block the pipeline.">
+                 <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-base-content text-base-100 text-xs font-bold cursor-help">?</span>
+               </div>
+             </span>
+              <select id="output_data_error_action" class="select select-bordered select-sm w-40">
+                <option value="dlq">DLQ (store)</option>
+                <option value="skip">Skip (drop)</option>
+              </select>
             </label>
           </div>
         </div>
@@ -1462,6 +1493,7 @@
     document.getElementById('changes_feed_since').value = cfg.changes_feed?.since ?? '0';
     document.getElementById('changes_feed_limit').value = cfg.changes_feed?.limit ?? 0;
     document.getElementById('changes_feed_throttle_feed').value = cfg.changes_feed?.throttle_feed ?? 0;
+    document.getElementById('changes_feed_flood_threshold').value = cfg.changes_feed?.flood_threshold ?? 10000;
     document.getElementById('changes_feed_heartbeat_ms').value = cfg.changes_feed?.heartbeat_ms ?? 30000;
     document.getElementById('changes_feed_timeout_ms').value = cfg.changes_feed?.timeout_ms ?? 60000;
     document.getElementById('changes_feed_http_timeout_seconds').value = cfg.changes_feed?.http_timeout_seconds ?? 300;
@@ -1488,6 +1520,7 @@
     document.getElementById('output_accept_self_signed_certs').checked = cfg.output?.accept_self_signed_certs || false;
     document.getElementById('output_follow_redirects').checked = cfg.output?.follow_redirects || false;
     document.getElementById('output_halt_on_failure').checked = cfg.output?.halt_on_failure ?? true;
+    document.getElementById('output_data_error_action').value = cfg.output?.data_error_action || 'dlq';
     document.getElementById('output_dead_letter_path').value = cfg.output?.dead_letter_path || '';
 
     // DLQ retention & replay
@@ -1676,6 +1709,7 @@
         since: document.getElementById('changes_feed_since').value || '0',
         limit: parseInt(document.getElementById('changes_feed_limit').value) || 0,
         throttle_feed: parseInt(document.getElementById('changes_feed_throttle_feed').value) || 0,
+        flood_threshold: parseInt(document.getElementById('changes_feed_flood_threshold').value) || 10000,
         heartbeat_ms: parseInt(document.getElementById('changes_feed_heartbeat_ms').value) || 30000,
         timeout_ms: parseInt(document.getElementById('changes_feed_timeout_ms').value) || 60000,
         http_timeout_seconds: parseInt(document.getElementById('changes_feed_http_timeout_seconds').value) || 300,
@@ -1696,6 +1730,7 @@
         var o = {
           mode: mode,
           halt_on_failure: document.getElementById('output_halt_on_failure').checked,
+          data_error_action: document.getElementById('output_data_error_action').value,
           dead_letter_path: document.getElementById('output_dead_letter_path').value,
           dlq: {
             retention_seconds: parseInt(document.getElementById('output_dlq_retention_seconds').value) || 0,

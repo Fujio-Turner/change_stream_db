@@ -35,7 +35,6 @@ from icecream import ic
 
 from rest import (
     OutputForwarder,
-    OutputEndpointDown,
     DeadLetterQueue,
     VALID_OUTPUT_FORMATS,
 )
@@ -47,7 +46,6 @@ from rest.changes_http import (
     RedirectHTTPError,
     ServerHTTPError,
     fetch_docs,
-    _fetch_single_doc_with_retry,
     _fetch_docs_bulk_get,
     _fetch_docs_individually,
     _build_changes_body,
@@ -169,11 +167,27 @@ class MetricsCollector:
         self.health_probes_total: int = 0
         self.health_probe_failures_total: int = 0
 
+        # Auth tracking – inbound (gateway / _changes feed)
+        self.inbound_auth_total: int = 0
+        self.inbound_auth_success_total: int = 0
+        self.inbound_auth_failure_total: int = 0
+
+        # Auth tracking – outbound (output endpoint)
+        self.outbound_auth_total: int = 0
+        self.outbound_auth_success_total: int = 0
+        self.outbound_auth_failure_total: int = 0
+
         # Checkpoint loads
         self.checkpoint_loads_total: int = 0
         self.checkpoint_load_errors_total: int = 0
 
+        # Flood / backpressure detection
+        self.largest_batch_received: int = 0
+        self.flood_batches_total: int = 0  # batches exceeding flood threshold
+        self.flood_threshold: int = 10000  # configurable via set()
+
         # Gauges (can go up and down)
+        self.changes_pending: int = 0  # received - processed (backpressure)
         self.last_batch_size: int = 0
         self.last_poll_timestamp: float = 0.0
         self.checkpoint_seq: str = "0"
@@ -188,6 +202,10 @@ class MetricsCollector:
         self._batch_processing_times: deque[float] = deque(maxlen=10000)
         self._doc_fetch_times: deque[float] = deque(maxlen=10000)
         self._health_probe_times: deque[float] = deque(maxlen=10000)
+
+        # Auth timing deques
+        self._inbound_auth_times: deque[float] = deque(maxlen=10000)
+        self._outbound_auth_times: deque[float] = deque(maxlen=10000)
 
     def inc(self, name: str, value: int = 1) -> None:
         with self._lock:
@@ -217,6 +235,24 @@ class MetricsCollector:
         with self._lock:
             self._health_probe_times.append(seconds)
 
+    def record_inbound_auth_time(self, seconds: float) -> None:
+        with self._lock:
+            self._inbound_auth_times.append(seconds)
+
+    def record_outbound_auth_time(self, seconds: float) -> None:
+        with self._lock:
+            self._outbound_auth_times.append(seconds)
+
+    def record_batch_received(self, batch_size: int) -> None:
+        with self._lock:
+            if batch_size > self.largest_batch_received:
+                self.largest_batch_received = batch_size
+            if batch_size >= self.flood_threshold:
+                self.flood_batches_total += 1
+            self.changes_pending = (
+                self.changes_received_total - self.changes_processed_total
+            )
+
     def render(self) -> str:
         """Render all metrics in Prometheus text exposition format."""
         with self._lock:
@@ -229,6 +265,8 @@ class MetricsCollector:
             bpt = list(self._batch_processing_times)
             dft = list(self._doc_fetch_times)
             hpt = list(self._health_probe_times)
+            iat = list(self._inbound_auth_times)
+            oat = list(self._outbound_auth_times)
 
         # Pre-compute sorted arrays and stats for each timing deque
         def _stats(data: list[float]) -> tuple[int, float, list[float]]:
@@ -248,6 +286,8 @@ class MetricsCollector:
         bpt_count, bpt_sum, bpt_sorted = _stats(bpt)
         dft_count, dft_sum, dft_sorted = _stats(dft)
         hpt_count, hpt_sum, hpt_sorted = _stats(hpt)
+        iat_count, iat_sum, iat_sorted = _stats(iat)
+        oat_count, oat_sum, oat_sorted = _stats(oat)
 
         lines: list[str] = []
 
@@ -587,11 +627,76 @@ class MetricsCollector:
             self.health_probe_failures_total,
         )
 
+        # -- Auth tracking (inbound – gateway) --
+        _counter(
+            "changes_worker_inbound_auth_total",
+            "Total inbound (gateway) auth attempts.",
+            self.inbound_auth_total,
+        )
+        _counter(
+            "changes_worker_inbound_auth_success_total",
+            "Total inbound (gateway) auth successes.",
+            self.inbound_auth_success_total,
+        )
+        _counter(
+            "changes_worker_inbound_auth_failure_total",
+            "Total inbound (gateway) auth failures (401/403).",
+            self.inbound_auth_failure_total,
+        )
+        _summary(
+            "changes_worker_inbound_auth_time_seconds",
+            "Inbound (gateway) auth request time in seconds.",
+            iat_sorted,
+            iat_count,
+            iat_sum,
+        )
+
+        # -- Auth tracking (outbound – output endpoint) --
+        _counter(
+            "changes_worker_outbound_auth_total",
+            "Total outbound (output endpoint) auth attempts.",
+            self.outbound_auth_total,
+        )
+        _counter(
+            "changes_worker_outbound_auth_success_total",
+            "Total outbound (output endpoint) auth successes.",
+            self.outbound_auth_success_total,
+        )
+        _counter(
+            "changes_worker_outbound_auth_failure_total",
+            "Total outbound (output endpoint) auth failures (401/403).",
+            self.outbound_auth_failure_total,
+        )
+        _summary(
+            "changes_worker_outbound_auth_time_seconds",
+            "Outbound (output endpoint) auth request time in seconds.",
+            oat_sorted,
+            oat_count,
+            oat_sum,
+        )
+
         # -- Active tasks gauge --
         _gauge(
             "changes_worker_active_tasks",
             "Number of currently active document processing tasks.",
             self.active_tasks,
+        )
+
+        # -- Flood / backpressure --
+        _gauge(
+            "changes_worker_changes_pending",
+            "Changes received but not yet processed (backpressure indicator).",
+            self.changes_pending,
+        )
+        _gauge(
+            "changes_worker_largest_batch_received",
+            "Largest single batch of changes received since startup.",
+            self.largest_batch_received,
+        )
+        _counter(
+            "changes_worker_flood_batches_total",
+            "Number of batches that exceeded the flood threshold.",
+            self.flood_batches_total,
         )
 
         # -- Timing summaries --
@@ -1385,6 +1490,12 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
                 "docs will be skipped and the checkpoint will still advance"
             )
 
+        data_error_action = out_cfg.get("data_error_action", "dlq")
+        if data_error_action not in ("dlq", "skip"):
+            errors.append(
+                f"output.data_error_action must be 'dlq' or 'skip', got '{data_error_action}'"
+            )
+
     # -- retry -----------------------------------------------------------------
     retry_cfg = cfg.get("retry", {})
     max_retries = retry_cfg.get("max_retries", 5)
@@ -1939,36 +2050,10 @@ async def poll_changes(
                     ),
                 )
 
-        # Source-specific feed type validation
+        # feed_type / timeout validation is handled by validate_config()
+        # at startup — no runtime fallbacks needed here.
         feed_type = feed_cfg.get("feed_type", "longpoll")
-        if src == "edge_server" and feed_type == "websocket":
-            logger.warning(
-                "Edge Server does not support feed=websocket, falling back to longpoll"
-            )
-            feed_type = "longpoll"
-        if src != "edge_server" and feed_type == "sse":
-            logger.warning(
-                "SSE feed is only supported by Edge Server, falling back to longpoll"
-            )
-            feed_type = "longpoll"
-        if src == "couchdb" and feed_type == "websocket":
-            logger.warning(
-                "CouchDB does not support feed=websocket, falling back to longpoll"
-            )
-            feed_type = "longpoll"
-        if src == "couchdb" and feed_type == "sse":
-            logger.warning(
-                "CouchDB does not support feed=sse, use feed=eventsource instead"
-            )
-            feed_type = "eventsource"
-
-        # Edge Server caps timeout at 900000ms (15 min)
         timeout_ms = feed_cfg.get("timeout_ms", 60000)
-        if src == "edge_server" and timeout_ms > 900000:
-            logger.warning(
-                "Edge Server max timeout is 900000ms – clamping from %d", timeout_ms
-            )
-            timeout_ms = 900000
 
         changes_url = f"{base_url}/_changes"
 
@@ -2445,6 +2530,8 @@ def main() -> None:
         metrics = MetricsCollector(
             src, database, log_dir=log_dir, cbl_db_dir=cbl_db_dir
         )
+        flood_threshold = cfg.get("changes_feed", {}).get("flood_threshold", 10000)
+        metrics.set("flood_threshold", flood_threshold)
 
     loop = asyncio.new_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

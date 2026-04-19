@@ -68,7 +68,17 @@ class RetryableHTTP:
                 )
 
             try:
+                t_auth = time.monotonic()
                 resp = await self._session.request(method, url, **kwargs)
+                auth_elapsed = time.monotonic() - t_auth
+                # Track auth metrics for inbound (gateway) requests
+                if self._metrics:
+                    self._metrics.inc("inbound_auth_total")
+                    self._metrics.record_inbound_auth_time(auth_elapsed)
+                    if resp.status in (401, 403):
+                        self._metrics.inc("inbound_auth_failure_total")
+                    else:
+                        self._metrics.inc("inbound_auth_success_total")
                 if resp.status < 300:
                     return resp
                 body = await resp.text()
@@ -673,6 +683,7 @@ async def _process_changes_batch(
         metrics.set("last_poll_timestamp", time.time())
         metrics.set("last_batch_size", len(results))
         metrics.inc("changes_received_total", len(results))
+        metrics.record_batch_received(len(results))
 
     if not results:
         new_since = str(last_seq)
@@ -682,6 +693,17 @@ async def _process_changes_batch(
             metrics.set("checkpoint_seq", new_since)
         return new_since, False
 
+    if metrics and len(results) >= metrics.flood_threshold:
+        log_event(
+            logger,
+            "warn",
+            "FLOOD",
+            "flood detected: %d changes in single batch (threshold=%d)"
+            % (len(results), metrics.flood_threshold),
+            batch_size=len(results),
+            flood_threshold=metrics.flood_threshold,
+        )
+
     log_event(
         logger,
         "info",
@@ -689,22 +711,23 @@ async def _process_changes_batch(
         "_changes batch: %d changes" % len(results),
         batch_size=len(results),
     )
-    # DEBUG: log each individual change row
-    for change in results:
-        c_id = change.get("id", "")
-        c_rev = ""
-        c_changes = change.get("changes", [])
-        if c_changes:
-            c_rev = c_changes[0].get("rev", "")
-        log_event(
-            logger,
-            "debug",
-            "CHANGES",
-            "change row",
-            doc_id=c_id,
-            seq=change.get("seq", ""),
-        )
-        ic(c_id, c_rev, change.get("seq", ""))
+    # DEBUG: log each individual change row (gated to avoid overhead)
+    if logger.isEnabledFor(logging.DEBUG):
+        for change in results:
+            c_id = change.get("id", "")
+            c_rev = ""
+            c_changes = change.get("changes", [])
+            if c_changes:
+                c_rev = c_changes[0].get("rev", "")
+            log_event(
+                logger,
+                "debug",
+                "CHANGES",
+                "change row",
+                doc_id=c_id,
+                seq=change.get("seq", ""),
+            )
+            ic(c_id, c_rev, change.get("seq", ""))
 
     # Count deletes/removes in the feed (always), then optionally filter.
     # During initial sync for CouchDB (no active_only), force-skip
@@ -843,24 +866,36 @@ async def _process_changes_batch(
                         batch_success += 1
                     else:
                         batch_fail += 1
-                        if dlq.enabled and metrics:
-                            metrics.inc("dead_letter_total")
-                            metrics.set("dlq_last_write_epoch", time.time())
-                        await dlq.write(
-                            result["_doc"],
-                            result,
-                            change.get("seq", ""),
-                            target_url=output.target_url,
-                            metrics=metrics,
-                        )
+                        if result.get("data_error_action") == "skip":
+                            log_event(
+                                logger,
+                                "warn",
+                                "OUTPUT",
+                                "data error – skipping doc (data_error_action=skip)",
+                                doc_id=change.get("id", ""),
+                            )
+                        else:
+                            if dlq.enabled and metrics:
+                                metrics.inc("dead_letter_total")
+                                metrics.set("dlq_last_write_epoch", time.time())
+                            await dlq.write(
+                                result["_doc"],
+                                result,
+                                change.get("seq", ""),
+                                target_url=getattr(output, "target_url", ""),
+                                metrics=metrics,
+                            )
                 except (OutputEndpointDown, ShutdownRequested) as exc:
                     output_failed = True
                     is_shutdown = isinstance(exc, ShutdownRequested)
-                    logger.error(
-                        "%s – not advancing checkpoint past since=%s: %s",
-                        "SHUTDOWN" if is_shutdown else "OUTPUT DOWN",
-                        since,
-                        exc,
+                    log_event(
+                        logger,
+                        "error",
+                        "OUTPUT",
+                        "%s – not advancing checkpoint past since=%s: %s"
+                        % ("SHUTDOWN" if is_shutdown else "OUTPUT DOWN", since, exc),
+                        doc_id=change.get("id", ""),
+                        seq=str(change.get("seq", "")),
                     )
                     # DLQ remaining docs in this sub-batch if shutdown + dlq_inflight_on_shutdown
                     if (
@@ -884,7 +919,7 @@ async def _process_changes_batch(
                                     "error": "shutdown_inflight",
                                 },
                                 rem.get("seq", ""),
-                                target_url=output.target_url,
+                                target_url=getattr(output, "target_url", ""),
                                 metrics=metrics,
                             )
                         if metrics:
@@ -914,16 +949,25 @@ async def _process_changes_batch(
                         batch_success += 1
                     else:
                         batch_fail += 1
-                        if dlq.enabled and metrics:
-                            metrics.inc("dead_letter_total")
-                            metrics.set("dlq_last_write_epoch", time.time())
-                        await dlq.write(
-                            result["_doc"],
-                            result,
-                            change.get("seq", ""),
-                            target_url=output.target_url,
-                            metrics=metrics,
-                        )
+                        if result.get("data_error_action") == "skip":
+                            log_event(
+                                logger,
+                                "warn",
+                                "OUTPUT",
+                                "data error – skipping doc (data_error_action=skip)",
+                                doc_id=change.get("id", ""),
+                            )
+                        else:
+                            if dlq.enabled and metrics:
+                                metrics.inc("dead_letter_total")
+                                metrics.set("dlq_last_write_epoch", time.time())
+                            await dlq.write(
+                                result["_doc"],
+                                result,
+                                change.get("seq", ""),
+                                target_url=getattr(output, "target_url", ""),
+                                metrics=metrics,
+                            )
             else:
                 tasks = [asyncio.create_task(process_one(c)) for c in filtered]
                 done, _ = await asyncio.wait(tasks)
@@ -935,24 +979,35 @@ async def _process_changes_batch(
                         batch_success += 1
                     else:
                         batch_fail += 1
-                        if dlq.enabled and metrics:
-                            metrics.inc("dead_letter_total")
-                            metrics.set("dlq_last_write_epoch", time.time())
-                        await dlq.write(
-                            result["_doc"],
-                            result,
-                            result["_change"].get("seq", ""),
-                            target_url=output.target_url,
-                            metrics=metrics,
-                        )
+                        if result.get("data_error_action") == "skip":
+                            log_event(
+                                logger,
+                                "warn",
+                                "OUTPUT",
+                                "data error – skipping doc (data_error_action=skip)",
+                                doc_id=result.get("doc_id", ""),
+                            )
+                        else:
+                            if dlq.enabled and metrics:
+                                metrics.inc("dead_letter_total")
+                                metrics.set("dlq_last_write_epoch", time.time())
+                            await dlq.write(
+                                result["_doc"],
+                                result,
+                                result["_change"].get("seq", ""),
+                                target_url=getattr(output, "target_url", ""),
+                                metrics=metrics,
+                            )
         except (OutputEndpointDown, ShutdownRequested) as exc:
             output_failed = True
             is_shutdown = isinstance(exc, ShutdownRequested)
-            logger.error(
-                "%s – not advancing checkpoint past since=%s: %s",
-                "SHUTDOWN" if is_shutdown else "OUTPUT DOWN",
-                since,
-                exc,
+            log_event(
+                logger,
+                "error",
+                "OUTPUT",
+                "%s – not advancing checkpoint past since=%s: %s"
+                % ("SHUTDOWN" if is_shutdown else "OUTPUT DOWN", since, exc),
+                error_detail=str(exc),
             )
             # DLQ all unprocessed docs if shutdown + dlq_inflight_on_shutdown
             if (
@@ -984,7 +1039,7 @@ async def _process_changes_batch(
                             "error": "shutdown_inflight",
                         },
                         ch.get("seq", ""),
-                        target_url=output.target_url,
+                        target_url=getattr(output, "target_url", ""),
                         metrics=metrics,
                     )
                     dlq_count += 1
@@ -1000,6 +1055,10 @@ async def _process_changes_batch(
 
     if metrics:
         metrics.inc("changes_processed_total", len(filtered))
+        metrics.set(
+            "changes_pending",
+            metrics.changes_received_total - metrics.changes_processed_total,
+        )
 
     total = batch_success + batch_fail
     if total > 0:

@@ -67,14 +67,17 @@ _TRANSFORM_RE = re.compile(r"^(\w+)\(([^)]*)\)$")
 def apply_transform(value: Any, transform: str) -> Any:
     """Apply a transform string to *value*.
 
-    Supported transforms:
-        trim(), ltrim(), rtrim(), uppercase(), lowercase(),
-        to_int(), to_float(), to_decimal(,N), to_string(),
-        coalesce(,default), json_stringify().
+    Supported transforms (ECMA-262 names):
+        trim(), trimStart(), trimEnd(),
+        toUpperCase(), toLowerCase(),
+        parseInt(), parseFloat(),
+        toFixed(,N), toString(),
+        coalesce(,default), json_stringify(),
+        includes().
 
     Transform arguments that look like a JSON path (start with ``$``) are
     stripped so that only the function parameters remain (e.g.
-    ``to_decimal($.total,2)`` → precision ``2``).
+    ``toFixed($.total,2)`` → precision ``2``).
     """
     m = _TRANSFORM_RE.match(transform.strip())
     if not m:
@@ -89,25 +92,25 @@ def apply_transform(value: Any, transform: str) -> Any:
 
     if func == "trim":
         return str(value).strip() if value is not None else value
-    if func == "ltrim":
+    if func == "trimstart":
         return str(value).lstrip() if value is not None else value
-    if func == "rtrim":
+    if func == "trimend":
         return str(value).rstrip() if value is not None else value
-    if func == "uppercase":
+    if func == "touppercase":
         return str(value).upper() if value is not None else value
-    if func == "lowercase":
+    if func == "tolowercase":
         return str(value).lower() if value is not None else value
-    if func == "to_int":
+    if func == "parseint":
         try:
             return int(value)
         except (TypeError, ValueError):
             return None
-    if func == "to_float":
+    if func == "parsefloat":
         try:
             return float(value)
         except (TypeError, ValueError):
             return None
-    if func == "to_decimal":
+    if func == "tofixed":
         try:
             d = Decimal(str(value))
             if args:
@@ -116,7 +119,7 @@ def apply_transform(value: Any, transform: str) -> Any:
             return d
         except (TypeError, ValueError, InvalidOperation):
             return None
-    if func == "to_string":
+    if func == "tostring":
         return str(value) if value is not None else None
     if func == "coalesce":
         if value is not None:
@@ -188,7 +191,7 @@ def apply_transform(value: Any, transform: str) -> Any:
         if len(suffix) >= 2 and suffix[0] in ('"', "'") and suffix[-1] == suffix[0]:
             suffix = suffix[1:-1]
         return str(value).endswith(suffix)
-    if func == "contains":
+    if func == "includes":
         if value is None:
             return False
         substr = args[0] if args else ""
@@ -477,7 +480,18 @@ class SchemaMapper:
         self.source: dict = mapping.get("source", {})
         self.match: dict = self.source.get("match", {})
         self.tables: list[dict] = mapping.get("tables", [])
-        ic("SchemaMapper.__init__", mapping.get("name"), self.match)
+
+        # Pre-compute whether any column uses a transform function.
+        # When False, _resolve_row can take a fast path that skips
+        # per-value transform / type-check / date-coercion overhead.
+        self.has_transforms: bool = self._scan_for_transforms()
+
+        ic(
+            "SchemaMapper.__init__",
+            mapping.get("name"),
+            self.match,
+            self.has_transforms,
+        )
 
     @classmethod
     def from_file(cls, path: str | Path) -> SchemaMapper:
@@ -687,7 +701,25 @@ class SchemaMapper:
         """
         table_name: str = tbl.get("name", "?")
         columns: dict[str, str | dict] = tbl.get("columns", {})
-        row: dict[str, Any] = {}
+
+        # --- fast path: no transforms anywhere in this mapping --------
+        # When all columns are plain JSON-path strings we can skip
+        # transform application, type-mismatch checks, float sanitisation,
+        # and date coercion entirely.
+        if not self.has_transforms:
+            row: dict[str, Any] = {}
+            for col_name, col_def in columns.items():
+                path = col_def if isinstance(col_def, str) else col_def.get("path", "$")
+                value = resolve_path(item, path)
+                if value is None and item is not parent_doc:
+                    value = resolve_path(parent_doc, path)
+                if value is None:
+                    diag.add_missing(table_name, col_name)
+                row[col_name] = value
+            return row
+
+        # --- full path: transforms / diagnostics / coercion -----------
+        row = {}
         for col_name, col_def in columns.items():
             value = resolve_column(item, col_def)
             if value is None and item is not parent_doc:
@@ -736,6 +768,14 @@ class SchemaMapper:
         if isinstance(col_def, str):
             return col_def
         return col_def.get("path", f"$.{pk}")
+
+    def _scan_for_transforms(self) -> bool:
+        """Return True if any column in any table defines a transform."""
+        for tbl in self.tables:
+            for col_def in tbl.get("columns", {}).values():
+                if isinstance(col_def, dict) and col_def.get("transform"):
+                    return True
+        return False
 
     def _find_parent_pk_path(self, child_tbl: dict, doc: dict) -> str | None:
         """Find the JSON path for the parent's PK referenced by the child FK."""
