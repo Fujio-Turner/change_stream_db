@@ -146,6 +146,76 @@
     "drain_timeout_seconds": 60,
     "dlq_inflight_on_shutdown": false
   },
+  "attachments": {
+    "enabled": false,
+    "dry_run": false,
+    "mode": "individual",
+    "filter": {
+      "content_types": [],
+      "reject_content_types": [],
+      "min_size_bytes": 0,
+      "max_size_bytes": 0,
+      "max_total_bytes_per_doc": 0,
+      "name_pattern": "",
+      "ignore_revpos": false
+    },
+    "fetch": {
+      "use_bulk_get": false,
+      "max_concurrent_downloads": 5,
+      "max_concurrent_downloads_global": 20,
+      "request_timeout_seconds": 120,
+      "temp_dir": "/tmp/attachments",
+      "stream_to_disk_threshold_bytes": 10485760,
+      "verify_digest": true,
+      "verify_length": true
+    },
+    "destination": {
+      "type": "s3",
+      "key_template": "{prefix}/{doc_id}/{attachment_name}",
+      "key_prefix": "attachments",
+      "s3": {
+        "bucket": "",
+        "region": "us-east-1",
+        "endpoint_url": "",
+        "access_key_id": "",
+        "secret_access_key": "",
+        "session_token": "",
+        "storage_class": "",
+        "server_side_encryption": "",
+        "kms_key_id": "",
+        "metadata": {}
+      },
+      "http": {
+        "url_template": "",
+        "method": "PUT",
+        "headers": {}
+      },
+      "filesystem": {
+        "base_path": "",
+        "dir_template": "{doc_id}",
+        "preserve_filename": true
+      }
+    },
+    "post_process": {
+      "action": "none",
+      "update_field": "_attachments_external",
+      "remove_attachments_after_upload": false,
+      "ttl_seconds": 86400,
+      "on_doc_missing": "skip",
+      "max_conflict_retries": 3,
+      "cleanup_orphaned_uploads": false
+    },
+    "retry": {
+      "max_retries": 3,
+      "backoff_base_seconds": 1,
+      "backoff_max_seconds": 30,
+      "retry_on_status": [408, 429, 500, 502, 503, 504]
+    },
+    "on_missing_attachment": "skip",
+    "partial_success": "continue",
+    "halt_on_failure": true,
+    "skip_on_edge_server": true
+  },
   "couchbase_lite": {
     "db_dir": "/app/data",
     "db_name": "changes_worker_db",

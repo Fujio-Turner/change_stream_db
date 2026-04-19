@@ -666,6 +666,7 @@ async def _process_changes_batch(
     shutdown_cfg: dict | None = None,
     initial_sync: bool = False,
     job_id: str = "",
+    attachment_processor=None,
 ) -> tuple[str, bool]:
     """
     Process a batch of _changes results: filter, fetch docs, forward to output,
@@ -812,6 +813,22 @@ async def _process_changes_batch(
                     doc = change.get("doc", change)
                 else:
                     doc = docs_by_id.get(doc_id, change)
+                # ── ATTACHMENT stage (between MIDDLE and RIGHT) ──
+                if attachment_processor is not None:
+                    try:
+                        doc, _skip = await attachment_processor.process(
+                            doc, base_url, http, basic_auth, auth_headers, src
+                        )
+                    except Exception as att_exc:
+                        log_event(
+                            logger,
+                            "error",
+                            "PROCESSING",
+                            "attachment processing failed: %s" % att_exc,
+                            doc_id=doc_id,
+                        )
+                        raise
+
                 method = determine_method(
                     change,
                     write_method=getattr(output, "_write_method", "PUT"),

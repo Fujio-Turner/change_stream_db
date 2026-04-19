@@ -164,8 +164,19 @@ def _sanitize_key_part(value: str) -> str:
     return urllib.parse.quote(value, safe="/._-")
 
 
-def render_key(template: str, doc: dict, cfg: dict, sanitize: bool = True) -> str:
-    """Render an object key from a template and document fields."""
+def render_key(
+    template: str,
+    doc: dict,
+    cfg: dict,
+    sanitize: bool = True,
+    extra_vars: dict[str, object] | None = None,
+) -> str:
+    """Render an object key from a template and document fields.
+
+    *extra_vars* (if provided) are merged after the standard variables,
+    allowing callers to add context-specific placeholders such as
+    ``{attachment_name}`` or ``{content_type}``.
+    """
     now = datetime.now(timezone.utc)
     doc_id = doc.get("_id", doc.get("id", "unknown"))
     variables = {
@@ -182,6 +193,8 @@ def render_key(template: str, doc: dict, cfg: dict, sanitize: bool = True) -> st
         "database": cfg.get("database", ""),
         "prefix": cfg.get("key_prefix", "couchdb-changes"),
     }
+    if extra_vars:
+        variables.update({k: str(v) for k, v in extra_vars.items()})
 
     def _replace(m):
         val = variables.get(m.group(1), m.group(0))
