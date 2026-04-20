@@ -15,7 +15,7 @@
 
     { type: 'section', label: 'Tools' },
     { href: '/schema',     label: 'Schema Mapping',   icon: '/static/icons/schema.svg'   },
-    { href: '/wizard',     label: 'Schema Wizard',    icon: '/static/icons/wizard.svg'   },
+    { href: '/wizard',     label: 'Wizards',          icon: '/static/icons/wizard.svg'   },
 
     { type: 'divider' },
 

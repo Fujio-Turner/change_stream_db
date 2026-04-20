@@ -4,7 +4,7 @@ Unit tests for rest.attachment_postprocess (Phase 3 — Post-Processing).
 
 Covers:
   - action=none (noop)
-  - action=update_doc (PUT with _attachments_external, remove_attachments)
+  - action=update_doc (PUT with attachments_external, remove_attachments)
   - action=set_ttl (PUT with _exp)
   - action=delete_doc (DELETE)
   - action=delete_attachments (sequential DELETE per attachment)
@@ -109,8 +109,8 @@ class TestActionUpdateDoc(unittest.TestCase):
             result = await proc.post_process(
                 doc, uploaded, "http://sg:4984/db", http, None, {}
             )
-            self.assertIn("_attachments_external", result)
-            ext = result["_attachments_external"]
+            self.assertIn("attachments_external", result)
+            ext = result["attachments_external"]
             self.assertIn("photo.jpg", ext)
             self.assertEqual(ext["photo.jpg"]["url"], "s3://bucket/photo.jpg")
             self.assertEqual(ext["photo.jpg"]["length"], 2048)
@@ -134,7 +134,7 @@ class TestActionUpdateDoc(unittest.TestCase):
                 doc, uploaded, "http://sg:4984/db", http, None, {}
             )
             self.assertIn("external_files", result)
-            self.assertNotIn("_attachments_external", result)
+            self.assertNotIn("attachments_external", result)
 
         asyncio.run(_run())
 
@@ -155,7 +155,7 @@ class TestActionUpdateDoc(unittest.TestCase):
                 doc, uploaded, "http://sg:4984/db", http, None, {}
             )
             self.assertNotIn("_attachments", result)
-            self.assertIn("_attachments_external", result)
+            self.assertIn("attachments_external", result)
 
         asyncio.run(_run())
 
@@ -190,7 +190,7 @@ class TestActionUpdateDoc(unittest.TestCase):
             result = await proc.post_process(
                 doc, uploaded, "http://sg:4984/db", http, None, {}
             )
-            ext = result["_attachments_external"]
+            ext = result["attachments_external"]
             self.assertEqual(len(ext), 2)
             self.assertIn("a.jpg", ext)
             self.assertIn("b.png", ext)
@@ -455,7 +455,7 @@ class TestConflictResolution(unittest.TestCase):
             result = await proc.post_process(
                 doc, uploaded, "http://sg:4984/db", http, None, {}
             )
-            self.assertIn("_attachments_external", result)
+            self.assertIn("attachments_external", result)
             self.assertEqual(result["_rev"], "4-new")
 
         asyncio.run(_run())
@@ -497,7 +497,7 @@ class TestConflictResolution(unittest.TestCase):
                 doc, uploaded, "http://sg:4984/db", http, None, {}
             )
             # Should return original doc (stale attachment → skip)
-            self.assertNotIn("_attachments_external", result)
+            self.assertNotIn("attachments_external", result)
             inc_calls = {c[0][0] for c in metrics.inc.call_args_list}
             self.assertIn("attachments_stale_total", inc_calls)
 

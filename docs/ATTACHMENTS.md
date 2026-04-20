@@ -315,7 +315,7 @@ Attachment processing is configured via a new `attachments` block in the config:
                                               // ["update_doc", "set_ttl"] — update doc with URL, then set expiry
 
       // action = "update_doc": add external URL to the document
-      "update_field": "_attachments_external", // field name to add/update with external URLs
+      "update_field": "attachments_external",  // field name to add/update with external URLs
       "remove_attachments_after_upload": false, // if true, remove _attachments from the doc body on update
 
       // action = "set_ttl": set document expiry (Couchbase only)
@@ -453,7 +453,7 @@ After the attachment binary has been uploaded to the destination, the worker per
 PUT /{keyspace}/{docId}?rev=<current_rev>
 Body: {
   ...original doc fields...,
-  "_attachments_external": {
+  "attachments_external": {
     "photo.jpg": {
       "url": "https://my-bucket.s3.amazonaws.com/attachments/photo_001/photo.jpg",
       "content_type": "image/jpeg",
@@ -557,7 +557,7 @@ Attachment processing has a uniquely wide surface for failure because it spans *
    ```
 3. **Increment** `attachments_missing_total` metric (new counter).
 4. **Continue** processing remaining attachments on this document — a missing attachment does NOT fail the whole document.
-5. **Post-processing decision:** If *all* attachments are missing → skip post-processing entirely (nothing was uploaded). If *some* were fetched → post-process with only the successful ones (the `_attachments_external` field only includes attachments that were actually uploaded).
+5. **Post-processing decision:** If *all* attachments are missing → skip post-processing entirely (nothing was uploaded). If *some* were fetched → post-process with only the successful ones (the `attachments_external` field only includes attachments that were actually uploaded).
 
 **Config:**
 
@@ -766,7 +766,7 @@ This is a **partial success** scenario. The key question: does the worker treat 
 
 ```json
 {
-  "_attachments_external": {
+  "attachments_external": {
     "a.jpg": { "url": "s3://bucket/photo_001/a.jpg", "status": "uploaded" },
     "b.jpg": { "url": "s3://bucket/photo_001/b.jpg", "status": "uploaded" },
     "c.jpg": { "url": "s3://bucket/photo_001/c.jpg", "status": "uploaded" },
@@ -989,7 +989,7 @@ sequenceDiagram
     W->>SG: GET /{keyspace}/photo_001 (get latest _rev)
     SG-->>W: 200 {_rev: "3-abc", ...}
 
-    W->>SG: PUT /{keyspace}/photo_001?rev=3-abc {_attachments_external: {photo.jpg: {url: "s3://..."}}}
+    W->>SG: PUT /{keyspace}/photo_001?rev=3-abc {attachments_external: {photo.jpg: {url: "s3://..."}}}
     SG-->>W: 201 {rev: "4-def"}
 
     W->>W: Continue to RIGHT stage (output doc)
@@ -1036,7 +1036,7 @@ sequenceDiagram
 
     W->>SG: GET /{keyspace}/report_42
     SG-->>W: 200 {_rev: "2-aaa", ...}
-    W->>SG: PUT /{keyspace}/report_42?rev=2-aaa {_exp: 1713571200, _attachments_external: {...}}
+    W->>SG: PUT /{keyspace}/report_42?rev=2-aaa {_exp: 1713571200, attachments_external: {...}}
     SG-->>W: 201 {rev: "3-bbb"}
 
     W->>CBL: Save checkpoint
@@ -1171,7 +1171,7 @@ sequenceDiagram
     W->>S3: PUT attachments/photo_001/photo.jpg
     S3-->>W: 200 OK ✓
 
-    W->>SG: PUT /{keyspace}/photo_001?rev=3-abc {_attachments_external: {...}}
+    W->>SG: PUT /{keyspace}/photo_001?rev=3-abc {attachments_external: {...}}
     SG-->>W: 409 Conflict (doc is now rev 5-xyz)
 
     W->>SG: GET /{keyspace}/photo_001
@@ -1234,7 +1234,7 @@ sequenceDiagram
             W->>S3: PUT .../d.jpg
             S3-->>W: 200 ✓
         end
-        W->>SG: PUT doc with _attachments_external (4) + _attachments_failed (1)
+        W->>SG: PUT doc with attachments_external (4) + _attachments_failed (1)
         SG-->>W: 201 ✓
         W->>W: Checkpoint advances ✓
     else partial_success = "require_all"
@@ -1291,7 +1291,7 @@ sequenceDiagram
     W->>S3: PUT attachments/photo_001/thumb.png
     S3-->>W: 200 OK ✓
 
-    W->>SG: PUT photo_001 with _attachments_external (post-process)
+    W->>SG: PUT photo_001 with attachments_external (post-process)
     SG-->>W: 201 ✓
 
     W->>CBL: Save checkpoint ✓ (now advances)
@@ -2060,7 +2060,7 @@ class AzureDestination(BlobDestination):
     
     "post_process": {
       "action": "update_doc",                // or array: ["update_doc", "set_ttl"]
-      "update_field": "_attachments_external",
+      "update_field": "attachments_external",
       "remove_attachments_after_upload": false,
       "ttl_seconds": 86400,
       "admin_url": "http://localhost:4985",

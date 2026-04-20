@@ -1501,9 +1501,14 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
     # -- output ----------------------------------------------------------------
     out_cfg = cfg.get("output", {})
     out_mode = out_cfg.get("mode", "stdout")
-    if out_mode not in ("stdout", "http", "db"):
+    _DB_ENGINE_ALIASES = {"postgres", "mysql", "mssql", "oracle"}
+    if (
+        out_mode not in ("stdout", "http", "db", "s3")
+        and out_mode not in _DB_ENGINE_ALIASES
+    ):
         errors.append(
-            f"output.mode must be 'stdout', 'http', or 'db', got '{out_mode}'"
+            f"output.mode must be 'stdout', 'http', 'db', 's3', or a db engine name "
+            f"(postgres/mysql/mssql/oracle), got '{out_mode}'"
         )
     if out_mode == "http" and not out_cfg.get("target_url"):
         errors.append("output.target_url is required when output.mode=http")
@@ -2021,8 +2026,14 @@ async def poll_changes(
         db_output = None  # track DB forwarder for cleanup
         cloud_output = None  # track cloud forwarder for cleanup
 
-        if output_mode == "db":
+        _DB_ENGINE_ALIASES = {"postgres", "mysql", "mssql", "oracle"}
+        if output_mode in _DB_ENGINE_ALIASES:
+            db_engine = output_mode
+            output_mode = "db"
+        elif output_mode == "db":
             db_engine = out_cfg.get("db", {}).get("engine", "postgres")
+
+        if output_mode == "db":
             if db_engine == "postgres":
                 from db.db_postgres import PostgresOutputForwarder
 

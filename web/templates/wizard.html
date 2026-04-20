@@ -8,8 +8,12 @@
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/highlight-light.css" rel="stylesheet" type="text/css" />
   <script src="/static/js/tailwind.js"></script>
   <script src="/static/js/ai-assist.js"></script>
+  <script src="/static/js/sql-formatter.min.js"></script>
+  <script src="/static/js/highlight.min.js"></script>
+  <script src="/static/js/highlight-sql.min.js"></script>
   <script>
     (function(){
       var t = localStorage.getItem('cw_theme') || 'dark';
@@ -21,13 +25,465 @@
     .field-item:hover { background: oklch(var(--p) / 0.15); }
     .step-card { display: none; }
     .step-card.active { display: block; }
+    .choice-destructive { border-color: oklch(var(--er) / 0.5); background-color: oklch(var(--er) / 0.08); }
+    .choice-destructive:hover { border-color: var(--er); background-color: oklch(var(--er) / 0.15); }
+    .choice-destructive.btn-primary { background-color: var(--er); border-color: var(--er); }
+    .text-warning { font-weight: bold; color: var(--er); }
+    .sql-viewer-pre { line-height: 1.6; }
   </style>
 </head>
 <body class="min-h-screen bg-base-200">
   <div id="sidebar-root"></div>
 
   <div class="sidebar-main">
-  <main class="w-full mx-auto p-6">
+  <main class="w-full mx-auto p-6 space-y-6">
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- LANDING PAGE                                           -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div id="wizardLanding">
+      <div class="card bg-base-100 shadow rounded-2xl mb-6">
+        <div class="card-body p-6">
+          <h1 class="text-2xl font-bold">Setup Wizard</h1>
+          <p class="opacity-70">Choose a wizard to get started.</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-6 max-w-3xl mx-auto">
+        <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startSettingsWizard()">
+          <div class="card-body items-center text-center">
+            <span class="text-5xl mb-3">⚙️</span>
+            <h2 class="card-title text-lg">Settings</h2>
+            <p class="text-sm opacity-60">Optimize pipeline settings with guided questions</p>
+          </div>
+        </div>
+        <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startSourceWizard()">
+          <div class="card-body items-center text-center">
+            <span class="text-5xl mb-3">📡</span>
+            <h2 class="card-title text-lg">Data Source</h2>
+            <p class="text-sm opacity-60">Configure replication source system</p>
+          </div>
+        </div>
+        <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startRdbmsSchemaWizard()">
+          <div class="card-body items-center text-center">
+            <span class="text-5xl mb-3">🗄️</span>
+            <h2 class="card-title text-lg">RDBMS</h2>
+            <p class="text-sm opacity-60">Connect to database &amp; import schema</p>
+          </div>
+        </div>
+        <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startCloudStorageWizard()">
+          <div class="card-body items-center text-center">
+            <span class="text-5xl mb-3">☁️</span>
+            <h2 class="card-title text-lg">Cloud Storage</h2>
+            <p class="text-sm opacity-60">Configure attachments &amp; JSON archival strategies</p>
+          </div>
+        </div>
+        <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startMappingWizard()">
+          <div class="card-body items-center text-center">
+            <span class="text-5xl mb-3">🗂️</span>
+            <h2 class="card-title text-lg">Schema Mapping</h2>
+            <p class="text-sm opacity-60">Connect source, configure output, map fields</p>
+          </div>
+        </div>
+      </div>
+      </div>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- SETTINGS WIZARD                                        -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div id="settingsWizard" class="hidden max-w-4xl mx-auto">
+      <div class="flex items-center justify-between mb-4">
+        <button class="btn btn-ghost btn-sm" onclick="showWizardLanding()">← Back to Wizards</button>
+        <span id="swProgress" class="text-sm opacity-60">Question 1 of 8</span>
+      </div>
+      <div class="w-full bg-base-300 rounded-full h-2 mb-6">
+        <div id="swProgressBar" class="bg-primary h-2 rounded-full transition-all" style="width:12.5%"></div>
+      </div>
+
+      <div id="swQuestionCard" class="card bg-base-100 shadow-sm rounded-2xl">
+        <div class="card-body">
+          <h2 id="swQuestionTitle" class="text-lg font-bold mb-4"></h2>
+          <div id="swChoices" class="flex flex-col gap-3"></div>
+        </div>
+      </div>
+
+      <!-- Summary (shown after all questions) -->
+      <div id="swSummary" class="hidden">
+        <div class="card bg-base-100 shadow-sm rounded-2xl">
+          <div class="card-body">
+            <h2 class="text-lg font-bold mb-4">Settings Summary</h2>
+            <div id="swSummaryList" class="space-y-2 mb-4"></div>
+            <div class="divider text-xs opacity-60">Your Configuration Story</div>
+            <div id="swStory" class="bg-base-200 border border-base-300 p-4 rounded-xl text-base leading-relaxed mb-4"></div>
+            <div class="divider text-xs opacity-60">Generated Config Preview</div>
+            <pre id="swConfigPreview" class="bg-base-200 p-4 rounded-xl font-mono text-sm overflow-x-auto whitespace-pre-wrap"></pre>
+            <div class="flex items-center gap-3 mt-4">
+              <button class="btn btn-success" onclick="saveSettingsConfig()">Save &amp; Apply Settings</button>
+              <button class="btn btn-ghost btn-sm" onclick="swStartOver()">Start Over</button>
+              <span id="swSaveStatus" class="text-sm"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="swNav" class="flex justify-between mt-6">
+         <button class="btn btn-ghost" id="swBtnPrev" onclick="swPrevQuestion()" disabled>← Back</button>
+         <button class="btn btn-primary hidden" id="swBtnNext" onclick="swNextFromFollowup()">Next →</button>
+       </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- CLOUD STORAGE WIZARD                                   -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <div id="cloudStorageWizard" class="hidden max-w-4xl mx-auto">
+       <div class="flex items-center justify-between mb-4">
+         <button class="btn btn-ghost btn-sm" onclick="showWizardLanding()">← Back to Wizards</button>
+         <span id="csProgress" class="text-sm opacity-60">Question 1 of 6</span>
+       </div>
+       <div class="w-full bg-base-300 rounded-full h-2 mb-6">
+         <div id="csProgressBar" class="bg-primary h-2 rounded-full transition-all" style="width:16.67%"></div>
+       </div>
+
+       <div id="csQuestionCard" class="card bg-base-100 shadow-sm rounded-2xl">
+         <div class="card-body">
+           <h2 id="csQuestionTitle" class="text-lg font-bold mb-4"></h2>
+           <div id="csChoices" class="flex flex-col gap-3"></div>
+         </div>
+       </div>
+
+       <!-- Summary -->
+       <div id="csSummary" class="hidden">
+         <div class="card bg-base-100 shadow-sm rounded-2xl">
+           <div class="card-body">
+             <h2 class="text-lg font-bold mb-4">Cloud Storage Configuration</h2>
+             <div id="csSummaryList" class="space-y-2 mb-4"></div>
+             <div class="divider text-xs opacity-60">Your Cloud Storage Story</div>
+             <div id="csStory" class="bg-base-200 border border-base-300 p-4 rounded-xl text-base leading-relaxed mb-4"></div>
+             <div class="divider text-xs opacity-60">Generated Config Preview</div>
+             <pre id="csConfigPreview" class="bg-base-200 p-4 rounded-xl font-mono text-sm overflow-x-auto whitespace-pre-wrap"></pre>
+             <div class="flex items-center gap-3 mt-4">
+               <button class="btn btn-success" onclick="saveCloudStorageConfig()">Save &amp; Apply Config</button>
+               <button class="btn btn-ghost btn-sm" onclick="csStartOver()">Start Over</button>
+               <span id="csSaveStatus" class="text-sm"></span>
+             </div>
+           </div>
+         </div>
+       </div>
+
+       <div id="csNav" class="flex justify-between mt-6">
+          <button class="btn btn-ghost" id="csBtnPrev" onclick="csPrevQuestion()" disabled>← Back</button>
+          <button class="btn btn-primary hidden" id="csBtnNext" onclick="csNextQuestion()">Next →</button>
+        </div>
+       </div>
+
+       <!-- ═══════════════════════════════════════════════════════ -->
+       <!-- SOURCE WIZARD                                           -->
+       <!-- ═══════════════════════════════════════════════════════ -->
+       <div id="sourceWizard" class="hidden max-w-4xl mx-auto">
+         <div class="flex items-center justify-between mb-4">
+           <button class="btn btn-ghost btn-sm" onclick="showWizardLanding()">← Back to Wizards</button>
+           <div class="flex gap-2">
+             <button class="btn btn-ghost btn-xs" onclick="srcLoadExistingSources()" title="Refresh">🔄</button>
+             <span class="text-sm opacity-60">Data Source Configuration</span>
+           </div>
+         </div>
+
+         <!-- Existing Sources Display -->
+         <div id="srcExistingSourcesCard" class="card bg-base-100 shadow-sm rounded-2xl mb-6 border-l-4 border-success">
+           <div class="card-body">
+             <div class="flex items-center justify-between mb-3">
+               <h3 class="text-lg font-bold">📡 Saved Sources</h3>
+               <span id="srcSourceCount" class="badge badge-success text-xs"></span>
+             </div>
+             <div class="overflow-x-auto">
+               <table class="table table-xs table-zebra w-full cursor-pointer">
+                 <thead>
+                   <tr class="bg-base-200">
+                     <th class="text-xs font-semibold">Source Name</th>
+                     <th class="text-xs font-semibold">Type</th>
+                     <th class="text-xs font-semibold">System</th>
+                     <th class="text-xs font-semibold text-right">Saved</th>
+                     <th class="text-xs font-semibold text-right">Actions</th>
+                   </tr>
+                 </thead>
+                 <tbody id="srcExistingSourcesTbody"></tbody>
+               </table>
+             </div>
+             <div class="mt-3 flex gap-2">
+               <button class="btn btn-warning btn-xs" onclick="srcClearAllSources()">Clear All</button>
+               <button class="btn btn-primary btn-xs" onclick="srcAddNew()">Add New Source</button>
+             </div>
+           </div>
+         </div>
+
+         <!-- Source Selection -->
+         <div id="srcSelectionCard" class="card bg-base-100 shadow-sm rounded-2xl mb-6">
+           <div class="card-body">
+             <h2 class="text-xl font-bold mb-4">Which System Is Your Data Source?</h2>
+             <p class="text-sm opacity-60 mb-4">Select the replication source system you want to configure.</p>
+             
+             <div id="srcChoices" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+           </div>
+         </div>
+
+         <!-- Configuration Form -->
+         <div id="srcConfigCard" class="hidden card bg-base-100 shadow-sm rounded-2xl mb-6">
+           <div class="card-body">
+             <h2 id="srcConfigTitle" class="text-xl font-bold mb-4"></h2>
+             <div id="srcConfigForm" class="space-y-4"></div>
+           </div>
+         </div>
+
+         <!-- Summary -->
+         <div id="srcSummary" class="hidden">
+           <div class="card bg-base-100 shadow-sm rounded-2xl">
+             <div class="card-body">
+               <h2 class="text-lg font-bold mb-4">Source Configuration Summary</h2>
+               <div id="srcSummaryList" class="space-y-2 mb-4"></div>
+               <div class="divider text-xs opacity-60">Configuration Details</div>
+               <pre id="srcConfigPreview" class="bg-base-200 p-4 rounded-xl font-mono text-sm overflow-x-auto whitespace-pre-wrap"></pre>
+               <div class="flex items-center gap-3 mt-4">
+                 <button class="btn btn-success" onclick="saveSourceConfig()">Save &amp; Apply Source</button>
+                 <button class="btn btn-ghost btn-sm" onclick="srcStartOver()">Start Over</button>
+                 <span id="srcSaveStatus" class="text-sm"></span>
+               </div>
+             </div>
+           </div>
+         </div>
+
+         <div id="srcNav" class="flex justify-between mt-6">
+           <button class="btn btn-ghost" id="srcBtnPrev" onclick="srcPrevStep()" disabled>← Back</button>
+           <button class="btn btn-primary hidden" id="srcBtnNext" onclick="srcNextStep()">Next →</button>
+         </div>
+       </div>
+
+       <!-- ═══════════════════════════════════════════════════════ -->
+       <!-- RDBMS SCHEMA IMPORT WIZARD                             -->
+       <!-- ═══════════════════════════════════════════════════════ -->
+      <div id="rdbmsSchemaWizard" class="hidden max-w-5xl mx-auto">
+        <div class="flex items-center justify-between mb-4">
+          <button class="btn btn-ghost btn-sm" onclick="showWizardLanding()">← Back to Wizards</button>
+          <span class="text-sm opacity-60">RDBMS Configuration</span>
+        </div>
+
+        <!-- Tabs for Connect & Schema -->
+        <div class="tabs tabs-boxed mb-6">
+          <a class="tab tab-active" id="rdbmsTabConnect" onclick="switchRdbmsTab('connect')">Connect to Database</a>
+          <a class="tab" id="rdbmsTabSchema" onclick="switchRdbmsTab('schema')">Import Schema</a>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════ -->
+        <!-- DATABASE CONNECTION TAB                                 -->
+        <!-- ═══════════════════════════════════════════════════════ -->
+        <div id="rdbmsConnectPanel">
+          <div class="card bg-base-100 shadow-sm rounded-2xl mb-6">
+            <div class="card-body">
+              <h2 class="text-xl font-bold mb-4">Connect to Relational Database</h2>
+              <p class="text-sm opacity-60 mb-4">Select your database type and provide connection credentials.</p>
+              
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label class="label label-text text-xs font-semibold">Database Type</label>
+                  <select id="rdbmsDbType" class="select select-bordered select-sm w-full" onchange="onRdbmsTypeChange()">
+                    <option value="">-- select database --</option>
+                    <option value="postgres">PostgreSQL</option>
+                    <option value="mysql">MySQL / MariaDB</option>
+                    <option value="mssql">SQL Server</option>
+                    <option value="oracle">Oracle</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="label label-text text-xs font-semibold">Host</label>
+                  <input id="rdbmsHost" type="text" class="input input-bordered input-sm w-full" placeholder="localhost" />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div>
+                  <label class="label label-text text-xs font-semibold">Port</label>
+                  <input id="rdbmsPort" type="number" class="input input-bordered input-sm w-full" placeholder="5432" />
+                </div>
+                <div>
+                  <label class="label label-text text-xs font-semibold">Database Name</label>
+                  <input id="rdbmsDbName" type="text" class="input input-bordered input-sm w-full" placeholder="mydb" />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div>
+                  <label class="label label-text text-xs font-semibold">Username</label>
+                  <input id="rdbmsUsername" type="text" class="input input-bordered input-sm w-full" />
+                </div>
+                <div>
+                  <label class="label label-text text-xs font-semibold">Password</label>
+                  <input id="rdbmsPassword" type="password" class="input input-bordered input-sm w-full" />
+                </div>
+              </div>
+
+              <div id="rdbmsMssqlOptions" class="hidden mt-4">
+                <div>
+                  <label class="label label-text text-xs font-semibold">ODBC Driver</label>
+                  <input id="rdbmsOdbcDriver" type="text" class="input input-bordered input-sm w-full" placeholder="ODBC Driver 18 for SQL Server" />
+                </div>
+                <label class="label cursor-pointer gap-2 mt-2">
+                  <span class="label-text text-xs">Trust Server Certificate</span>
+                  <input id="rdbmsTrustServerCert" type="checkbox" class="toggle toggle-sm toggle-success" checked />
+                </label>
+              </div>
+
+              <label class="label cursor-pointer gap-2 mt-4">
+                <span class="label-text text-xs">Use SSL</span>
+                <input id="rdbmsUseSSL" type="checkbox" class="toggle toggle-sm toggle-success" />
+              </label>
+
+              <div class="flex items-center gap-3 mt-6">
+                <button class="btn btn-primary btn-sm" onclick="rdbmsTestConnection()">Test Connection</button>
+                <button class="btn btn-success btn-sm" onclick="rdbmsIntrospectTables()">Load Tables</button>
+                <span id="rdbmsConnectStatus" class="text-sm"></span>
+              </div>
+
+              <!-- Tables List -->
+              <div id="rdbmsTablesSection" class="hidden mt-6">
+                <div class="divider text-xs opacity-60">Available Tables</div>
+                <div class="overflow-x-auto">
+                  <table class="table table-xs table-zebra w-full">
+                    <thead>
+                      <tr class="bg-base-200">
+                        <th class="text-xs font-semibold">Table Name</th>
+                        <th class="text-xs font-semibold text-right">Columns</th>
+                      </tr>
+                    </thead>
+                    <tbody id="rdbmsTablesList"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════ -->
+        <!-- SCHEMA IMPORT TAB                                       -->
+        <!-- ═══════════════════════════════════════════════════════ -->
+        <div id="rdbmsSchemaPanel" class="hidden">
+
+        <!-- Existing Schema Display -->
+        <div id="rsExistingSchemaCard" class="card bg-base-100 shadow-sm rounded-2xl mb-6 border-l-4 border-success hidden">
+          <div class="card-body">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-lg font-bold">📊 Saved Schema</h3>
+              <span id="rsExistingDialect" class="badge badge-success text-xs"></span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="table table-xs table-zebra w-full cursor-pointer">
+                <thead>
+                  <tr class="bg-base-200">
+                    <th class="text-xs font-semibold">Database</th>
+                    <th class="text-xs font-semibold">Table Name</th>
+                    <th class="text-xs font-semibold text-right">Columns</th>
+                    <th class="text-xs font-semibold text-right">Saved</th>
+                  </tr>
+                </thead>
+                <tbody id="rsExistingSchemaTbody"></tbody>
+              </table>
+            </div>
+            <div class="mt-3 flex gap-2">
+              <button class="btn btn-warning btn-xs" onclick="rsClearExistingSchema()">Clear Schema</button>
+              <button class="btn btn-primary btn-xs" onclick="rsImportAgain()">Import New</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- SQL Viewer Modal -->
+        <dialog id="rsSqlViewerModal" class="modal modal-bottom sm:modal-middle">
+          <div class="modal-box w-full max-w-4xl">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-lg font-bold">
+                <span id="rsSqlViewerTitle"></span>
+              </h3>
+              <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost">✕</button>
+              </form>
+            </div>
+            <div class="divider text-xs opacity-60">Formatted SQL</div>
+            <pre id="rsSqlViewerText" class="sql-viewer-pre overflow-x-auto max-h-96"></pre>
+            <div class="modal-action">
+              <form method="dialog">
+                <button class="btn btn-primary btn-sm">Close</button>
+              </form>
+            </div>
+          </div>
+        </dialog>
+
+        <div class="card bg-base-100 shadow-sm rounded-2xl mb-6">
+          <div class="card-body">
+            <h2 class="text-xl font-bold mb-4">Import RDBMS Schema Definitions</h2>
+            <p class="text-sm opacity-60 mb-4">Upload SQL CREATE TABLE statements. Drag &amp; drop files or paste SQL directly below.</p>
+
+            <!-- Drag & Drop Zone -->
+            <div id="rsDragZone" class="border-2 border-dashed rounded-xl p-8 text-center mb-4 cursor-pointer transition-all"
+                 style="border-color: oklch(var(--bc) / 0.25);"
+                 onmouseover="this.style.borderColor='oklch(var(--p))';this.style.background='oklch(var(--p) / 0.06)'"
+                 onmouseout="this.style.borderColor='oklch(var(--bc) / 0.25)';this.style.background='transparent'">
+              <input type="file" id="rsSqlFile" accept=".sql,.txt" style="display:none" onchange="handleRsFileSelect(event)" />
+              <div onclick="document.getElementById('rsSqlFile').click()">
+                <div class="text-4xl mb-2 opacity-40">📄</div>
+                <p class="font-semibold opacity-70">Drag SQL files here or click to browse</p>
+                <p class="text-xs opacity-40 mt-1">Accepts .sql and .txt files</p>
+              </div>
+            </div>
+
+            <!-- SQL Input TextArea -->
+            <div class="mb-4">
+              <label class="label label-text text-sm font-semibold mb-2">Or paste SQL CREATE TABLE statements:</label>
+              <textarea id="rsSqlInput" class="textarea textarea-bordered w-full font-mono text-sm" rows="8" placeholder="CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255), ...)&#10;CREATE TABLE orders (id INT, user_id INT, ...)"></textarea>
+              <div class="flex gap-2 mt-2">
+                <button class="btn btn-primary btn-sm" onclick="rsFormatSql()">Format & Preview</button>
+                <button class="btn btn-ghost btn-sm" onclick="rsClearInput()">Clear</button>
+              </div>
+            </div>
+
+            <!-- Formatted Preview -->
+            <div id="rsPreviewSection" class="hidden">
+              <div class="divider text-xs opacity-60">Formatted SQL Preview</div>
+              <pre id="rsFormattedSql" class="bg-base-200 p-4 rounded-lg font-mono text-xs overflow-x-auto mb-4" style="max-height: 300px;"></pre>
+
+              <!-- Database & Table Extraction -->
+              <div id="rsSchemaInfo" class="bg-base-200 border border-base-300 p-4 rounded-xl mb-4">
+                <label class="label label-text text-sm font-semibold mb-2">Database Name:</label>
+                <input type="text" id="rsDbName" class="input input-bordered input-sm w-full mb-3" placeholder="e.g., my_database" />
+                
+                <!-- Tables Extracted Table -->
+                <div class="divider text-xs opacity-60">Tables Detected</div>
+                <div class="overflow-x-auto">
+                  <table class="table table-xs table-zebra w-full">
+                    <thead>
+                      <tr class="bg-base-200">
+                        <th class="text-xs font-semibold">Table Name</th>
+                        <th class="text-xs font-semibold text-right">Columns</th>
+                      </tr>
+                    </thead>
+                    <tbody id="rsTablesExtracted"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Save Section -->
+              <div class="flex gap-2">
+                <button class="btn btn-success btn-sm" onclick="rsSaveSchema()">Save to Schema</button>
+                <span id="rsSaveStatus" class="text-sm flex items-center"></span>
+              </div>
+            </div>
+
+            <!-- File Upload Status -->
+            <div id="rsStatus" class="text-sm"></div>
+          </div>
+        </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- MAPPING WIZARD (existing 3-step flow)                  -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+    <div id="mappingWizard" class="hidden">
 
     <!-- Step Indicators -->
     <ul class="steps steps-horizontal w-full mb-6">
@@ -563,9 +1019,1855 @@
       <button class="btn btn-primary" id="btnNext" onclick="nextStep()">Next →</button>
     </div>
 
+    </div><!-- /mappingWizard -->
+
 <script>
 // ── Utility ──────────────────────────────────────────────────
 function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+// ── Wizard Mode (landing / settings / mapping) ──────────────
+var wizardMode = 'landing';
+
+function showWizardLanding() {
+  wizardMode = 'landing';
+  document.getElementById('wizardLanding').classList.remove('hidden');
+  document.getElementById('settingsWizard').classList.add('hidden');
+  document.getElementById('mappingWizard').classList.add('hidden');
+  document.getElementById('cloudStorageWizard').classList.add('hidden');
+  document.getElementById('sourceWizard').classList.add('hidden');
+  document.getElementById('rdbmsSchemaWizard').classList.add('hidden');
+}
+
+ function startSettingsWizard() {
+   wizardMode = 'settings';
+   document.getElementById('wizardLanding').classList.add('hidden');
+   document.getElementById('settingsWizard').classList.remove('hidden');
+   document.getElementById('mappingWizard').classList.add('hidden');
+   document.getElementById('cloudStorageWizard').classList.add('hidden');
+   document.getElementById('sourceWizard').classList.add('hidden');
+   document.getElementById('rdbmsSchemaWizard').classList.add('hidden');
+   swReset();
+ }
+
+ function startMappingWizard() {
+   wizardMode = 'mapping';
+   document.getElementById('wizardLanding').classList.add('hidden');
+   document.getElementById('settingsWizard').classList.add('hidden');
+   document.getElementById('mappingWizard').classList.remove('hidden');
+   document.getElementById('cloudStorageWizard').classList.add('hidden');
+   document.getElementById('sourceWizard').classList.add('hidden');
+   document.getElementById('rdbmsSchemaWizard').classList.add('hidden');
+   goToStep(1);
+ }
+
+ function startCloudStorageWizard() {
+   wizardMode = 'cloudStorage';
+   document.getElementById('wizardLanding').classList.add('hidden');
+   document.getElementById('settingsWizard').classList.add('hidden');
+   document.getElementById('mappingWizard').classList.add('hidden');
+   document.getElementById('cloudStorageWizard').classList.remove('hidden');
+   document.getElementById('sourceWizard').classList.add('hidden');
+   document.getElementById('rdbmsSchemaWizard').classList.add('hidden');
+   csReset();
+ }
+
+ function startSourceWizard() {
+   wizardMode = 'source';
+   document.getElementById('wizardLanding').classList.add('hidden');
+   document.getElementById('settingsWizard').classList.add('hidden');
+   document.getElementById('mappingWizard').classList.add('hidden');
+   document.getElementById('cloudStorageWizard').classList.add('hidden');
+   document.getElementById('sourceWizard').classList.remove('hidden');
+   document.getElementById('rdbmsSchemaWizard').classList.add('hidden');
+   srcReset();
+ }
+
+ function startRdbmsSchemaWizard() {
+    wizardMode = 'rdbmsSchema';
+    document.getElementById('wizardLanding').classList.add('hidden');
+    document.getElementById('settingsWizard').classList.add('hidden');
+    document.getElementById('mappingWizard').classList.add('hidden');
+    document.getElementById('cloudStorageWizard').classList.add('hidden');
+    document.getElementById('rdbmsSchemaWizard').classList.remove('hidden');
+    switchRdbmsTab('connect');
+    rsLoadExistingSchema();
+  }
+
+  function switchRdbmsTab(tab) {
+    var connectPanel = document.getElementById('rdbmsConnectPanel');
+    var schemaPanel = document.getElementById('rdbmsSchemaPanel');
+    var tabConnect = document.getElementById('rdbmsTabConnect');
+    var tabSchema = document.getElementById('rdbmsTabSchema');
+    if (tab === 'connect') {
+      connectPanel.classList.remove('hidden');
+      schemaPanel.classList.add('hidden');
+      tabConnect.classList.add('tab-active');
+      tabSchema.classList.remove('tab-active');
+    } else {
+      connectPanel.classList.add('hidden');
+      schemaPanel.classList.remove('hidden');
+      tabConnect.classList.remove('tab-active');
+      tabSchema.classList.add('tab-active');
+    }
+  }
+
+  function onRdbmsTypeChange() {
+    var dbType = document.getElementById('rdbmsDbType').value;
+    var mssqlOpts = document.getElementById('rdbmsMssqlOptions');
+    if (dbType === 'mssql') {
+      mssqlOpts.classList.remove('hidden');
+    } else {
+      mssqlOpts.classList.add('hidden');
+    }
+    // Set default ports
+    var portInput = document.getElementById('rdbmsPort');
+    switch(dbType) {
+      case 'postgres': portInput.placeholder = '5432'; break;
+      case 'mysql': portInput.placeholder = '3306'; break;
+      case 'mssql': portInput.placeholder = '1433'; break;
+      case 'oracle': portInput.placeholder = '1521'; break;
+      default: portInput.placeholder = '';
+    }
+  }
+
+  function rdbmsTestConnection() {
+    var dbType = document.getElementById('rdbmsDbType').value;
+    var host = document.getElementById('rdbmsHost').value || 'localhost';
+    var port = document.getElementById('rdbmsPort').value;
+    var database = document.getElementById('rdbmsDbName').value;
+    var user = document.getElementById('rdbmsUsername').value;
+    var password = document.getElementById('rdbmsPassword').value;
+    var useSSL = document.getElementById('rdbmsUseSSL').checked;
+    
+    if (!dbType || !port || !database) {
+      alert('Please fill in database type, port, and database name');
+      return;
+    }
+
+    var statusEl = document.getElementById('rdbmsConnectStatus');
+    statusEl.textContent = '🔄 Testing...';
+    statusEl.className = 'text-sm text-info';
+
+    var payload = {
+      db_type: dbType,
+      host: host,
+      port: parseInt(port),
+      database: database,
+      user: user,
+      password: password,
+      ssl: useSSL
+    };
+
+    if (dbType === 'mssql') {
+      payload.odbc_driver = document.getElementById('rdbmsOdbcDriver').value || 'ODBC Driver 18 for SQL Server';
+      payload.trust_server_certificate = document.getElementById('rdbmsTrustServerCert').checked;
+    }
+
+    fetch('/api/db/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) {
+          statusEl.textContent = '✓ Connected: ' + (data.version || '');
+          statusEl.className = 'text-sm text-success';
+        } else {
+          statusEl.textContent = '✗ ' + (data.error || 'Connection failed');
+          statusEl.className = 'text-sm text-error';
+        }
+      })
+      .catch(e => {
+        statusEl.textContent = '✗ ' + e.message;
+        statusEl.className = 'text-sm text-error';
+      });
+  }
+
+  function rdbmsIntrospectTables() {
+    var dbType = document.getElementById('rdbmsDbType').value;
+    var host = document.getElementById('rdbmsHost').value || 'localhost';
+    var port = document.getElementById('rdbmsPort').value;
+    var database = document.getElementById('rdbmsDbName').value;
+    var user = document.getElementById('rdbmsUsername').value;
+    var password = document.getElementById('rdbmsPassword').value;
+    var useSSL = document.getElementById('rdbmsUseSSL').checked;
+    
+    if (!dbType || !port || !database) {
+      alert('Please fill in database type, port, and database name');
+      return;
+    }
+
+    var statusEl = document.getElementById('rdbmsConnectStatus');
+    statusEl.textContent = '🔄 Loading tables...';
+    statusEl.className = 'text-sm text-info';
+
+    var payload = {
+      db_type: dbType,
+      host: host,
+      port: parseInt(port),
+      database: database,
+      user: user,
+      password: password,
+      ssl: useSSL
+    };
+
+    if (dbType === 'mssql') {
+      payload.odbc_driver = document.getElementById('rdbmsOdbcDriver').value || 'ODBC Driver 18 for SQL Server';
+      payload.trust_server_certificate = document.getElementById('rdbmsTrustServerCert').checked;
+    }
+
+    fetch('/api/db/introspect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      .then(r => r.json())
+      .then(data => {
+        if (data.tables) {
+          var tbody = document.getElementById('rdbmsTablesList');
+          tbody.innerHTML = data.tables.map(function(tbl) {
+            var cols = tbl.columns ? tbl.columns.length : 0;
+            return '<tr><td>' + esc(tbl.name) + '</td><td class="text-right">' + cols + '</td></tr>';
+          }).join('');
+          document.getElementById('rdbmsTablesSection').classList.remove('hidden');
+          statusEl.textContent = '✓ Loaded ' + data.tables.length + ' tables';
+          statusEl.className = 'text-sm text-success';
+        } else {
+          statusEl.textContent = '✗ ' + (data.error || 'Failed to load tables');
+          statusEl.className = 'text-sm text-error';
+        }
+      })
+      .catch(e => {
+        statusEl.textContent = '✗ ' + e.message;
+        statusEl.className = 'text-sm text-error';
+      });
+  }
+
+// ── Settings Wizard ─────────────────────────────────────────
+var swCurrentQ = 0;
+var settingsAnswers = {};
+
+// Shared first question (branching point)
+var SW_Q1 = {
+  id: 'data_type',
+  title: 'Are you wanting to process data (JSON) only from the changes feed, or data and attachments?',
+  choices: [
+    { label: 'Data (JSON) Only', value: 'data_only', description: 'Process document bodies from the changes feed' },
+    { label: 'Data + Attachments', value: 'data_and_attachments', description: 'Also download and process binary attachments' }
+  ]
+};
+
+// Data-only path (Q2–Q8)
+var SW_DATA_ONLY = [
+  {
+    id: 'initial_sync',
+    title: 'Would you say you have a lot of data to initial sync — 100,000s to millions?',
+    choices: [
+      { label: 'Yes, lots of data', value: 'yes', description: 'Optimize for large initial sync volumes' },
+      { label: 'No, moderate amount', value: 'no', description: 'Standard sync is fine' }
+    ]
+  },
+  {
+    id: 'doc_size',
+    title: 'Would you say your average document size is under 1KB?',
+    choices: [
+      { label: 'Yes, under 1KB', value: 'yes', description: 'Small docs — include them inline for speed' },
+      { label: 'No, larger than 1KB', value: 'no', description: 'Larger docs — fetch with bulk_get for efficiency' }
+    ]
+  },
+  {
+    id: 'tombstones',
+    title: 'Do you want to know about deleted/tombstone documents that you have received before?',
+    choices: [
+      { label: 'Yes, track deletes', value: 'yes', description: 'Receive delete notifications for previously synced docs' },
+      { label: 'No, skip deletes', value: 'no', description: 'Ignore deleted docs and only process active ones' }
+    ]
+  },
+  {
+    id: 'feed_mode',
+    title: 'Do you want to get data as a continuous fast feed, or is it OK to process in batches?',
+    choices: [
+      { label: 'Continuous (fast)', value: 'continuous', description: 'Real-time streaming — lower latency' },
+      { label: 'Batches (reduced load)', value: 'longpoll', description: 'Poll in batches — gentler on your systems' }
+    ]
+  },
+  {
+    id: 'processing',
+    title: 'Do you want to make sure you process each item accurately, or is speed more important and retries are OK?',
+    choices: [
+      { label: 'Accuracy first', value: 'accuracy', description: 'Process sequentially — guaranteed order' },
+      { label: 'Speed first', value: 'speed', description: 'Process concurrently — faster but retries may occur' }
+    ]
+  },
+  {
+    id: 'large_docs',
+    title: 'Are your documents on average larger than 100KB?',
+    choices: [
+      { label: 'Yes, large docs', value: 'yes', description: 'Use smaller batch limits to avoid memory issues' },
+      { label: 'No, smaller docs', value: 'no', description: 'Use default batch size for throughput' }
+    ]
+  },
+  {
+    id: 'dlq',
+    title: 'If there is a problem with the data itself and it can\'t be processed, do you want to save it so you can inspect it later?',
+    choices: [
+      { label: 'Save for inspection (DLQ)', value: 'dlq', description: 'Write failed docs to a dead-letter queue' },
+      { label: 'Skip / discard', value: 'skip', description: 'Silently skip documents that fail processing' }
+    ]
+  }
+];
+
+// Attachments path (Q2–Q8)
+var SW_ATTACH = [
+  {
+    id: 'initial_sync',
+    title: 'Would you say you have a lot of data to initial sync — 100,000s to millions?',
+    choices: [
+      { label: 'Yes, lots of data', value: 'yes', description: 'Optimize for large initial sync volumes' },
+      { label: 'No, moderate amount', value: 'no', description: 'Standard sync is fine' }
+    ]
+  },
+  {
+    id: 'attach_count',
+    title: 'How many attachments per document on average?',
+    choices: [
+      { label: '1–3 small attachments', value: 'few', description: 'Fetch each attachment individually — simple and selective' },
+      { label: 'Many attachments, need all of them', value: 'many', description: 'Fetch all at once via multipart — fewer HTTP round-trips' }
+    ]
+  },
+  {
+    id: 'attach_size',
+    title: 'How large are your attachments on average? (Couchbase max is 20MB)',
+    choices: [
+      { label: 'Small (50KB or less)', value: 'small', description: 'Default timeouts and batch sizes are fine' },
+      { label: 'Medium (50KB–1MB)', value: 'medium', description: 'Longer download timeouts, smaller batches' },
+      { label: 'Large (1MB+)', value: 'large', description: 'Stream to disk, sequential processing, extended timeouts' }
+    ]
+  },
+  {
+    id: 'attach_dest',
+    title: 'Where do you want to send the attachments?',
+    choices: [
+      { label: 'S3 / Cloud Storage', value: 's3', description: 'Upload to AWS S3, MinIO, or compatible object store' },
+      { label: 'HTTP Endpoint', value: 'http', description: 'Forward to a REST API or CDN upload endpoint' },
+      { label: 'Local Filesystem', value: 'filesystem', description: 'Save to a local or mounted directory' }
+    ]
+  },
+  {
+    id: 'attach_post',
+    title: 'After extracting attachments, what should happen to the source document?',
+    choices: [
+      { label: 'Nothing, leave as-is', value: 'none', description: 'Attachments are uploaded but source document is untouched' },
+      { label: 'Update doc with external URLs', value: 'update_doc', description: 'Add upload metadata (URL, timestamp) per attachment back to the source doc', sample: true },
+      { label: 'Delete the attachment(s) from source only', value: 'delete_attachments', description: 'Remove the binary attachments but keep the document itself' },
+      { label: 'Set TTL / expire the document', value: 'set_ttl', description: 'Auto-expire the doc after attachments are safely extracted (Couchbase only)' },
+      { label: 'Delete the document (creates tombstone)', value: 'delete_doc', description: 'Remove the source document — deletion replicates to other peers via tombstone' },
+      { label: 'Purge / remove the entire document and attachments', value: 'purge', description: '<span class="text-warning">Irreversible</span> — permanently removes from server with no tombstone. Does NOT replicate to mobile clients.' }
+    ],
+    followup: {
+      set_ttl: {
+        id: 'attach_ttl_seconds',
+        label: 'TTL (seconds) — how long before the document expires',
+        type: 'number',
+        default_value: 86400,
+        min: 0,
+        hint: '86400 = 1 day. Set to 0 for no expiry.'
+      }
+    }
+  },
+  {
+    id: 'attach_missing',
+    title: 'If an attachment can\'t be fetched (missing or deleted at source), what should happen?',
+    choices: [
+      { label: 'Skip it, continue with others', value: 'skip', description: 'Upload the attachments that succeed, log warnings for missing ones' },
+      { label: 'Fail the whole document', value: 'fail', description: 'Treat any missing attachment as a document-level failure' }
+    ]
+  },
+  {
+    id: 'attach_dlq',
+    title: 'If there\'s a problem uploading or processing, do you want to save it for inspection?',
+    choices: [
+      { label: 'Save to DLQ', value: 'dlq', description: 'Failed docs are saved to a dead-letter queue for later inspection/replay. Processing continues with other docs.' },
+      { label: 'Drop and discard', value: 'skip', description: 'Drop failed docs without saving. Processing continues with other docs.' }
+    ],
+    followup: {
+      dlq: {
+        id: 'attach_dlq_retention',
+        label: 'DLQ retention (seconds) — how long to keep failed entries',
+        type: 'number',
+        default_value: 86400,
+        min: 0,
+        hint: '86400 = 1 day. Set to 0 to keep forever.'
+      }
+    }
+  }
+];
+
+// ── Source Wizard State & Logic ──────────────────────────────
+var srcCurrentStep = 0;  // 0=selection, 1=config
+var srcSelectedSystem = null;
+var srcAnswers = {};
+
+var SRC_SYSTEMS = [
+  {
+    id: 'couchbase_sync_gateway',
+    label: 'Couchbase Sync Gateway',
+    description: 'Sync Gateway replication from Couchbase Server',
+    icon: '🗂️',
+    configFields: [
+      { id: 'src_name', label: 'Source Name', type: 'text', required: true, placeholder: 'e.g., prod_sync_gateway' },
+      { id: 'src_gateway_url', label: 'Sync Gateway URL', type: 'text', required: true, placeholder: 'http://localhost:4984' },
+      { id: 'src_database', label: 'Database Name', type: 'text', required: true, placeholder: 'my_database' },
+      { id: 'src_scope', label: 'Scope', type: 'text', required: false, placeholder: '_default' },
+      { id: 'src_collection', label: 'Collection', type: 'text', required: false, placeholder: '_default' },
+      { id: 'src_auth_method', label: 'Auth Method', type: 'select', required: true, options: ['basic', 'none', 'session', 'bearer'] },
+      { id: 'src_username', label: 'Username', type: 'text', required: false, conditional: { field: 'src_auth_method', value: 'basic' } },
+      { id: 'src_password', label: 'Password', type: 'password', required: false, conditional: { field: 'src_auth_method', value: 'basic' } },
+      { id: 'src_session_cookie', label: 'Session Cookie', type: 'text', required: false, conditional: { field: 'src_auth_method', value: 'session' } },
+      { id: 'src_bearer_token', label: 'Bearer Token', type: 'password', required: false, conditional: { field: 'src_auth_method', value: 'bearer' } },
+      { id: 'src_accept_self_signed', label: 'Accept Self-Signed Certificates', type: 'checkbox', required: false }
+    ]
+  },
+  {
+    id: 'couchbase_app_service',
+    label: 'Couchbase App Service',
+    description: 'Replicate from Couchbase App Service instances',
+    icon: '⚙️',
+    configFields: [
+      { id: 'src_name', label: 'Source Name', type: 'text', required: true, placeholder: 'e.g., app_service_prod' },
+      { id: 'src_endpoint', label: 'App Service Endpoint', type: 'text', required: true, placeholder: 'https://app-service.couchbase.com' },
+      { id: 'src_bucket', label: 'Bucket Name', type: 'text', required: true, placeholder: 'default' },
+      { id: 'src_scope', label: 'Scope', type: 'text', required: false, placeholder: '_default' },
+      { id: 'src_collection', label: 'Collection', type: 'text', required: false, placeholder: '_default' },
+      { id: 'src_auth_method', label: 'Auth Method', type: 'select', required: true, options: ['basic', 'bearer', 'session', 'none'] },
+      { id: 'src_username', label: 'Username', type: 'text', required: false, conditional: { field: 'src_auth_method', value: 'basic' } },
+      { id: 'src_password', label: 'Password', type: 'password', required: false, conditional: { field: 'src_auth_method', value: 'basic' } },
+      { id: 'src_bearer_token', label: 'Bearer Token / API Key', type: 'password', required: false, conditional: { field: 'src_auth_method', value: 'bearer' } },
+      { id: 'src_session_cookie', label: 'Session Cookie', type: 'text', required: false, conditional: { field: 'src_auth_method', value: 'session' } },
+      { id: 'src_accept_self_signed', label: 'Accept Self-Signed Certificates', type: 'checkbox', required: false }
+    ]
+  },
+  {
+    id: 'couchbase_edge_server',
+    label: 'Couchbase Edge Server',
+    description: 'Replicate from Couchbase Lite Edge servers',
+    icon: '📱',
+    configFields: [
+      { id: 'src_name', label: 'Source Name', type: 'text', required: true, placeholder: 'e.g., edge_server_1' },
+      { id: 'src_edge_url', label: 'Edge Server URL', type: 'text', required: true, placeholder: 'http://edge-device:5984' },
+      { id: 'src_database', label: 'Database Name', type: 'text', required: true, placeholder: 'local_db' },
+      { id: 'src_scope', label: 'Scope', type: 'text', required: false, placeholder: '_default' },
+      { id: 'src_collection', label: 'Collection', type: 'text', required: false, placeholder: '_default' },
+      { id: 'src_username', label: 'Username', type: 'text', required: true },
+      { id: 'src_password', label: 'Password', type: 'password', required: true },
+      { id: 'src_accept_self_signed', label: 'Accept Self-Signed Certificates', type: 'checkbox', required: false }
+    ]
+  },
+  {
+    id: 'couchdb',
+    label: 'CouchDB',
+    description: 'Replicate from Apache CouchDB servers',
+    icon: '🔗',
+    configFields: [
+      { id: 'src_name', label: 'Source Name', type: 'text', required: true, placeholder: 'e.g., couchdb_prod' },
+      { id: 'src_couchdb_url', label: 'CouchDB URL', type: 'text', required: true, placeholder: 'http://localhost:5984' },
+      { id: 'src_database', label: 'Database Name', type: 'text', required: true, placeholder: 'my_database' },
+      { id: 'src_auth_method', label: 'Auth Method', type: 'select', required: true, options: ['basic', 'none', 'session', 'bearer', 'proxy'] },
+      { id: 'src_username', label: 'Username', type: 'text', required: false, conditional: { field: 'src_auth_method', value: 'basic' } },
+      { id: 'src_password', label: 'Password', type: 'password', required: false, conditional: { field: 'src_auth_method', value: 'basic' } },
+      { id: 'src_session_cookie', label: 'Session Cookie (AuthSession)', type: 'text', required: false, conditional: { field: 'src_auth_method', value: 'session' } },
+      { id: 'src_bearer_token', label: 'JWT / Bearer Token', type: 'password', required: false, conditional: { field: 'src_auth_method', value: 'bearer' } },
+      { id: 'src_proxy_username', label: 'Proxy Username Header', type: 'text', required: false, conditional: { field: 'src_auth_method', value: 'proxy' } },
+      { id: 'src_proxy_roles', label: 'Proxy Roles Header (comma-separated)', type: 'text', required: false, conditional: { field: 'src_auth_method', value: 'proxy' } },
+      { id: 'src_accept_self_signed', label: 'Accept Self-Signed Certificates', type: 'checkbox', required: false }
+    ]
+  }
+];
+
+function srcReset() {
+  srcCurrentStep = 0;
+  srcSelectedSystem = null;
+  srcAnswers = {};
+  document.getElementById('srcSelectionCard').classList.remove('hidden');
+  document.getElementById('srcConfigCard').classList.add('hidden');
+  document.getElementById('srcSummary').classList.add('hidden');
+  document.getElementById('srcNav').classList.remove('hidden');
+  srcLoadExistingSources();
+  srcRenderSelection();
+}
+
+function srcLoadExistingSources() {
+  fetch('/api/source/list', { method: 'GET' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.sources && data.sources.length > 0) {
+        document.getElementById('srcExistingSourcesCard').classList.remove('hidden');
+        document.getElementById('srcSourceCount').textContent = data.sources.length;
+        var tbody = document.getElementById('srcExistingSourcesTbody');
+        tbody.innerHTML = data.sources.map(function(src) {
+          var sourceName = src.config && src.config.src_name ? src.config.src_name : 'unknown';
+          var system = src.system || 'unknown';
+          var savedAt = src._meta && src._meta.saved_at ? new Date(src._meta.saved_at).toLocaleDateString() : '-';
+          return '<tr><td>' + esc(sourceName) + '</td>' +
+                 '<td>' + esc(src.type || 'source') + '</td>' +
+                 '<td>' + esc(system) + '</td>' +
+                 '<td class="text-right">' + savedAt + '</td>' +
+                 '<td class="text-right"><button class="btn btn-xs btn-ghost" onclick="srcDeleteSource(\'' + esc(sourceName) + '\')">✕</button></td></tr>';
+        }).join('');
+      } else {
+        document.getElementById('srcSourceCount').textContent = '0';
+        document.getElementById('srcExistingSourcesTbody').innerHTML =
+          '<tr><td colspan="5" class="text-center opacity-50 py-4">None Saved</td></tr>';
+      }
+    })
+    .catch(e => {
+      console.error('Failed to load sources:', e);
+      document.getElementById('srcSourceCount').textContent = '0';
+      document.getElementById('srcExistingSourcesTbody').innerHTML =
+        '<tr><td colspan="5" class="text-center opacity-50 py-4">None Saved</td></tr>';
+    });
+}
+
+function srcRenderSelection() {
+  var html = '';
+  for (var i = 0; i < SRC_SYSTEMS.length; i++) {
+    var sys = SRC_SYSTEMS[i];
+    var isSelected = srcSelectedSystem === sys.id;
+    var btnClass = 'btn btn-lg justify-start gap-3 text-left' + (isSelected ? ' btn-primary' : ' btn-outline');
+    html += '<button class="' + btnClass + '" onclick="srcSelectSystem(\'' + esc(sys.id) + '\')">' +
+           '<div class="text-3xl">' + sys.icon + '</div>' +
+           '<div><div class="font-bold text-left">' + esc(sys.label) + '</div>' +
+           '<div class="text-xs opacity-80 font-normal text-left">' + esc(sys.description) + '</div></div></button>';
+  }
+  document.getElementById('srcChoices').innerHTML = html;
+  var nextBtn = document.getElementById('srcBtnNext');
+  if (srcSelectedSystem) nextBtn.classList.remove('hidden');
+  else nextBtn.classList.add('hidden');
+}
+
+function srcSelectSystem(systemId) {
+  srcSelectedSystem = systemId;
+  srcRenderSelection();
+}
+
+function srcNextStep() {
+  if (srcCurrentStep === 0) {
+    // Show config form
+    var sys = SRC_SYSTEMS.find(function(s) { return s.id === srcSelectedSystem; });
+    if (!sys) return;
+    document.getElementById('srcSelectionCard').classList.add('hidden');
+    document.getElementById('srcConfigCard').classList.remove('hidden');
+    document.getElementById('srcConfigTitle').textContent = 'Configure ' + sys.label;
+    srcRenderConfigForm(sys);
+    document.getElementById('srcBtnPrev').disabled = false;
+    srcCurrentStep = 1;
+  } else if (srcCurrentStep === 1) {
+    srcShowSummary();
+  }
+}
+
+function srcPrevStep() {
+  if (srcCurrentStep === 1) {
+    document.getElementById('srcSelectionCard').classList.remove('hidden');
+    document.getElementById('srcConfigCard').classList.add('hidden');
+    document.getElementById('srcBtnPrev').disabled = true;
+    srcCurrentStep = 0;
+    srcRenderSelection();
+  }
+}
+
+function srcRenderConfigForm(sys) {
+  var html = '';
+  for (var i = 0; i < sys.configFields.length; i++) {
+    var fld = sys.configFields[i];
+    var val = srcAnswers[fld.id] || '';
+    var req = fld.required ? ' <span class="text-error">*</span>' : '';
+    
+    // Check if field should be shown based on conditional
+    if (fld.conditional) {
+      var condValue = srcAnswers[fld.conditional.field];
+      if (condValue !== fld.conditional.value) {
+        continue; // Skip this field
+      }
+    }
+    
+    if (fld.type === 'text' || fld.type === 'password') {
+      html += '<div><label class="label label-text text-sm">' + esc(fld.label) + req + '</label>' +
+              '<input type="' + fld.type + '" class="input input-bordered w-full" id="' + esc(fld.id) + '" ' +
+              'placeholder="' + esc(fld.placeholder || '') + '" value="' + esc(val) + '" onchange="srcUpdateAnswer(\'' + esc(fld.id) + '\')"></div>';
+    } else if (fld.type === 'select') {
+      html += '<div><label class="label label-text text-sm">' + esc(fld.label) + req + '</label>' +
+              '<select id="' + esc(fld.id) + '" class="select select-bordered w-full" onchange="srcUpdateAnswer(\'' + esc(fld.id) + '\')">' +
+              '<option value="">-- select --</option>';
+      for (var j = 0; j < fld.options.length; j++) {
+        var opt = fld.options[j];
+        var sel = val === opt ? ' selected' : '';
+        html += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt) + '</option>';
+      }
+      html += '</select></div>';
+    } else if (fld.type === 'checkbox') {
+      var checked = val ? ' checked' : '';
+      html += '<div class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" id="' + esc(fld.id) + '" ' +
+              'onchange="srcUpdateAnswer(\'' + esc(fld.id) + '\')"' + checked + '>' +
+              '<label class="label label-text text-sm cursor-pointer">' + esc(fld.label) + '</label></div>';
+    }
+  }
+  
+  // Add test connection button for Sync Gateway
+  if (sys.id === 'couchbase_sync_gateway') {
+    html += '<div class="divider text-xs opacity-60">Connection Test</div>' +
+            '<button class="btn btn-sm btn-outline" onclick="srcTestConnection()">Test Connection</button>' +
+            '<span id="srcTestStatus" class="text-sm ml-2"></span>';
+  }
+  
+  document.getElementById('srcConfigForm').innerHTML = html;
+}
+
+function srcUpdateAnswer(fieldId) {
+  var el = document.getElementById(fieldId);
+  if (el.type === 'checkbox') {
+    srcAnswers[fieldId] = el.checked ? 'true' : '';
+  } else {
+    srcAnswers[fieldId] = el.value;
+  }
+  var nextBtn = document.getElementById('srcBtnNext');
+  // Re-render form if auth method changed (to show/hide conditional fields)
+  if (fieldId === 'src_auth_method') {
+    var sys = SRC_SYSTEMS.find(function(s) { return s.id === srcSelectedSystem; });
+    srcRenderConfigForm(sys);
+  }
+  // Check if all required fields filled
+  var sys = SRC_SYSTEMS.find(function(s) { return s.id === srcSelectedSystem; });
+  var allFilled = sys.configFields.every(function(f) {
+    if (!f.required) return true;
+    // Skip conditional fields that aren't shown
+    if (f.conditional) {
+      var condValue = srcAnswers[f.conditional.field];
+      if (condValue !== f.conditional.value) return true;
+    }
+    return (srcAnswers[f.id] || '').trim().length > 0;
+  });
+  if (allFilled) nextBtn.classList.remove('hidden');
+  else nextBtn.classList.add('hidden');
+}
+
+function srcTestConnection() {
+  var statusEl = document.getElementById('srcTestStatus');
+  statusEl.textContent = '🔄 Testing...';
+  statusEl.className = 'text-sm text-info ml-2';
+  
+  var payload = {
+    url: srcAnswers.src_gateway_url,
+    database: srcAnswers.src_database,
+    scope: srcAnswers.src_scope || '_default',
+    collection: srcAnswers.src_collection || '_default',
+    auth_method: srcAnswers.src_auth_method || 'none'
+  };
+  
+  // Add auth credentials
+  if (payload.auth_method === 'basic') {
+    payload.username = srcAnswers.src_username;
+    payload.password = srcAnswers.src_password;
+  } else if (payload.auth_method === 'session') {
+    payload.session_cookie = srcAnswers.src_session_cookie;
+  } else if (payload.auth_method === 'bearer') {
+    payload.bearer_token = srcAnswers.src_bearer_token;
+  }
+  
+  fetch('/api/source/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        statusEl.textContent = '✓ Connected successfully';
+        statusEl.className = 'text-sm text-success ml-2';
+      } else {
+        statusEl.textContent = '✗ ' + (data.error || 'Connection failed');
+        statusEl.className = 'text-sm text-error ml-2';
+      }
+    })
+    .catch(e => {
+      statusEl.textContent = '✗ ' + e.message;
+      statusEl.className = 'text-sm text-error ml-2';
+    });
+}
+
+function srcShowSummary() {
+  document.getElementById('srcConfigCard').classList.add('hidden');
+  document.getElementById('srcNav').classList.add('hidden');
+  document.getElementById('srcSummary').classList.remove('hidden');
+  var sys = SRC_SYSTEMS.find(function(s) { return s.id === srcSelectedSystem; });
+  
+  var summaryHtml = '<div class="space-y-1">';
+  summaryHtml += '<div class="flex justify-between"><span class="font-semibold">System:</span><span>' + esc(sys.label) + '</span></div>';
+  for (var key in srcAnswers) {
+    if (srcAnswers[key]) {
+      var label = key.replace(/^src_/, '').replace(/_/g, ' ');
+      summaryHtml += '<div class="flex justify-between"><span class="font-semibold">' + label + ':</span><span>' + 
+                     (key.includes('password') ? '••••••' : esc(srcAnswers[key])) + '</span></div>';
+    }
+  }
+  summaryHtml += '</div>';
+  document.getElementById('srcSummaryList').innerHTML = summaryHtml;
+  
+  var srcDoc = {
+    type: 'source',
+    system: srcSelectedSystem,
+    config: srcAnswers,
+    _meta: { saved_at: new Date().toISOString() }
+  };
+  document.getElementById('srcConfigPreview').textContent = JSON.stringify(srcDoc, null, 2);
+}
+
+function srcStartOver() {
+  srcReset();
+}
+
+function srcAddNew() {
+  srcReset();
+}
+
+function srcClearAllSources() {
+  if (confirm('Delete ALL saved sources? This cannot be undone.')) {
+    fetch('/api/source/clear', { method: 'POST' })
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) {
+          srcLoadExistingSources();
+        } else {
+          alert('Error: ' + (data.error || 'Unknown error'));
+        }
+      })
+      .catch(e => alert('Error clearing sources: ' + e));
+  }
+}
+
+function srcDeleteSource(sourceName) {
+  if (confirm('Delete source "' + sourceName + '"?')) {
+    fetch('/api/source/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: sourceName })
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) {
+          srcLoadExistingSources();
+        } else {
+          alert('Error: ' + (data.error || 'Unknown error'));
+        }
+      })
+      .catch(e => alert('Error deleting source: ' + e));
+  }
+}
+
+function saveSourceConfig() {
+  var sys = SRC_SYSTEMS.find(function(s) { return s.id === srcSelectedSystem; });
+  var srcDoc = {
+    type: 'source',
+    system: srcSelectedSystem,
+    config: srcAnswers,
+    _meta: { saved_at: new Date().toISOString() }
+  };
+  
+  fetch('/api/source/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(srcDoc)
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        showToast('Source saved successfully', 'success');
+        setTimeout(function() {
+          showWizardLanding();
+        }, 1500);
+      } else {
+        showToast('Error: ' + (data.error || 'Unknown error'), 'error');
+      }
+    })
+    .catch(e => {
+      showToast('Error: ' + e, 'error');
+    });
+}
+
+// ── Cloud Storage Wizard Questions ──────────────────────────
+var CS_QUESTIONS = [
+  {
+    id: 'cs_use_case',
+    title: 'What do you want to store in cloud storage?',
+    choices: [
+      { label: 'Attachments only', value: 'attachments', description: 'Extract and upload binary attachments from source documents' },
+      { label: 'Archived JSON data', value: 'archive', description: 'Compress and store old documents as JSONL for long-term archival' },
+      { label: 'Both attachments and archives', value: 'both', description: 'Store extracted attachments AND archive old JSON separately' }
+    ]
+  },
+  {
+    id: 'cs_provider',
+    title: 'Which cloud storage provider?',
+    choices: [
+      { label: 'AWS S3', value: 's3', description: 'Use S3, S3-compatible (MinIO, DigitalOcean, etc.), or AWS-related service' },
+      { label: 'Google Cloud Storage', value: 'gcs', description: 'Use Google Cloud Storage (GCS) bucket' },
+      { label: 'Azure Blob Storage', value: 'azure', description: 'Use Microsoft Azure Blob Storage containers' },
+      { label: 'Local Filesystem', value: 'local', description: 'Save to a local or mounted directory (suitable for dev/testing)' }
+    ]
+  },
+  {
+    id: 'cs_concurrency',
+    title: 'What is your throughput/concurrency preference?',
+    choices: [
+      { label: 'Low (< 100 docs/min)', value: 'low', description: 'Sequential uploads, minimal CPU/network utilization' },
+      { label: 'Medium (100–1000 docs/min)', value: 'medium', description: 'Balanced concurrency with adaptive retry logic' },
+      { label: 'High (> 1000 docs/min)', value: 'high', description: 'Aggressive parallelism, connection pooling, compressed transfers' }
+    ]
+  },
+  {
+    id: 'cs_retention',
+    title: 'Do you need to expire or delete old files?',
+    choices: [
+      { label: 'Keep forever', value: 'forever', description: 'No lifecycle policies — files stay permanently' },
+      { label: 'Set expiration (TTL)', value: 'ttl', description: 'Auto-delete files after N days (S3 lifecycle / GCS rules)', followup_id: 'cs_ttl_days' },
+      { label: 'Manual cleanup', value: 'manual', description: 'Folder-based organization — delete manually or via external script' }
+    ]
+  },
+  {
+    id: 'cs_compression',
+    title: 'For archived JSON, should we compress files?',
+    choices: [
+      { label: 'No compression', value: 'none', description: 'Store as plain JSONL (larger files, faster access)' },
+      { label: 'GZIP compression', value: 'gzip', description: 'Compress with GZIP (smaller, slower, standard compatibility)' },
+      { label: 'ZSTD compression', value: 'zstd', description: 'Compress with ZSTD (smaller than GZIP, faster decompression)' }
+    ]
+  },
+  {
+    id: 'cs_partitioning',
+    title: 'How should files be organized in cloud storage?',
+    choices: [
+      { label: 'Flat structure', value: 'flat', description: 'All files in a single bucket/container (s3://bucket/attachments/file.bin)' },
+      { label: 'By date (daily)', value: 'date_daily', description: 'Organized by date prefix (s3://bucket/2026/04/19/file.bin)' },
+      { label: 'By date + type', value: 'date_type', description: 'Organized by date AND type (s3://bucket/2026/04/19/attachments/file.bin)' },
+      { label: 'By source document ID', value: 'doc_id', description: 'Organized by source doc ID (s3://bucket/doc_123/attachments/file.bin)' }
+    ]
+  }
+];
+
+// Returns the active question list based on Q1 answer
+function swGetQuestions() {
+   var branch = settingsAnswers.data_type === 'data_and_attachments' ? SW_ATTACH : SW_DATA_ONLY;
+   return [SW_Q1].concat(branch);
+ }
+
+ // ── Cloud Storage Wizard State ──────────────────────────────
+ var csCurrentQ = 0;
+ var csAnswers = {};
+
+ function csReset() {
+   csCurrentQ = 0;
+   csAnswers = {};
+   document.getElementById('csSummary').classList.add('hidden');
+   document.getElementById('csQuestionCard').classList.remove('hidden');
+   document.getElementById('csNav').classList.remove('hidden');
+   csRenderQuestion();
+ }
+
+ function csRenderQuestion() {
+   var q = CS_QUESTIONS[csCurrentQ];
+   document.getElementById('csProgress').textContent = 'Question ' + (csCurrentQ + 1) + ' of ' + CS_QUESTIONS.length;
+   document.getElementById('csProgressBar').style.width = (((csCurrentQ + 1) / CS_QUESTIONS.length) * 100) + '%';
+   document.getElementById('csQuestionTitle').textContent = q.title;
+   document.getElementById('csBtnPrev').disabled = (csCurrentQ === 0);
+
+   var selected = csAnswers[q.id] || null;
+   var html = '';
+   for (var i = 0; i < q.choices.length; i++) {
+     var c = q.choices[i];
+     var isSelected = selected === c.value;
+     var btnClass = 'btn btn-lg justify-start gap-3 text-left' + (isSelected ? ' btn-primary' : ' btn-outline');
+     html += '<button class="' + btnClass + '" onclick="csSelectAnswer(\'' + esc(q.id) + '\',\'' + esc(c.value) + '\')">' +
+       '<div><div class="font-bold">' + esc(c.label) + '</div>' +
+       '<div class="text-xs opacity-80 font-normal">' + c.description + '</div></div></button>';
+   }
+   document.getElementById('csChoices').innerHTML = html;
+
+   var nextBtn = document.getElementById('csBtnNext');
+   if (selected) nextBtn.classList.remove('hidden');
+   else nextBtn.classList.add('hidden');
+ }
+
+ function csSelectAnswer(qId, value) {
+   csAnswers[qId] = value;
+   csRenderQuestion();
+ }
+
+ function csNextQuestion() {
+   if (csCurrentQ < CS_QUESTIONS.length - 1) {
+     csCurrentQ++;
+     csRenderQuestion();
+   } else {
+     csShowSummary();
+   }
+ }
+
+ function csPrevQuestion() {
+   if (csCurrentQ > 0) {
+     csCurrentQ--;
+     csRenderQuestion();
+   }
+ }
+
+ function csShowSummary() {
+   document.getElementById('csQuestionCard').classList.add('hidden');
+   document.getElementById('csNav').classList.add('hidden');
+   document.getElementById('csSummary').classList.remove('hidden');
+   document.getElementById('csProgress').textContent = 'Summary';
+   document.getElementById('csProgressBar').style.width = '100%';
+
+   var summaryLabels = {
+     cs_use_case: { label: 'Use Case', attachments: 'Attachments only', archive: 'Archived JSON', both: 'Both attachments & archives' },
+     cs_provider: { label: 'Cloud Provider', s3: 'AWS S3', gcs: 'Google Cloud Storage', azure: 'Azure Blob', local: 'Local Filesystem' },
+     cs_concurrency: { label: 'Throughput', low: 'Low (< 100 docs/min)', medium: 'Medium (100–1000 docs/min)', high: 'High (> 1000 docs/min)' },
+     cs_retention: { label: 'File Retention', forever: 'Keep forever', ttl: 'Set expiration (TTL)', manual: 'Manual cleanup' },
+     cs_compression: { label: 'Archive Compression', none: 'No compression', gzip: 'GZIP', zstd: 'ZSTD' },
+     cs_partitioning: { label: 'File Organization', flat: 'Flat structure', date_daily: 'By date (daily)', date_type: 'By date + type', doc_id: 'By document ID' }
+   };
+
+   var html = '';
+   for (var i = 0; i < CS_QUESTIONS.length; i++) {
+     var q = CS_QUESTIONS[i];
+     var ans = csAnswers[q.id];
+     var info = summaryLabels[q.id] || {};
+     html += '<div class="flex justify-between items-center p-2 rounded-lg bg-base-200">' +
+       '<span class="font-semibold text-sm">' + esc(info.label || q.id) + '</span>' +
+       '<span class="badge badge-primary">' + esc(info[ans] || ans) + '</span></div>';
+   }
+   document.getElementById('csSummaryList').innerHTML = html;
+
+   var story = csGenerateStory();
+   document.getElementById('csStory').innerHTML = story;
+
+   var config = csGenerateConfig();
+   document.getElementById('csConfigPreview').textContent = JSON.stringify(config, null, 2);
+   document.getElementById('csSaveStatus').textContent = '';
+ }
+
+ function swReset() {
+  swCurrentQ = 0;
+  settingsAnswers = {};
+  document.getElementById('swSummary').classList.add('hidden');
+  document.getElementById('swQuestionCard').classList.remove('hidden');
+  document.getElementById('swNav').classList.remove('hidden');
+  swRenderQuestion();
+}
+
+function swStartOver() {
+  swReset();
+}
+
+function swRenderQuestion() {
+  var questions = swGetQuestions();
+  var q = questions[swCurrentQ];
+  document.getElementById('swProgress').textContent = 'Question ' + (swCurrentQ + 1) + ' of ' + questions.length;
+  document.getElementById('swProgressBar').style.width = (((swCurrentQ + 1) / questions.length) * 100) + '%';
+  document.getElementById('swQuestionTitle').textContent = q.title;
+  document.getElementById('swBtnPrev').disabled = (swCurrentQ === 0);
+
+  var selected = settingsAnswers[q.id] || null;
+  var html = '';
+  for (var i = 0; i < q.choices.length; i++) {
+    var c = q.choices[i];
+    var isSelected = selected === c.value;
+    var isDestructive = c.value === 'purge';
+    var btnClass = 'btn btn-lg justify-start gap-3 text-left' + (isSelected ? ' btn-primary' : ' btn-outline');
+    if (isDestructive) btnClass += ' choice-destructive';
+    html += '<button class="' + btnClass + '" onclick="swSelectAnswer(\'' + esc(q.id) + '\',\'' + esc(c.value) + '\')">' +
+      '<div><div class="font-bold">' + esc(c.label) + '</div>' +
+      '<div class="text-xs opacity-80 font-normal">' + c.description + '</div></div></button>';
+  }
+
+  // Show sample JSON preview when a choice with sample:true is selected
+  if (selected) {
+    for (var si = 0; si < q.choices.length; si++) {
+      if (q.choices[si].value === selected && q.choices[si].sample) {
+        html += '<div class="mt-3 p-3 rounded-lg bg-base-200">' +
+          '<label class="label label-text text-xs font-semibold opacity-60">Example — what gets added to your document:</label>' +
+          '<pre class="bg-base-300 p-3 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap">' +
+          esc(JSON.stringify({
+            "attachments_external": {
+              "photo.jpg": { "uploaded": "2026-04-19T12:00:00Z", "uploaded_loc": "s3://{your_bucket_here}/{your_folder_here}/photo.jpg" },
+              "thumb.png": { "uploaded": "2026-04-19T12:00:01Z", "uploaded_loc": "s3://{your_bucket_here}/{your_folder_here}/thumb.png" }
+            }
+          }, null, 2)) +
+          '</pre></div>';
+        break;
+      }
+    }
+  }
+
+  // Render followup number input if the selected answer has one
+  var hasFollowup = false;
+  if (q.followup && selected && q.followup[selected]) {
+    hasFollowup = true;
+    var fu = q.followup[selected];
+    var fuVal = settingsAnswers[fu.id] !== undefined ? settingsAnswers[fu.id] : fu.default_value;
+    html += '<div class="mt-3 p-3 rounded-lg bg-base-200">' +
+      '<label class="label label-text text-sm font-semibold">' + esc(fu.label) + '</label>' +
+      '<input type="number" class="input input-bordered input-sm w-full" id="swFollowup_' + esc(fu.id) + '" ' +
+      'value="' + fuVal + '" min="' + (fu.min || 0) + '" onchange="swSaveFollowup(\'' + esc(fu.id) + '\',this.value)" />' +
+      '<span class="text-xs opacity-50">' + esc(fu.hint || '') + '</span></div>';
+  }
+
+  // Check if selected choice has a sample preview
+  var hasSample = false;
+  if (selected) {
+    for (var si = 0; si < q.choices.length; si++) {
+      if (q.choices[si].value === selected && q.choices[si].sample) {
+        hasSample = true;
+        break;
+      }
+    }
+  }
+
+  document.getElementById('swChoices').innerHTML = html;
+
+  // Show Next button when a followup or sample preview is visible (user needs time to see it)
+  var nextBtn = document.getElementById('swBtnNext');
+  if (hasFollowup || hasSample) nextBtn.classList.remove('hidden');
+  else nextBtn.classList.add('hidden');
+}
+
+function swSaveFollowup(id, value) {
+  settingsAnswers[id] = parseInt(value, 10) || 0;
+}
+
+function swSelectAnswer(qId, value) {
+   settingsAnswers[qId] = value;
+
+   // If Q1 changed, clear branch-specific answers so stale values don't carry over
+   if (qId === 'data_type') {
+     var keepKeys = { data_type: true };
+     var keys = Object.keys(settingsAnswers);
+     for (var i = 0; i < keys.length; i++) {
+       if (!keepKeys[keys[i]]) delete settingsAnswers[keys[i]];
+     }
+   }
+
+   // Check if this answer has a followup — if so, set default and re-render (don't advance yet if first click)
+   var questions = swGetQuestions();
+   var q = questions[swCurrentQ];
+   if (q.followup && q.followup[value]) {
+     var fu = q.followup[value];
+     if (settingsAnswers[fu.id] === undefined) {
+       settingsAnswers[fu.id] = fu.default_value;
+     }
+     swRenderQuestion();
+     return;
+   }
+
+   // Check if this answer has a sample preview — if so, re-render and let user see it (don't advance yet)
+   var hasSample = false;
+   for (var ci = 0; ci < q.choices.length; ci++) {
+     if (q.choices[ci].value === value && q.choices[ci].sample) {
+       hasSample = true;
+       break;
+     }
+   }
+   if (hasSample) {
+     swRenderQuestion();
+     return;
+   }
+
+   if (swCurrentQ < questions.length - 1) {
+     swCurrentQ++;
+     swRenderQuestion();
+   } else {
+     swShowSummary();
+   }
+}
+
+// Advance past a followup question — save the input value first
+function swNextFromFollowup() {
+  var questions = swGetQuestions();
+  var q = questions[swCurrentQ];
+  var ans = settingsAnswers[q.id];
+  if (q.followup && ans && q.followup[ans]) {
+    var fu = q.followup[ans];
+    var fuEl = document.getElementById('swFollowup_' + fu.id);
+    if (fuEl) settingsAnswers[fu.id] = parseInt(fuEl.value, 10) || 0;
+  }
+  if (swCurrentQ < questions.length - 1) {
+    swCurrentQ++;
+    swRenderQuestion();
+  } else {
+    swShowSummary();
+  }
+}
+
+function swPrevQuestion() {
+  if (swCurrentQ > 0) {
+    swCurrentQ--;
+    swRenderQuestion();
+  }
+}
+
+function swShowSummary() {
+  // Save any pending followup value
+  var questions = swGetQuestions();
+  var lastQ = questions[swCurrentQ];
+  if (lastQ.followup) {
+    var lastAns = settingsAnswers[lastQ.id];
+    if (lastAns && lastQ.followup[lastAns]) {
+      var fuEl = document.getElementById('swFollowup_' + lastQ.followup[lastAns].id);
+      if (fuEl) settingsAnswers[lastQ.followup[lastAns].id] = parseInt(fuEl.value, 10) || 0;
+    }
+  }
+
+  document.getElementById('swQuestionCard').classList.add('hidden');
+  document.getElementById('swNav').classList.add('hidden');
+  document.getElementById('swSummary').classList.remove('hidden');
+  document.getElementById('swProgress').textContent = 'Summary';
+  document.getElementById('swProgressBar').style.width = '100%';
+
+  var summaryLabels = {
+    data_type: { label: 'Data Processing', data_only: 'Data (JSON) Only', data_and_attachments: 'Data + Attachments' },
+    initial_sync: { label: 'Large Initial Sync', yes: 'Yes — optimized', no: 'No — standard' },
+    // Data-only labels
+    doc_size: { label: 'Small Docs (under 1KB)', yes: 'Yes — include_docs', no: 'No — bulk_get' },
+    tombstones: { label: 'Track Deletes', yes: 'Yes — receive deletes', no: 'No — active only' },
+    feed_mode: { label: 'Feed Mode', continuous: 'Continuous', longpoll: 'Batches (longpoll)' },
+    processing: { label: 'Processing Strategy', accuracy: 'Accuracy (sequential)', speed: 'Speed (concurrent)' },
+    large_docs: { label: 'Large Docs (100KB+)', yes: 'Yes — smaller batches', no: 'No — default batches' },
+    dlq: { label: 'Error Handling', dlq: 'Save to DLQ', skip: 'Skip / discard' },
+    // Attachment labels
+    attach_count: { label: 'Attachments per Doc', few: '1–3 (individual fetch)', many: 'Many (multipart fetch)' },
+    attach_size: { label: 'Attachment Size', small: 'Small (≤50KB)', medium: 'Medium (50KB–1MB)', large: 'Large (1MB+)' },
+    attach_dest: { label: 'Attachment Destination', s3: 'S3 / Cloud', http: 'HTTP Endpoint', filesystem: 'Local Filesystem' },
+    attach_post: { label: 'Post-Process Action', update_doc: 'Update doc with URLs', none: 'Nothing', delete_attachments: 'Delete attachments only', set_ttl: 'Set TTL / expire', delete_doc: 'Delete doc (tombstone)', purge: 'Purge (irreversible)' },
+    attach_missing: { label: 'Missing Attachment', skip: 'Skip, continue', fail: 'Fail document' },
+    attach_dlq: { label: 'Error Handling', dlq: 'Save to DLQ', skip: 'Skip and move on' }
+  };
+
+  var html = '';
+  for (var i = 0; i < questions.length; i++) {
+    var q = questions[i];
+    var ans = settingsAnswers[q.id];
+    var info = summaryLabels[q.id] || {};
+    html += '<div class="flex justify-between items-center p-2 rounded-lg bg-base-200">' +
+      '<span class="font-semibold text-sm">' + esc(info.label || q.id) + '</span>' +
+      '<span class="badge badge-primary">' + esc(info[ans] || ans) + '</span></div>';
+    // Show followup values in summary
+    if (q.followup && ans && q.followup[ans]) {
+      var fu = q.followup[ans];
+      var fuVal = settingsAnswers[fu.id] !== undefined ? settingsAnswers[fu.id] : fu.default_value;
+      html += '<div class="flex justify-between items-center p-2 rounded-lg bg-base-200 ml-4">' +
+        '<span class="text-sm opacity-70">' + esc(fu.label.split('—')[0].trim()) + '</span>' +
+        '<span class="badge badge-ghost">' + fuVal + 's</span></div>';
+    }
+  }
+  document.getElementById('swSummaryList').innerHTML = html;
+
+  // Generate story based on answers
+  var story = buildStory();
+  document.getElementById('swStory').innerHTML = story;
+
+  var config = buildSettingsConfig();
+  document.getElementById('swConfigPreview').textContent = JSON.stringify(config, null, 2);
+  document.getElementById('swSaveStatus').textContent = '';
+}
+
+function buildStory() {
+  var a = settingsAnswers;
+  var story = '';
+  var isAttach = a.data_type === 'data_and_attachments';
+
+  if (isAttach) {
+    story += '<strong>Attachment Workflow:</strong><br />';
+    story += 'Your pipeline will monitor the ' + (a.attach_size === 'small' ? 'small' : a.attach_size === 'medium' ? 'medium' : 'large') + ' attachments in your documents. ';
+    
+    if (a.attach_count === 'few') {
+      story += 'Since you have 1–3 attachments per doc, we\'ll fetch them individually. ';
+    } else {
+      story += 'Since you have many attachments per doc, we\'ll use multipart fetching to improve efficiency. ';
+    }
+    
+    story += 'Attachments will be uploaded to ' + (a.attach_dest === 's3' ? 'your S3 bucket' : a.attach_dest === 'http' ? 'your HTTP endpoint' : 'the local filesystem') + '. ';
+    
+    if (a.attach_missing === 'skip') {
+      story += 'If any attachment is missing, we\'ll skip it and continue with the rest. ';
+    } else {
+      story += 'If any attachment is missing, the entire document will fail. ';
+    }
+    
+    story += 'After extraction, we\'ll ';
+    if (a.attach_post === 'update_doc') {
+      story += 'update your document with the external URLs where the attachments were uploaded. ';
+    } else if (a.attach_post === 'delete_attachments') {
+      story += 'remove the binary attachments from your source document. ';
+    } else if (a.attach_post === 'set_ttl') {
+      story += 'set the document to auto-expire after ' + a.attach_ttl_seconds + ' seconds. ';
+    } else if (a.attach_post === 'delete_doc') {
+      story += 'delete the source document (it will replicate as a tombstone). ';
+    } else if (a.attach_post === 'purge') {
+      story += 'permanently purge the document from the server with no tombstone. ';
+    } else {
+      story += 'leave your document untouched. ';
+    }
+    
+    if (a.attach_dlq === 'dlq') {
+      story += 'Any failures will be saved to a dead-letter queue for ' + a.attach_dlq_retention + ' seconds before being cleaned up.';
+    } else {
+      story += 'Any failures will be dropped silently.';
+    }
+  } else {
+    story += '<strong>Data-Only Workflow:</strong><br />';
+    story += 'Your pipeline will sync data in ' + (a.feed_mode === 'continuous' ? 'continuous' : 'batched (longpoll)') + ' mode. ';
+    
+    if (a.doc_size === 'yes') {
+      story += 'We\'ll include the full document with each change. ';
+    } else {
+      story += 'We\'ll fetch documents with bulk_get for better performance. ';
+    }
+    
+    if (a.tombstones === 'yes') {
+      story += 'You\'ll receive all deletes (tombstones). ';
+    } else {
+      story += 'We\'ll skip deleted documents. ';
+    }
+    
+    story += 'Processing will happen ' + (a.processing === 'accuracy' ? 'sequentially for accuracy' : 'concurrently for speed') + '. ';
+    
+    if (a.dlq === 'dlq') {
+      story += 'Failed documents will be saved to a dead-letter queue for later review.';
+    } else {
+      story += 'Failed documents will be skipped.';
+    }
+  }
+
+  return story;
+}
+
+function csGenerateStory() {
+  var a = csAnswers;
+  var story = '';
+
+  story += '<strong>Cloud Storage Configuration:</strong><br />';
+  
+  // Use case
+  if (a.cs_use_case === 'attachments') {
+    story += 'You\'ll extract and upload binary attachments to ' + (a.cs_provider === 's3' ? 'AWS S3' : a.cs_provider === 'gcs' ? 'Google Cloud Storage' : a.cs_provider === 'azure' ? 'Azure Blob Storage' : 'local filesystem') + '. ';
+  } else if (a.cs_use_case === 'archive') {
+    story += 'You\'ll archive old documents as ' + (a.cs_compression === 'none' ? 'plain JSONL' : a.cs_compression === 'gzip' ? 'GZIP-compressed' : 'ZSTD-compressed') + ' files in ' + (a.cs_provider === 's3' ? 'S3' : a.cs_provider === 'gcs' ? 'GCS' : a.cs_provider === 'azure' ? 'Azure' : 'local storage') + '. ';
+  } else {
+    story += 'You\'ll both extract attachments AND archive old JSON documents to ' + (a.cs_provider === 's3' ? 'S3' : a.cs_provider === 'gcs' ? 'GCS' : a.cs_provider === 'azure' ? 'Azure' : 'local storage') + '. ';
+  }
+
+  // Performance
+  if (a.cs_concurrency === 'low') {
+    story += 'Processing will be sequential with minimal resource utilization. ';
+  } else if (a.cs_concurrency === 'medium') {
+    story += 'Processing will be balanced with adaptive concurrency and retry logic. ';
+  } else {
+    story += 'Processing will use aggressive parallelism and connection pooling for maximum throughput. ';
+  }
+
+  // Retention
+  if (a.cs_retention === 'forever') {
+    story += 'Files will be kept permanently. ';
+  } else if (a.cs_retention === 'ttl') {
+    story += 'Files will automatically expire after a configured time period. ';
+  } else {
+    story += 'Files will be organized for manual cleanup via your storage provider or scripts. ';
+  }
+
+  // Partitioning
+  if (a.cs_partitioning === 'flat') {
+    story += 'All files will be stored in a flat structure. ';
+  } else if (a.cs_partitioning === 'date_daily') {
+    story += 'Files will be organized by daily date prefixes for easy time-based queries. ';
+  } else if (a.cs_partitioning === 'date_type') {
+    story += 'Files will be organized by date AND type (attachments vs archives) for clarity. ';
+  } else {
+    story += 'Files will be organized by source document ID for traceability. ';
+  }
+
+  story += 'This setup minimizes complexity while optimizing for your throughput needs.';
+  
+  return story;
+}
+
+function csGenerateConfig() {
+  var a = csAnswers;
+  var config = { cloud_storage: {} };
+
+  config.cloud_storage.use_case = a.cs_use_case;
+  config.cloud_storage.provider = a.cs_provider;
+  
+  config.cloud_storage.transfer = {};
+  if (a.cs_concurrency === 'low') config.cloud_storage.transfer.max_concurrent = 1;
+  else if (a.cs_concurrency === 'medium') config.cloud_storage.transfer.max_concurrent = 5;
+  else config.cloud_storage.transfer.max_concurrent = 20;
+
+  config.cloud_storage.retention = a.cs_retention;
+  
+  if (a.cs_retention === 'ttl') {
+    config.cloud_storage.ttl_days = 90;
+  }
+
+  if (a.cs_use_case === 'archive' || a.cs_use_case === 'both') {
+    config.cloud_storage.archive = {};
+    config.cloud_storage.archive.compression = a.cs_compression;
+    config.cloud_storage.archive.format = 'jsonl';
+  }
+
+  config.cloud_storage.partitioning = a.cs_partitioning;
+
+  return config;
+}
+
+function saveCloudStorageConfig() {
+  var status = document.getElementById('csSaveStatus');
+  status.textContent = 'Saving...';
+  status.className = 'text-sm';
+  try {
+    var res = fetch('/api/config');
+    var currentConfig = res.json();
+    var csConfig = csGenerateConfig();
+    var merged = deepMerge(currentConfig, csConfig);
+    var putRes = fetch('/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(merged)
+    });
+    var data = putRes.json();
+    if (data.ok) {
+      status.textContent = 'Cloud storage config saved!';
+      status.className = 'text-sm text-success';
+    } else {
+      status.textContent = (data.error || 'Save failed');
+      status.className = 'text-sm text-error';
+    }
+  } catch (e) {
+    status.textContent = e.message;
+    status.className = 'text-sm text-error';
+  }
+}
+
+function csStartOver() {
+  csReset();
+}
+
+// ── RDBMS Schema Wizard ─────────────────────────────────────
+var rsSchemaCache = null;  // Store current schema for viewing
+var rsTableIndex = {};     // Map table key to row data
+
+function rsReset() {
+  document.getElementById('rsSqlInput').value = '';
+  document.getElementById('rsDbName').value = '';
+  document.getElementById('rsPreviewSection').classList.add('hidden');
+  document.getElementById('rsStatus').textContent = '';
+  document.getElementById('rsSaveStatus').textContent = '';
+}
+
+function rsLoadExistingSchema() {
+  fetch('/api/schema/rdbms')
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (data.ok && data.schema) {
+        rsDisplayExistingSchema(data.schema);
+      } else {
+        document.getElementById('rsExistingSchemaCard').classList.add('hidden');
+      }
+    })
+    .catch(function(e) {
+      console.error('Failed to load schema:', e);
+      document.getElementById('rsExistingSchemaCard').classList.add('hidden');
+    });
+}
+
+function rsDisplayExistingSchema(schema) {
+  var card = document.getElementById('rsExistingSchemaCard');
+  var tbody = document.getElementById('rsExistingSchemaTbody');
+  var dialectBadge = document.getElementById('rsExistingDialect');
+  
+  tbody.innerHTML = '';
+  rsTableIndex = {};  // Reset index
+  
+  var dialect = schema.dialect || 'sql';
+  dialectBadge.textContent = dialect.toUpperCase();
+  
+  var data = schema.data || {};
+  var rowIndex = 0;
+  
+  Object.keys(data).sort().forEach(function(dbName) {
+    var tables = data[dbName];
+    if (typeof tables === 'object' && tables !== null) {
+      Object.keys(tables).sort().forEach(function(tableName) {
+        var tableInfo = tables[tableName];
+        var dateTime = tableInfo.dateTime ? new Date(tableInfo.dateTime).toLocaleString() : 'Unknown';
+        var columnCount = (tableInfo.sql.match(/,/g) || []).length + 1;
+        var sql = tableInfo.sql || '';
+        
+        // Store in index by rowIndex
+        rsTableIndex[rowIndex] = {
+          db: dbName,
+          table: tableName,
+          sql: sql
+        };
+        
+        var tr = '<tr class="hover:bg-base-300 cursor-pointer" data-row-id="' + rowIndex + '" onclick="rsShowSqlViewer(' + rowIndex + ')">';
+        tr += '<td class="font-mono text-sm">' + esc(dbName) + '</td>';
+        tr += '<td class="font-mono text-sm">' + esc(tableName) + '</td>';
+        tr += '<td class="text-right text-sm">' + columnCount + '</td>';
+        tr += '<td class="text-right text-xs opacity-60">' + dateTime + '</td>';
+        tr += '</tr>';
+        tbody.innerHTML += tr;
+        
+        rowIndex++;
+      });
+    }
+  });
+  
+  if (rowIndex === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-xs opacity-60 py-2">No tables found</td></tr>';
+  }
+  
+  card.classList.remove('hidden');
+}
+
+function rsShowSqlViewer(rowId) {
+  if (!rsTableIndex[rowId]) {
+    console.error('Table not found:', rowId);
+    return;
+  }
+  
+  var row = rsTableIndex[rowId];
+  var title = document.getElementById('rsSqlViewerTitle');
+  var codeBlock = document.getElementById('rsSqlViewerText');
+  var modal = document.getElementById('rsSqlViewerModal');
+  
+  title.textContent = row.db + '.' + row.table;
+  
+  // Format the SQL using sql-formatter if available
+  var formatted = row.sql;
+  if (typeof window.sqlFormatter !== 'undefined' && window.sqlFormatter.format) {
+    try {
+      formatted = window.sqlFormatter.format(row.sql, { uppercase: true, tabWidth: 2 });
+    } catch (e) {
+      console.warn('SQL formatter error:', e);
+      formatted = row.sql;
+    }
+  }
+  
+  // Use Highlight.js for syntax highlighting
+  // Build highlighted HTML manually to avoid hljs element-state issues
+  codeBlock.className = 'sql-viewer-pre overflow-x-auto max-h-96';
+  if (typeof hljs !== 'undefined' && hljs.highlight) {
+    try {
+      var result = hljs.highlight(formatted, { language: 'sql' });
+      codeBlock.innerHTML = result.value;
+    } catch (e) {
+      console.warn('Highlight.js error:', e);
+      codeBlock.textContent = formatted;
+    }
+  } else {
+    codeBlock.textContent = formatted;
+  }
+  
+  modal.showModal();
+}
+
+function rsClearExistingSchema() {
+  if (confirm('Delete all saved schema? This cannot be undone.')) {
+    fetch('/api/schema/rdbms', { method: 'DELETE' })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          document.getElementById('rsExistingSchemaCard').classList.add('hidden');
+          alert('Schema cleared');
+        }
+      })
+      .catch(function(e) { alert('Error: ' + e.message); });
+  }
+}
+
+function rsImportAgain() {
+  document.getElementById('rsSqlInput').focus();
+  document.getElementById('rsSqlInput').scrollIntoView({ behavior: 'smooth' });
+}
+
+function handleRsFileSelect(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    document.getElementById('rsSqlInput').value = e.target.result;
+    document.getElementById('rsStatus').textContent = '✓ File loaded: ' + file.name;
+    document.getElementById('rsStatus').className = 'text-sm text-success';
+  };
+  reader.onerror = function() {
+    document.getElementById('rsStatus').textContent = '✗ Error reading file';
+    document.getElementById('rsStatus').className = 'text-sm text-error';
+  };
+  reader.readAsText(file);
+}
+
+function setupDragDrop() {
+  var zone = document.getElementById('rsDragZone');
+  if (!zone) return;
+  
+  zone.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    zone.style.backgroundColor = 'var(--p)';
+    zone.style.opacity = '0.2';
+  });
+  
+  zone.addEventListener('dragleave', function(e) {
+    e.preventDefault();
+    zone.style.backgroundColor = '';
+    zone.style.opacity = '';
+  });
+  
+  zone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    zone.style.backgroundColor = '';
+    zone.style.opacity = '';
+    
+    var files = e.dataTransfer.files;
+    if (files.length > 0) {
+      document.getElementById('rsSqlFile').files = files;
+      handleRsFileSelect({ target: { files: files } });
+    }
+  });
+}
+
+function rsDetectDialect(sql) {
+  var upperSql = sql.toUpperCase();
+  
+  // PostgreSQL keywords
+  if (/\b(SERIAL|BIGSERIAL|BYTEA|UUID|JSONB|ARRAY|VACUUM|ANALYZE|BOOLEAN|TIMESTAMP WITH TIME ZONE)\b/.test(upperSql)) {
+    return 'postgresql';
+  }
+  // MySQL keywords
+  if (/\b(AUTO_INCREMENT|CHARSET|COLLATE|UNSIGNED|FULLTEXT|ENGINE|USING BTREE|INT\(|VARCHAR\(|TINYINT|MEDIUMINT)\b/.test(upperSql)) {
+    return 'mysql';
+  }
+  // SQL Server keywords
+  if (/\b(IDENTITY|NVARCHAR|NCHAR|DATETIME2|DATETIMEOFFSET|UNIQUEIDENTIFIER|BIGINT|GETDATE|NEWID)\b/.test(upperSql)) {
+    return 'tsql';
+  }
+  // Oracle keywords
+  if (/\b(NUMBER|VARCHAR2|CLOB|BLOB|DATE|SEQUENCE|NEXTVAL|NEXTVAL FOR|PRAGMA)\b/.test(upperSql)) {
+    return 'plsql';
+  }
+  // Default to standard SQL
+  return 'sql';
+}
+
+function rsFormatSql() {
+  var sql = document.getElementById('rsSqlInput').value.trim();
+  if (!sql) {
+    document.getElementById('rsStatus').textContent = '✗ No SQL provided';
+    document.getElementById('rsStatus').className = 'text-sm text-error';
+    return;
+  }
+
+  try {
+    // Detect dialect
+    var dialect = rsDetectDialect(sql);
+    
+    // Try formatting with formatter if available, otherwise just validate
+    var formatted = sql;
+    if (window.sqlFormatter && typeof window.sqlFormatter.format === 'function') {
+      formatted = window.sqlFormatter.format(sql, {
+        language: dialect,
+        uppercase: true,
+        indentStyle: 'standard',
+        linesBetweenQueries: 2,
+        tabWidth: 2
+      });
+    }
+    
+    document.getElementById('rsFormattedSql').textContent = formatted;
+    document.getElementById('rsPreviewSection').classList.remove('hidden');
+    document.getElementById('rsStatus').textContent = '✓ SQL formatted (' + dialect.toUpperCase() + ')';
+    document.getElementById('rsStatus').className = 'text-sm text-success';
+    
+    // Store detected dialect
+    document.getElementById('rsSqlInput').dataset.dialect = dialect;
+    
+    // Extract table names
+    rsExtractTables(sql);
+  } catch (e) {
+    document.getElementById('rsStatus').textContent = '✗ SQL formatting error: ' + e.message;
+    document.getElementById('rsStatus').className = 'text-sm text-error';
+  }
+}
+
+function rsExtractTables(sql) {
+  var tables = {};
+  var createTableRegex = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"]?(\w+)[`"]?\s*\(([\s\S]*?)\);/gi;
+  var match;
+  
+  while ((match = createTableRegex.exec(sql)) !== null) {
+    var tableName = match[1];
+    var columnDef = match[2];
+    // Count columns (rough estimate by counting commas not in parentheses)
+    var columnCount = 1;
+    var depth = 0;
+    for (var i = 0; i < columnDef.length; i++) {
+      if (columnDef[i] === '(') depth++;
+      else if (columnDef[i] === ')') depth--;
+      else if (columnDef[i] === ',' && depth === 0) columnCount++;
+    }
+    tables[tableName] = columnCount;
+  }
+  
+  var tbody = document.getElementById('rsTablesExtracted');
+  tbody.innerHTML = '';
+  
+  if (Object.keys(tables).length === 0) {
+    tbody.innerHTML = '<tr><td colspan="2" class="text-center text-xs opacity-60 py-2">No CREATE TABLE statements found</td></tr>';
+    return;
+  }
+  
+  Object.keys(tables).sort().forEach(function(tableName) {
+    var row = '<tr><td class="font-mono text-sm">' + esc(tableName) + '</td><td class="text-right text-sm">' + tables[tableName] + '</td></tr>';
+    tbody.innerHTML += row;
+  });
+}
+
+function rsClearInput() {
+  document.getElementById('rsSqlInput').value = '';
+  document.getElementById('rsPreviewSection').classList.add('hidden');
+  document.getElementById('rsStatus').textContent = '';
+}
+
+function rsSaveSchema() {
+  var sql = document.getElementById('rsSqlInput').value.trim();
+  var dbName = document.getElementById('rsDbName').value.trim();
+  var sqlInput = document.getElementById('rsSqlInput');
+  var dialect = sqlInput.dataset.dialect || rsDetectDialect(sql);
+  var status = document.getElementById('rsSaveStatus');
+  
+  if (!sql) {
+    status.textContent = '✗ No SQL provided';
+    status.className = 'text-sm text-error';
+    return;
+  }
+  
+  if (!dbName) {
+    status.textContent = '✗ Please enter database name';
+    status.className = 'text-sm text-error';
+    return;
+  }
+  
+  status.textContent = 'Saving...';
+  status.className = 'text-sm';
+  
+  try {
+    // Parse CREATE TABLE statements
+    var tables = {};
+    var createTableRegex = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"]?(\w+)[`"]?\s*\(([\s\S]*?)\);/gi;
+    var match;
+    
+    while ((match = createTableRegex.exec(sql)) !== null) {
+      var tableName = match[1];
+      var tableDef = match[0];
+      tables[tableName] = {
+        sql: tableDef,
+        dateTime: new Date().toISOString()
+      };
+    }
+    
+    if (Object.keys(tables).length === 0) {
+      status.textContent = '✗ No valid CREATE TABLE statements found';
+      status.className = 'text-sm text-error';
+      return;
+    }
+    
+    var schemaDoc = {
+      type: 'rdbms',
+      dialect: dialect,
+      data: {}
+    };
+    schemaDoc.data[dbName] = tables;
+    
+    // Save via API
+    fetch('/api/schema/rdbms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(schemaDoc)
+    }).then(function(res) {
+      return res.json();
+    }).then(function(data) {
+      if (data.ok) {
+        status.textContent = '✓ Schema saved! (' + Object.keys(tables).length + ' tables, ' + dialect + ')';
+        status.className = 'text-sm text-success';
+        setTimeout(function() { rsReset(); }, 2000);
+      } else {
+        status.textContent = '✗ Save failed: ' + (data.error || 'Unknown error');
+        status.className = 'text-sm text-error';
+      }
+    }).catch(function(e) {
+      status.textContent = '✗ Error: ' + e.message;
+      status.className = 'text-sm text-error';
+    });
+  } catch (e) {
+    status.textContent = '✗ Error: ' + e.message;
+    status.className = 'text-sm text-error';
+  }
+}
+
+// Initialize drag-drop when wizard loads
+setTimeout(function() { setupDragDrop(); }, 100);
+
+function buildSettingsConfig() {
+   var a = settingsAnswers;
+  var config = {};
+  var isAttach = a.data_type === 'data_and_attachments';
+
+  // ── Changes feed settings (shared) ──
+  config.changes_feed = {};
+  if (a.initial_sync === 'yes') config.changes_feed.optimize_initial_sync = true;
+  if (a.initial_sync === 'no') config.changes_feed.optimize_initial_sync = false;
+
+  if (isAttach) {
+    // Attachments path: docs are large, always use bulk_get and active_only
+    config.changes_feed.include_docs = false;
+    config.changes_feed.active_only = true;
+
+    // Adjust throttle/timeouts based on attachment size
+    if (a.attach_size === 'small') {
+      config.changes_feed.throttle_feed = 5000;
+    } else if (a.attach_size === 'medium') {
+      config.changes_feed.throttle_feed = 1000;
+    } else if (a.attach_size === 'large') {
+      config.changes_feed.throttle_feed = 500;
+    }
+
+    // Attachments config
+    config.attachments = { enabled: true };
+
+    // Fetch mode
+    if (a.attach_count === 'few') config.attachments.mode = 'individual';
+    if (a.attach_count === 'many') config.attachments.mode = 'multipart';
+
+    // Fetch timeouts based on size
+    config.attachments.fetch = {};
+    if (a.attach_size === 'small') {
+      config.attachments.fetch.request_timeout_seconds = 30;
+    } else if (a.attach_size === 'medium') {
+      config.attachments.fetch.request_timeout_seconds = 120;
+    } else if (a.attach_size === 'large') {
+      config.attachments.fetch.request_timeout_seconds = 300;
+      config.attachments.fetch.stream_to_disk_threshold_bytes = 1048576;
+    }
+
+    // Destination
+    config.attachments.destination = {};
+    if (a.attach_dest) config.attachments.destination.type = a.attach_dest;
+
+    // Post-process
+    config.attachments.post_process = {};
+    if (a.attach_post) config.attachments.post_process.action = a.attach_post;
+    if (a.attach_post === 'update_doc') {
+      config.attachments.post_process.update_field = 'attachments_external';
+    }
+    if (a.attach_post === 'set_ttl') {
+      config.attachments.post_process.ttl_seconds = a.attach_ttl_seconds !== undefined ? a.attach_ttl_seconds : 86400;
+    }
+
+    // Missing attachment handling
+    if (a.attach_missing === 'skip') {
+      config.attachments.on_missing_attachment = 'skip';
+      config.attachments.partial_success = 'continue';
+    } else if (a.attach_missing === 'fail') {
+      config.attachments.on_missing_attachment = 'fail';
+      config.attachments.partial_success = 'fail_doc';
+    }
+
+    // Error handling
+    config.output = {};
+    if (a.attach_dlq === 'dlq') {
+      config.output.data_error_action = 'dlq';
+      config.attachments.halt_on_failure = true;
+      config.output.dlq = { retention_seconds: a.attach_dlq_retention !== undefined ? a.attach_dlq_retention : 86400 };
+    } else if (a.attach_dlq === 'skip') {
+      config.output.data_error_action = 'skip';
+      config.attachments.halt_on_failure = false;
+    }
+
+    // Large attachments → sequential processing
+    config.processing = {};
+    if (a.attach_size === 'large') {
+      config.processing.sequential = true;
+    }
+
+  } else {
+    // ── Data-only path ──
+    if (a.doc_size === 'yes') config.changes_feed.include_docs = true;
+    if (a.doc_size === 'no') config.changes_feed.include_docs = false;
+    if (a.tombstones === 'no') config.changes_feed.active_only = true;
+    if (a.tombstones === 'yes') config.changes_feed.active_only = false;
+    if (a.feed_mode) config.changes_feed.feed_type = a.feed_mode;
+    if (a.large_docs === 'yes') config.changes_feed.throttle_feed = 1000;
+    if (a.large_docs === 'no') config.changes_feed.throttle_feed = 5000;
+
+    config.processing = {};
+    if (a.tombstones === 'no') config.processing.ignore_delete = true;
+    if (a.tombstones === 'yes') config.processing.ignore_delete = false;
+    if (a.processing === 'accuracy') config.processing.sequential = true;
+    if (a.processing === 'speed') config.processing.sequential = false;
+
+    config.output = {};
+    if (a.dlq === 'dlq') config.output.data_error_action = 'dlq';
+    if (a.dlq === 'skip') config.output.data_error_action = 'skip';
+  }
+
+  // Remove empty sections
+  if (config.changes_feed && !Object.keys(config.changes_feed).length) delete config.changes_feed;
+  if (config.processing && !Object.keys(config.processing).length) delete config.processing;
+  if (config.output && !Object.keys(config.output).length) delete config.output;
+  if (config.attachments && config.attachments.fetch && !Object.keys(config.attachments.fetch).length) delete config.attachments.fetch;
+  if (config.attachments && config.attachments.destination && !Object.keys(config.attachments.destination).length) delete config.attachments.destination;
+  if (config.attachments && config.attachments.post_process && !Object.keys(config.attachments.post_process).length) delete config.attachments.post_process;
+
+  return config;
+}
+
+function deepMerge(target, source) {
+  var keys = Object.keys(source);
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    if (source[k] && typeof source[k] === 'object' && !Array.isArray(source[k]) &&
+        target[k] && typeof target[k] === 'object' && !Array.isArray(target[k])) {
+      deepMerge(target[k], source[k]);
+    } else {
+      target[k] = source[k];
+    }
+  }
+  return target;
+}
+
+async function saveSettingsConfig() {
+  var status = document.getElementById('swSaveStatus');
+  status.textContent = 'Saving...';
+  status.className = 'text-sm';
+  try {
+    var res = await fetch('/api/config');
+    var currentConfig = await res.json();
+    var wizardConfig = buildSettingsConfig();
+    var merged = deepMerge(currentConfig, wizardConfig);
+    var putRes = await fetch('/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(merged)
+    });
+    var data = await putRes.json();
+    if (data.ok) {
+      status.textContent = 'Settings saved!';
+      status.className = 'text-sm text-success';
+    } else {
+      status.textContent = (data.error || 'Save failed');
+      status.className = 'text-sm text-error';
+    }
+  } catch (e) {
+    status.textContent = e.message;
+    status.className = 'text-sm text-error';
+  }
+}
 
 // ── Wizard State ─────────────────────────────────────────────
 var currentStep = 1;
@@ -1777,12 +4079,25 @@ function wizImportAIResponse() {
   wizChooseMode('diy');
 }
 
+// ── Toast ────────────────────────────────────────────────────
+function showToast(message, type) {
+  var container = document.getElementById('toastContainer');
+  var alertClass = type === 'success' ? 'alert-success' : 'alert-error';
+  var toast = document.createElement('div');
+  toast.className = 'alert ' + alertClass;
+  toast.innerHTML = '<span>' + message + '</span>';
+  container.appendChild(toast);
+  setTimeout(function() { toast.remove(); }, 3000);
+}
+
 // ── Init ─────────────────────────────────────────────────────
-goToStep(1);
+showWizardLanding();
 </script>
 
   </main>
   </div><!-- /sidebar-main -->
+  <!-- Toast container -->
+  <div id="toastContainer" class="toast toast-end toast-bottom z-50"></div>
   <script src="/static/js/sidebar.js"></script>
 
 </body>
