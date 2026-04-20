@@ -56,6 +56,7 @@ from rest.api_v2 import (
     api_refresh_job_input,
     api_refresh_job_output,
 )
+from rest.api_v2_jobs_control import register_job_control_routes
 from rest.changes_http import (
     ShutdownRequested,
     RetryableHTTP,
@@ -2940,6 +2941,16 @@ def main() -> None:
             metrics=metrics,
             logger=logger,
         )
+
+        # Register Phase 10 job control endpoints with the metrics server
+        if metrics_runner is not None:
+            register_job_control_routes(metrics_runner.app, pipeline_manager)
+            log_event(
+                logger,
+                "debug",
+                "CONTROL",
+                "registered job control endpoints",
+            )
 
         # Wire signal handler to PipelineManager
         def _pipeline_signal_handler() -> None:
