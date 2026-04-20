@@ -231,6 +231,11 @@ class MetricsCollector:
         self.flood_batches_total: int = 0  # batches exceeding flood threshold
         self.flood_threshold: int = 10000  # configurable via set()
 
+        # Output backpressure
+        self.backpressure_delays_total: int = 0
+        self.backpressure_delay_seconds_total: float = 0.0
+        self.backpressure_active: int = 0  # 1 when currently throttling
+
         # Gauges (can go up and down)
         self.changes_pending: int = 0  # received - processed (backpressure)
         self.last_batch_size: int = 0
@@ -315,6 +320,13 @@ class MetricsCollector:
         with self._lock:
             self._outbound_auth_times.append(seconds)
             self._timing_versions["outbound_auth"] += 1
+
+    def get_output_latency_avg(self) -> float:
+        """Return rolling average output response time in seconds (0 if none)."""
+        with self._lock:
+            if not self._output_resp_times:
+                return 0.0
+            return sum(self._output_resp_times) / len(self._output_resp_times)
 
     def record_batch_received(self, batch_size: int) -> None:
         with self._lock:
@@ -899,6 +911,23 @@ class MetricsCollector:
             "changes_worker_flood_batches_total",
             "Number of batches that exceeded the flood threshold.",
             self.flood_batches_total,
+        )
+
+        # -- Output backpressure --
+        _counter(
+            "changes_worker_backpressure_delays_total",
+            "Number of times backpressure throttling was applied.",
+            self.backpressure_delays_total,
+        )
+        _counter(
+            "changes_worker_backpressure_delay_seconds_total",
+            "Total seconds spent in backpressure delays.",
+            self.backpressure_delay_seconds_total,
+        )
+        _gauge(
+            "changes_worker_backpressure_active",
+            "Whether backpressure throttling is currently active (1=yes, 0=no).",
+            self.backpressure_active,
         )
 
         # -- Timing summaries --

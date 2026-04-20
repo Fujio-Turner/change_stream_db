@@ -16,6 +16,13 @@ import fnmatch
 import hashlib
 import json
 import logging
+
+try:
+    import orjson
+
+    _json_loads = orjson.loads
+except ImportError:
+    _json_loads = json.loads
 import re
 from typing import TYPE_CHECKING
 from urllib.parse import quote
@@ -483,7 +490,7 @@ class AttachmentProcessor:
             return results
 
         try:
-            payload = json.loads(resp_body)
+            payload = _json_loads(resp_body)
         except (json.JSONDecodeError, ValueError) as exc:
             self._inc("attachments_download_errors_total")
             if self._config.halt_on_failure:

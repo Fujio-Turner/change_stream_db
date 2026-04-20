@@ -10,8 +10,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 import logging
+
+import json
+
+try:
+    import orjson
+
+    _json_loads = orjson.loads
+except ImportError:
+    _json_loads = json.loads
 import re
 import time
 from typing import TYPE_CHECKING
@@ -187,6 +195,69 @@ class ServerHTTPError(Exception):
 
 
 # ---------------------------------------------------------------------------
+# Output backpressure
+# ---------------------------------------------------------------------------
+
+
+async def _maybe_backpressure(
+    metrics,
+    shutdown_event: asyncio.Event,
+    backpressure_threshold: float = 2.0,
+    max_delay: float = 5.0,
+) -> None:
+    """Delay processing if output latency exceeds the rolling average by a
+    multiplier.  The first 50 samples establish a baseline; after that, if
+    the recent average exceeds ``backpressure_threshold`` × the baseline,
+    sleep proportionally (capped at ``max_delay`` seconds).
+
+    All state lives on the ``metrics`` object so no globals are needed.
+    """
+    if not metrics:
+        return
+
+    avg = metrics.get_output_latency_avg()
+    if avg <= 0:
+        metrics.set("backpressure_active", 0)
+        return
+
+    # Baseline: latency from the first 50 samples, stored once
+    if not hasattr(metrics, "_backpressure_baseline"):
+        if len(metrics._output_resp_times) < 50:
+            return  # not enough data yet
+        metrics._backpressure_baseline = avg
+
+    baseline = metrics._backpressure_baseline
+    if baseline <= 0:
+        return
+
+    ratio = avg / baseline
+    if ratio < backpressure_threshold:
+        metrics.set("backpressure_active", 0)
+        return
+
+    # Proportional delay: scales with how far over the threshold we are
+    delay = min((ratio - 1.0) * baseline, max_delay)
+    if delay < 0.01:
+        metrics.set("backpressure_active", 0)
+        return
+
+    metrics.set("backpressure_active", 1)
+    metrics.inc("backpressure_delays_total")
+    with metrics._lock:
+        metrics.backpressure_delay_seconds_total += delay
+
+    log_event(
+        logger,
+        "warn",
+        "BACKPRESSURE",
+        "output latency %.1f× baseline (%.1fms vs %.1fms) – delaying %.0fms"
+        % (ratio, avg * 1000, baseline * 1000, delay * 1000),
+    )
+
+    await _sleep_or_shutdown(delay, shutdown_event)
+
+
+# ---------------------------------------------------------------------------
 # Fetch-docs helpers (bulk_get for SG/App Services, individual GET for Edge)
 # ---------------------------------------------------------------------------
 
@@ -243,6 +314,14 @@ async def fetch_docs(
             results = await _fetch_docs_individually(
                 http, base_url, batch, auth, headers, max_concurrent, metrics=metrics
             )
+        elif len(batch) == 1:
+            row = batch[0]
+            doc_id = row["id"]
+            rev = row["changes"][0]["rev"] if row.get("changes") else ""
+            doc = await _fetch_single_doc_with_retry(
+                http, base_url, doc_id, rev, auth, headers, metrics=metrics
+            )
+            results = [doc] if doc is not None else []
         else:
             results = await _fetch_docs_bulk_get(
                 http, base_url, batch, auth, headers, metrics=metrics
@@ -284,7 +363,8 @@ async def _fetch_single_doc_with_retry(
             resp.release()
             if metrics:
                 metrics.inc("bytes_received_total", len(raw_bytes))
-            doc = json.loads(raw_bytes)
+                metrics.inc("doc_fetch_requests_total")
+            doc = _json_loads(raw_bytes)
             return doc
         except ClientHTTPError as exc:
             if exc.status in (401, 403):
@@ -385,8 +465,8 @@ async def _fetch_docs_bulk_get(
         if metrics:
             metrics.inc("bytes_received_total", response_bytes)
         try:
-            body = json.loads(raw_bytes)
-        except json.JSONDecodeError as exc:
+            body = _json_loads(raw_bytes)
+        except (json.JSONDecodeError, ValueError) as exc:
             logger.warning(
                 "bulk_get: malformed JSON response (%d bytes): %s",
                 len(raw_bytes),
@@ -401,18 +481,18 @@ async def _fetch_docs_bulk_get(
                 if ok:
                     results.append(ok)
     else:
-        # Fallback: read raw text and attempt JSON extraction
-        raw = await resp.text()
-        response_bytes = len(raw.encode("utf-8"))
+        # Fallback: read raw bytes and attempt JSON extraction
+        raw_bytes = await resp.read()
+        response_bytes = len(raw_bytes)
         resp.release()
         if metrics:
             metrics.inc("bytes_received_total", response_bytes)
-        for line in raw.splitlines():
+        for line in raw_bytes.split(b"\n"):
             line = line.strip()
-            if line.startswith("{"):
+            if line.startswith(b"{"):
                 try:
-                    results.append(json.loads(line))
-                except json.JSONDecodeError:
+                    results.append(_json_loads(line))
+                except (json.JSONDecodeError, ValueError):
                     pass
     if metrics:
         metrics.inc("doc_fetch_requests_total")
@@ -1400,6 +1480,9 @@ async def _catch_up_normal(
             )
             continue
 
+        # ── Output backpressure check ─────────────────────────────────
+        await _maybe_backpressure(metrics, shutdown_event)
+
         # ── Check if initial sync is complete ─────────────────────────
         # When using optimized/chunked initial sync with a target_seq,
         # completion is determined by last_seq reaching the target —
@@ -1527,10 +1610,74 @@ async def _consume_continuous_stream(
             metrics.inc("stream_reconnects_total")
         failure_count = 0
 
+        # Buffering: collect rows for up to stream_batch_timeout_ms or
+        # get_batch_number docs before processing as one batch.
+        batch_max = proc_cfg.get("get_batch_number", 100)
+        batch_timeout = feed_cfg.get("stream_batch_timeout_ms", 100) / 1000.0
+        buffer: list[dict] = []
+        buffer_last_seq = since
+
+        async def _flush_buffer() -> tuple[str, bool]:
+            nonlocal buffer, buffer_last_seq, since
+            if not buffer:
+                return since, False
+            rows_to_process = buffer
+            seq_to_process = buffer_last_seq
+            buffer = []
+            ic("continuous flush", len(rows_to_process), seq_to_process)
+            log_event(
+                logger,
+                "debug",
+                "CHANGES",
+                "continuous stream: flushing %d buffered rows" % len(rows_to_process),
+                batch_size=len(rows_to_process),
+            )
+            result = await _process_changes_batch(
+                rows_to_process,
+                seq_to_process,
+                since,
+                feed_cfg=feed_cfg,
+                proc_cfg=proc_cfg,
+                output=output,
+                dlq=dlq,
+                checkpoint=checkpoint,
+                http=http,
+                base_url=base_url,
+                basic_auth=basic_auth,
+                auth_headers=auth_headers,
+                semaphore=semaphore,
+                src=src,
+                metrics=metrics,
+                every_n_docs=every_n_docs,
+                max_concurrent=max_concurrent,
+                shutdown_cfg=shutdown_cfg,
+                attachment_processor=attachment_processor,
+            )
+            await _maybe_backpressure(metrics, shutdown_event)
+            return result
+
         try:
             while not shutdown_event.is_set():
-                raw_line = await resp.content.readline()
+                # If buffer has rows, use timeout; otherwise block indefinitely
+                read_timeout = batch_timeout if buffer else None
+                try:
+                    raw_line = await asyncio.wait_for(
+                        resp.content.readline(), timeout=read_timeout
+                    )
+                except asyncio.TimeoutError:
+                    # Batch timeout reached – flush what we have
+                    since, output_failed = await _flush_buffer()
+                    if output_failed:
+                        logger.warning(
+                            "Output failed during continuous stream – dropping to catch-up"
+                        )
+                        break
+                    continue
+
                 if raw_line == b"":
+                    # EOF – flush remaining buffer before exiting
+                    if buffer:
+                        await _flush_buffer()
                     logger.warning("Continuous stream closed by server (EOF)")
                     break
 
@@ -1542,10 +1689,10 @@ async def _consume_continuous_stream(
                     continue  # heartbeat / blank line
 
                 try:
-                    row = json.loads(line)
+                    row = _json_loads(line)
                     if metrics:
                         metrics.inc("stream_messages_total")
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, ValueError):
                     logger.warning(
                         "Continuous stream: unparseable line: %s", line[:200]
                     )
@@ -1556,33 +1703,17 @@ async def _consume_continuous_stream(
                 row_seq = str(row.get("seq", since))
                 ic(row.get("id"), row_seq, "continuous row")
 
-                since, output_failed = await _process_changes_batch(
-                    [row],
-                    row_seq,
-                    since,
-                    feed_cfg=feed_cfg,
-                    proc_cfg=proc_cfg,
-                    output=output,
-                    dlq=dlq,
-                    checkpoint=checkpoint,
-                    http=http,
-                    base_url=base_url,
-                    basic_auth=basic_auth,
-                    auth_headers=auth_headers,
-                    semaphore=semaphore,
-                    src=src,
-                    metrics=metrics,
-                    every_n_docs=every_n_docs,
-                    max_concurrent=max_concurrent,
-                    shutdown_cfg=shutdown_cfg,
-                    attachment_processor=attachment_processor,
-                )
+                buffer.append(row)
+                buffer_last_seq = row_seq
 
-                if output_failed:
-                    logger.warning(
-                        "Output failed during continuous stream – dropping to catch-up"
-                    )
-                    break
+                # Flush if buffer is full
+                if len(buffer) >= batch_max:
+                    since, output_failed = await _flush_buffer()
+                    if output_failed:
+                        logger.warning(
+                            "Output failed during continuous stream – dropping to catch-up"
+                        )
+                        break
 
             # Update body with latest since for reconnect
             body_payload["since"] = since
