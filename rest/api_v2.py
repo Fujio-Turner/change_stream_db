@@ -10,6 +10,7 @@ These endpoints manage the new CBL-based document model:
 
 import json
 import logging
+import uuid
 from aiohttp import web
 
 from cbl_store import CBLStore, USE_CBL
@@ -290,4 +291,318 @@ async def api_delete_outputs_entry(request: web.Request) -> web.Response:
         return web.json_response({"status": "ok", "id": entry_id})
     except Exception as e:
         logger.exception(f"Error deleting output {entry_id}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Jobs (/api/jobs)
+# ─────────────────────────────────────────────────────────────────
+
+
+async def api_get_jobs(request: web.Request) -> web.Response:
+    """GET /api/jobs — List all jobs."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    try:
+        store = CBLStore()
+        jobs = store.list_jobs()
+        return web.json_response({"jobs": jobs, "count": len(jobs)})
+    except Exception as e:
+        logger.exception("Error listing jobs")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_get_job(request: web.Request) -> web.Response:
+    """GET /api/jobs/{id} — Get one job."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    job_id = request.match_info.get("id")
+
+    try:
+        store = CBLStore()
+        job = store.load_job(job_id)
+        if not job:
+            return web.json_response({"error": f"Job {job_id} not found"}, status=404)
+        return web.json_response(job)
+    except Exception as e:
+        logger.exception(f"Error loading job {job_id}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_post_jobs(request: web.Request) -> web.Response:
+    """POST /api/jobs — Create a new job."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    try:
+        data = await request.json()
+
+        # Validate required fields
+        if not data.get("input_id"):
+            return web.json_response({"error": "input_id is required"}, status=400)
+        if not data.get("output_type"):
+            return web.json_response({"error": "output_type is required"}, status=400)
+        if data["output_type"] not in ("rdbms", "http", "cloud", "stdout"):
+            return web.json_response(
+                {"error": f"Invalid output_type: {data['output_type']}"}, status=400
+            )
+        if not data.get("output_id"):
+            return web.json_response({"error": "output_id is required"}, status=400)
+
+        store = CBLStore()
+
+        # Load source input
+        inputs_doc = store.load_inputs_changes()
+        if not inputs_doc:
+            return web.json_response({"error": "No inputs defined"}, status=400)
+
+        input_entry = None
+        for src in inputs_doc.get("src", []):
+            if src.get("id") == data["input_id"]:
+                input_entry = src.copy()
+                break
+
+        if not input_entry:
+            return web.json_response(
+                {"error": f"Input {data['input_id']} not found"}, status=400
+            )
+
+        # Load source output
+        outputs_doc = store.load_outputs(data["output_type"])
+        if not outputs_doc:
+            return web.json_response(
+                {"error": f"No {data['output_type']} outputs defined"}, status=400
+            )
+
+        output_entry = None
+        for src in outputs_doc.get("src", []):
+            if src.get("id") == data["output_id"]:
+                output_entry = src.copy()
+                break
+
+        if not output_entry:
+            return web.json_response(
+                {"error": f"Output {data['output_id']} not found"}, status=400
+            )
+
+        # Generate job ID
+        job_id = str(uuid.uuid4())
+
+        # Build job document
+        job_doc = {
+            "type": "job",
+            "id": job_id,
+            "name": data.get("name", f"Job {job_id[:8]}"),
+            "inputs": [input_entry],
+            "outputs": [output_entry],
+            "output_type": data["output_type"],
+            "system": data.get("system", {}),
+            "mapping": data.get("mapping", {}),
+            "state": {
+                "status": "idle",
+                "last_updated": None,
+            },
+        }
+
+        # Save job
+        store.save_job(job_id, job_doc)
+
+        # Create checkpoint
+        checkpoint_doc = {
+            "job_id": job_id,
+            "last_seq": "0",
+            "remote_counter": 0,
+            "last_checkpoint": None,
+        }
+        store.save_checkpoint(job_id, checkpoint_doc)
+
+        return web.json_response(
+            {
+                "status": "ok",
+                "job_id": job_id,
+                "name": job_doc["name"],
+            },
+            status=201,
+        )
+    except json.JSONDecodeError:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        logger.exception("Error creating job")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_put_job(request: web.Request) -> web.Response:
+    """PUT /api/jobs/{id} — Update a job."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    job_id = request.match_info.get("id")
+
+    try:
+        data = await request.json()
+        store = CBLStore()
+
+        # Load existing job
+        job = store.load_job(job_id)
+        if not job:
+            return web.json_response({"error": f"Job {job_id} not found"}, status=404)
+
+        # Update editable fields
+        if "name" in data:
+            job["name"] = data["name"]
+        if "system" in data:
+            job["system"] = data["system"]
+        if "mapping" in data:
+            job["mapping"] = data["mapping"]
+        if "state" in data:
+            job["state"] = data["state"]
+
+        # Save
+        store.save_job(job_id, job)
+
+        return web.json_response(
+            {
+                "status": "ok",
+                "job_id": job_id,
+            }
+        )
+    except json.JSONDecodeError:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        logger.exception(f"Error updating job {job_id}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_delete_job(request: web.Request) -> web.Response:
+    """DELETE /api/jobs/{id} — Delete a job and its checkpoint."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    job_id = request.match_info.get("id")
+
+    try:
+        store = CBLStore()
+
+        # Check job exists
+        job = store.load_job(job_id)
+        if not job:
+            return web.json_response({"error": f"Job {job_id} not found"}, status=404)
+
+        # Delete job and checkpoint
+        store.delete_job(job_id)
+        store.delete_checkpoint(job_id)
+
+        return web.json_response(
+            {
+                "status": "ok",
+                "job_id": job_id,
+            }
+        )
+    except Exception as e:
+        logger.exception(f"Error deleting job {job_id}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_refresh_job_input(request: web.Request) -> web.Response:
+    """POST /api/jobs/{id}/refresh-input — Re-copy input from inputs_changes."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    job_id = request.match_info.get("id")
+
+    try:
+        store = CBLStore()
+
+        # Load job
+        job = store.load_job(job_id)
+        if not job:
+            return web.json_response({"error": f"Job {job_id} not found"}, status=404)
+
+        # Load inputs
+        inputs_doc = store.load_inputs_changes()
+        if not inputs_doc:
+            return web.json_response({"error": "No inputs defined"}, status=400)
+
+        # Find matching input
+        old_input_id = job.get("inputs", [{}])[0].get("id")
+        input_entry = None
+        for src in inputs_doc.get("src", []):
+            if src.get("id") == old_input_id:
+                input_entry = src.copy()
+                break
+
+        if not input_entry:
+            return web.json_response(
+                {"error": f"Input {old_input_id} not found"}, status=400
+            )
+
+        # Update job inputs
+        job["inputs"] = [input_entry]
+        store.save_job(job_id, job)
+
+        return web.json_response(
+            {
+                "status": "ok",
+                "job_id": job_id,
+                "input_id": old_input_id,
+            }
+        )
+    except Exception as e:
+        logger.exception(f"Error refreshing job input {job_id}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_refresh_job_output(request: web.Request) -> web.Response:
+    """POST /api/jobs/{id}/refresh-output — Re-copy output from outputs_{type}."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    job_id = request.match_info.get("id")
+
+    try:
+        store = CBLStore()
+
+        # Load job
+        job = store.load_job(job_id)
+        if not job:
+            return web.json_response({"error": f"Job {job_id} not found"}, status=404)
+
+        output_type = job.get("output_type")
+        old_output_id = job.get("outputs", [{}])[0].get("id")
+
+        # Load outputs
+        outputs_doc = store.load_outputs(output_type)
+        if not outputs_doc:
+            return web.json_response(
+                {"error": f"No {output_type} outputs defined"}, status=400
+            )
+
+        # Find matching output
+        output_entry = None
+        for src in outputs_doc.get("src", []):
+            if src.get("id") == old_output_id:
+                output_entry = src.copy()
+                break
+
+        if not output_entry:
+            return web.json_response(
+                {"error": f"Output {old_output_id} not found"}, status=400
+            )
+
+        # Update job outputs
+        job["outputs"] = [output_entry]
+        store.save_job(job_id, job)
+
+        return web.json_response(
+            {
+                "status": "ok",
+                "job_id": job_id,
+                "output_id": old_output_id,
+                "output_type": output_type,
+            }
+        )
+    except Exception as e:
+        logger.exception(f"Error refreshing job output {job_id}")
         return web.json_response({"error": str(e)}, status=500)

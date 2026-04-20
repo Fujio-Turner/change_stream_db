@@ -2057,6 +2057,36 @@ class CBLStore:
             duration_ms=round(elapsed, 1),
         )
 
+    def delete_checkpoint(self, job_id: str) -> None:
+        """Delete checkpoint for a specific job."""
+        doc_id = f"checkpoint::{job_id}"
+        ic("delete_checkpoint: entry", job_id, doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_doc(self.db, COLL_CHECKPOINTS, doc_id)
+        elapsed = (time.monotonic() - t0) * 1000
+        if not doc:
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "checkpoint not found for delete",
+                operation="DELETE",
+                doc_id=doc_id,
+                job_id=job_id,
+                duration_ms=round(elapsed, 1),
+            )
+            return
+        _coll_purge_doc(self.db, COLL_CHECKPOINTS, doc_id)
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "checkpoint deleted",
+            operation="DELETE",
+            doc_id=doc_id,
+            job_id=job_id,
+        )
+
     # ── Sessions (v2.0) ────────────────────────────────────────
 
     def save_session(self, session_id: str, data: dict) -> None:

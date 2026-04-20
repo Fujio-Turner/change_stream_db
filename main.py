@@ -48,6 +48,13 @@ from rest.api_v2 import (
     api_post_outputs,
     api_put_outputs_entry,
     api_delete_outputs_entry,
+    api_get_jobs,
+    api_get_job,
+    api_post_jobs,
+    api_put_job,
+    api_delete_job,
+    api_refresh_job_input,
+    api_refresh_job_output,
 )
 from rest.changes_http import (
     ShutdownRequested,
@@ -1273,6 +1280,14 @@ async def start_metrics_server(
     app.router.add_post("/api/outputs_{type}", api_post_outputs)
     app.router.add_put("/api/outputs_{type}/{id}", api_put_outputs_entry)
     app.router.add_delete("/api/outputs_{type}/{id}", api_delete_outputs_entry)
+
+    app.router.add_get("/api/jobs", api_get_jobs)
+    app.router.add_get("/api/jobs/{id}", api_get_job)
+    app.router.add_post("/api/jobs", api_post_jobs)
+    app.router.add_put("/api/jobs/{id}", api_put_job)
+    app.router.add_delete("/api/jobs/{id}", api_delete_job)
+    app.router.add_post("/api/jobs/{id}/refresh-input", api_refresh_job_input)
+    app.router.add_post("/api/jobs/{id}/refresh-output", api_refresh_job_output)
 
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
