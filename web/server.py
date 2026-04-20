@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -13,6 +14,8 @@ import datetime
 
 from cbl_store import USE_CBL, CBLStore
 from schema.mapper import SchemaMapper
+
+logger = logging.getLogger("changes_worker")
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -249,6 +252,43 @@ async def put_config(request):
         body = await request.json()
     except json.JSONDecodeError:
         return error_response("Invalid JSON")
+
+    # ── Phase 7: Settings Cleanup ──
+    # Validate: reject job configuration fields
+    REJECTED_FIELDS = {"gateway", "auth", "changes_feed", "output"}
+    found_rejected = [f for f in REJECTED_FIELDS if f in body]
+    if found_rejected:
+        return error_response(
+            f"Job configuration ('{', '.join(found_rejected)}') cannot be edited in Settings. "
+            "Use the Wizard to create and manage jobs instead.",
+            status=400,
+        )
+
+    # ── Allowed infrastructure fields ──
+    ALLOWED_FIELDS = {
+        "couchbase_lite",
+        "logging",
+        "admin_ui",
+        "metrics",
+        "shutdown",
+        "threads",
+        "checkpoint",
+        "retry",
+        "processing",
+        "attachments",
+    }
+    if body:
+        keys = set(body.keys())
+        unexpected = keys - ALLOWED_FIELDS
+        if unexpected:
+            # Log unexpected fields for debugging but allow (for forward compatibility)
+            import logging as _logging
+
+            _log = _logging.getLogger("changes_worker")
+            _log.warning(
+                f"put_config: unexpected fields {unexpected}. Allowed: {ALLOWED_FIELDS}"
+            )
+
     if USE_CBL:
         CBLStore().save_config(body)
     else:
@@ -536,6 +576,58 @@ async def get_status(request):
             "cbl": "green" if USE_CBL else "red",
         }
     )
+
+
+async def get_jobs_status(request):
+    """GET /api/jobs/status — Return list of all jobs with status, checkpoint, and metrics.
+
+    Returns:
+    {
+        "jobs": [
+            {
+                "job_id": "job-123",
+                "name": "Job Name",
+                "enabled": true,
+                "status": "running|idle|error",
+                "last_sync_time": "2024-01-01T10:00:00Z",
+                "docs_processed": 1234,
+                "errors": 5
+            }
+        ],
+        "count": 1
+    }
+    """
+    if not USE_CBL:
+        return json_response({"jobs": [], "count": 0})
+
+    try:
+        store = CBLStore()
+        jobs = store.list_jobs()
+
+        result_jobs = []
+        for job in jobs:
+            job_id = job.get("_id", "").replace("job:", "")
+
+            # Load checkpoint for this job
+            checkpoint = store.load_checkpoint(job_id) or {}
+
+            # Build status entry
+            status_entry = {
+                "job_id": job_id,
+                "name": job.get("name", job_id),
+                "enabled": job.get("enabled", True),
+                "status": "idle",  # Could be enhanced with runtime status
+                "last_sync_time": checkpoint.get("updated_at")
+                or checkpoint.get("timestamp"),
+                "docs_processed": checkpoint.get("seq", 0),
+                "errors": 0,  # Could be populated from metrics
+            }
+            result_jobs.append(status_entry)
+
+        return json_response({"jobs": result_jobs, "count": len(result_jobs)})
+    except Exception as e:
+        logger.exception("Error loading jobs status")
+        return json_response({"jobs": [], "count": 0, "error": str(e)})
 
 
 # --- Metrics API ---
@@ -1863,6 +1955,7 @@ def create_app():
 
     # Status API
     app.router.add_get("/api/status", get_status)
+    app.router.add_get("/api/jobs/status", get_jobs_status)
 
     # Metrics API
     app.router.add_get("/api/metrics", get_metrics)

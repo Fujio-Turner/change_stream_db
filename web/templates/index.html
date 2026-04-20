@@ -109,6 +109,40 @@
       </div>
     </div>
 
+    <!-- Job Selector & Per-Job Status -->
+    <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-4">
+        <div class="flex flex-col lg:flex-row items-start lg:items-center gap-4 mb-4">
+          <div class="flex items-center gap-2">
+            <label for="jobSelector" class="text-sm font-semibold">Filter by Job:</label>
+            <select id="jobSelector" class="select select-bordered select-sm w-48" onchange="handleJobChange(event)">
+              <option value="">All Jobs (Aggregate)</option>
+            </select>
+          </div>
+          <div class="ml-auto text-xs opacity-60" id="jobSelectorHint">Loading job list...</div>
+        </div>
+        
+        <!-- Per-Job Status Table -->
+        <div class="overflow-x-auto">
+          <table class="table table-sm table-zebra">
+            <thead>
+              <tr class="bg-base-200">
+                <th class="text-xs font-bold">Job Name</th>
+                <th class="text-xs font-bold">Enabled</th>
+                <th class="text-xs font-bold">Status</th>
+                <th class="text-xs font-bold">Last Sync</th>
+                <th class="text-xs font-bold">Docs Processed</th>
+                <th class="text-xs font-bold">Errors</th>
+              </tr>
+            </thead>
+            <tbody id="jobStatusTable">
+              <tr><td colspan="6" class="text-center opacity-50 py-4">Loading job status...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <!-- Architecture Graph -->
     <div class="card bg-base-100 shadow rounded-2xl">
       <div class="card-body p-4">
@@ -1725,6 +1759,74 @@ function loadMetrics() {
     });
 }
 
+// ── Job Selector & Status ────────────────────────────────────
+var selectedJob = '';
+
+function loadJobStatus() {
+  var tableBody = document.getElementById('jobStatusTable');
+  if (!tableBody) return;
+  
+  fetch('/api/jobs/status')
+    .then(function(res) { return res.ok ? res.json() : null; })
+    .then(function(data) {
+      if (!data || !data.jobs || data.jobs.length === 0) {
+        tableBody.innerHTML = '<tr><td colspan="6" class="text-center opacity-50 py-4">No jobs configured</td></tr>';
+        document.getElementById('jobSelectorHint').textContent = '0 jobs';
+        return;
+      }
+      
+      // Update job dropdown
+      var selector = document.getElementById('jobSelector');
+      if (selector) {
+        var currentValue = selector.value;
+        var opts = ['<option value="">All Jobs (Aggregate)</option>'];
+        for (var i = 0; i < data.jobs.length; i++) {
+          var job = data.jobs[i];
+          opts.push('<option value="' + job.job_id + '">' + job.name + '</option>');
+        }
+        selector.innerHTML = opts.join('');
+        selector.value = currentValue; // preserve selection
+      }
+      
+      // Update hint
+      document.getElementById('jobSelectorHint').textContent = data.count + ' job' + (data.count !== 1 ? 's' : '');
+      
+      // Populate status table
+      var rows = [];
+      for (var i = 0; i < data.jobs.length; i++) {
+        var job = data.jobs[i];
+        var lastSync = job.last_sync_time ? new Date(job.last_sync_time).toLocaleString() : 'Never';
+        var statusBadge = '<span class="badge ' + 
+          (job.status === 'error' ? 'badge-error' : job.status === 'running' ? 'badge-success' : 'badge-warning') + 
+          '">' + job.status + '</span>';
+        var enabledBadge = job.enabled ? '<span class="badge badge-success">✓</span>' : '<span class="badge badge-outline">✗</span>';
+        
+        rows.push(
+          '<tr>' +
+          '<td class="font-medium">' + (job.name || job.job_id) + '</td>' +
+          '<td>' + enabledBadge + '</td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td class="text-xs opacity-75">' + lastSync + '</td>' +
+          '<td class="text-right font-mono">' + fmt(job.docs_processed) + '</td>' +
+          '<td class="text-right font-mono">' + job.errors + '</td>' +
+          '</tr>'
+        );
+      }
+      tableBody.innerHTML = rows.join('');
+    })
+    .catch(function(e) {
+      dbg('loadJobStatus: ERROR', e);
+      tableBody.innerHTML = '<tr><td colspan="6" class="text-center text-error py-4">Failed to load job status</td></tr>';
+    });
+}
+
+function handleJobChange(event) {
+  selectedJob = event.target.value;
+  dbg('Job selected:', selectedJob);
+  // When a job is selected, reload metrics
+  loadMetrics();
+}
+
 // ── DLQ Meta (last_inserted_at / last_drained_at) ────────────
 var cachedDlqMeta = { last_inserted_at: null, last_drained_at: null, last_inserted_job: null, last_drained_job: null };
 
@@ -1782,9 +1884,11 @@ document.addEventListener('DOMContentLoaded', function() {
   loadConfig();
   loadMetrics();
   loadDlqMeta();
+  loadJobStatus();
   setInterval(loadMetrics, 5000);
   setInterval(loadDlqMeta, 15000);
   setInterval(loadCBLStatus, 30000);
+  setInterval(loadJobStatus, 10000);
 });
 </script>
 

@@ -42,12 +42,21 @@
       </div>
     </div>
 
+    <!-- ── Phase 7: Job config removed from settings ── -->
+    <div class="alert alert-info mb-6">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+      <div>
+        <h3 class="font-bold">Job Configuration Moved</h3>
+        <p class="text-sm">Source, gateway, auth, changes feed, and output settings are no longer edited here. <a href="/wizard" class="link">Use the Wizard</a> to create and manage jobs instead. This page is for infrastructure settings only.</p>
+      </div>
+    </div>
+
     <div id="viewForm">
     <div class="tabs tabs-border">
 
-      <!-- ── TAB: SOURCE ── -->
-      <input type="radio" name="config_tabs" class="tab" aria-label="Source" checked="checked" />
-      <div class="tab-content border-base-300 bg-base-100 p-6">
+      <!-- ── TAB: SOURCE (HIDDEN - Phase 7) ── -->
+      <input type="radio" name="config_tabs" class="tab" aria-label="Source" style="display:none" />
+      <div class="tab-content border-base-300 bg-base-100 p-6" style="display:none">
 
       <!-- Gateway -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
@@ -337,11 +346,11 @@
         </div>
       </div>
 
-      </div><!-- /tab-content Source -->
+      </div><!-- /tab-content Source (HIDDEN) -->
 
-      <!-- ── TAB: PROCESS ── -->
-      <input type="radio" name="config_tabs" class="tab" aria-label="Process" />
-      <div class="tab-content border-base-300 bg-base-100 p-6">
+      <!-- ── TAB: PROCESS (HIDDEN - Phase 7) ── -->
+      <input type="radio" name="config_tabs" class="tab" aria-label="Process" style="display:none" />
+      <div class="tab-content border-base-300 bg-base-100 p-6" style="display:none">
 
       <!-- Threads -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
@@ -392,11 +401,11 @@
         </div>
       </div>
 
-      </div><!-- /tab-content Process -->
+      </div><!-- /tab-content Process (HIDDEN) -->
 
-      <!-- ── TAB: OUTPUT ── -->
-      <input type="radio" name="config_tabs" class="tab" aria-label="Output" />
-      <div class="tab-content border-base-300 bg-base-100 p-6">
+      <!-- ── TAB: OUTPUT (HIDDEN - Phase 7) ── -->
+      <input type="radio" name="config_tabs" class="tab" aria-label="Output" style="display:none" />
+      <div class="tab-content border-base-300 bg-base-100 p-6" style="display:none">
 
       <!-- Output -->
       <div class="collapse collapse-arrow bg-base-100 mb-2">
@@ -1013,9 +1022,15 @@
 
       </div><!-- /tab-content Output -->
 
-      <!-- ── TAB: ATTACHMENTS ── -->
+      <!-- ── TAB: ATTACHMENTS ── (visible, but skipped by Phase 7) -->
       <input type="radio" name="config_tabs" class="tab" aria-label="Attachments" />
       <div class="tab-content border-base-300 bg-base-100 p-6">
+      
+      <!-- Phase 7 Note: Attachments moved to jobs -->
+      <div class="alert alert-warning mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        <span>⚠️ Attachment configuration is now managed per-job in the Wizard. Settings below are <strong>legacy only</strong> and ignored.</span>
+      </div>
 
       <!-- Mode Indicator -->
       <div class="alert mb-4" id="attachModeIndicator">
@@ -1471,7 +1486,7 @@
       </div><!-- /tab-content Attachments -->
 
       <!-- ── TAB: RELIABILITY ── -->
-      <input type="radio" name="config_tabs" class="tab" aria-label="Reliability" />
+      <input type="radio" name="config_tabs" class="tab" aria-label="Reliability" checked="checked" />
       <div class="tab-content border-base-300 bg-base-100 p-6">
 
       <!-- Couchbase Lite -->

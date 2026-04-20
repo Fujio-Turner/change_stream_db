@@ -619,6 +619,132 @@ class CBLStore:
         )
         return cfg
 
+    # ── Phase 7: Config Migration ──────────────────────────────
+
+    def migrate_job_config_from_settings(self) -> dict:
+        """Detect and migrate any job config from settings to separate job documents.
+
+        Phase 7 removes job configuration from settings. This method:
+        1. Loads the settings config document
+        2. Detects any job-related fields (gateway, auth, changes_feed, output)
+        3. Creates a migration job if job config is found
+        4. Removes job config from settings, keeping only infrastructure fields
+        5. Returns migration summary
+
+        Returns:
+            dict with keys:
+            - migrated: bool (True if any migration happened)
+            - job_config_found: dict | None (the config fields that were removed)
+            - removed_fields: list (field names removed from settings)
+            - job_id: str | None (ID of created job, if any)
+            - error: str | None (error message if migration failed)
+        """
+        ic("migrate_job_config_from_settings: entry")
+
+        result = {
+            "migrated": False,
+            "job_config_found": None,
+            "removed_fields": [],
+            "job_id": None,
+            "error": None,
+        }
+
+        try:
+            config = self.load_config()
+            if not config:
+                log_event(
+                    logger,
+                    "debug",
+                    "CBL",
+                    "no config found for migration",
+                    operation="SELECT",
+                    doc_id="config",
+                )
+                return result
+
+            # Fields that should be migrated to jobs (Phase 7)
+            JOB_CONFIG_FIELDS = {
+                "gateway",
+                "auth",
+                "changes_feed",
+                "output",
+                "inputs",
+                "source_config",  # Also catch these variants
+            }
+
+            # Check if config has any job-related fields
+            found_fields = {k: v for k, v in config.items() if k in JOB_CONFIG_FIELDS}
+
+            if not found_fields:
+                log_event(
+                    logger,
+                    "debug",
+                    "CBL",
+                    "no job config fields found in settings",
+                    operation="SELECT",
+                )
+                return result
+
+            # Job config found — create a migration document
+            migration_job_id = f"_migration_legacy_settings_{int(time.time())}"
+            migration_job = {
+                "type": "job",
+                "id": migration_job_id,
+                "name": "Migrated from Settings (Phase 7)",
+                "description": "Job auto-created from legacy settings config. Please verify and adjust.",
+                "inputs": found_fields.get(
+                    "inputs", found_fields.get("source_config", [])
+                ),
+                "outputs": found_fields.get("output", {}),
+                "gateway": found_fields.get("gateway", {}),
+                "auth": found_fields.get("auth", {}),
+                "changes_feed": found_fields.get("changes_feed", {}),
+                "_meta": {
+                    "migrated_from": "settings",
+                    "migrated_at": datetime.datetime.now(
+                        datetime.timezone.utc
+                    ).isoformat(),
+                    "source_config": found_fields,
+                },
+            }
+
+            # Save migration job
+            self.save_job(migration_job_id, migration_job)
+            result["job_id"] = migration_job_id
+
+            # Clean settings: remove job config, keep infrastructure fields
+            cleaned_config = {
+                k: v for k, v in config.items() if k not in JOB_CONFIG_FIELDS
+            }
+            self.save_config(cleaned_config)
+            result["migrated"] = True
+            result["job_config_found"] = found_fields
+            result["removed_fields"] = list(found_fields.keys())
+
+            log_event(
+                logger,
+                "info",
+                "CBL",
+                "job config migrated from settings",
+                operation="MIGRATE",
+                doc_id="config",
+                job_id=migration_job_id,
+                removed_fields=len(found_fields),
+            )
+
+        except Exception as exc:
+            result["error"] = str(exc)
+            log_event(
+                logger,
+                "error",
+                "CBL",
+                "failed to migrate job config from settings",
+                operation="MIGRATE",
+                error_detail=str(exc),
+            )
+
+        return result
+
     # ── Checkpoints ───────────────────────────────────────────
 
     def load_checkpoint(self, uuid: str) -> dict | None:
