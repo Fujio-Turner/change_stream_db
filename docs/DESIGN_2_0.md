@@ -1,8 +1,15 @@
 # Changes Worker v2.0 – Architecture Redesign
 
-> **Status:** Planning  
+> **Status:** 🔄 Phases 1-2 Complete (Migration Logic)
 > **Breaking change:** Yes – config format, CBL schema, cbl_store.py API, wizard UI, main.py startup  
 > **Goal:** Replace the monolithic `config.json` with a job-centric, composable document model stored in Couchbase Lite collections.
+
+---
+
+## 🎯 Completed Phases
+
+**Phase 1** ✅ — CBL Schema & `cbl_store.py` Updates  
+**Phase 2** ✅ — Migration Logic (v1.x → v2.0)
 
 **Related docs:**
 - [`DESIGN.md`](DESIGN.md) – Current v1.x pipeline architecture
@@ -1150,9 +1157,11 @@ Each phase is designed to be done in a **separate chat/thread**. Phases are orde
 
 ### Phase 1: CBL Schema & `cbl_store.py` Updates
 
+**Status:** ✅ COMPLETED
+
 **Goal:** Add new collections and CRUD methods to `cbl_store.py`.
 
-- [ ] Add constants:
+- [x] Add constants:
   - `COLL_INPUTS_CHANGES = "inputs_changes"`
   - `COLL_OUTPUTS_RDBMS = "outputs_rdbms"`
   - `COLL_OUTPUTS_HTTP = "outputs_http"`
@@ -1166,8 +1175,8 @@ Each phase is designed to be done in a **separate chat/thread**. Phases are orde
   - `COLL_ENRICHMENTS = "enrichments"`
   - `COLL_AUDIT_LOG = "audit_log"`
   - `COLL_NOTIFICATIONS = "notifications"`
-- [ ] Remove `COLL_MAPPINGS` constant (phased out)
-- [ ] Add `CBLStore` methods:
+- [x] Remove `COLL_MAPPINGS` constant (phased out)
+- [x] Add `CBLStore` methods:
   - `load_inputs_changes() -> dict | None` — load the `inputs_changes` document
   - `save_inputs_changes(data: dict)` — save the `inputs_changes` document
   - `load_outputs(output_type: str) -> dict | None` — load `outputs_{type}` document
@@ -1183,26 +1192,28 @@ Each phase is designed to be done in a **separate chat/thread**. Phases are orde
   - `save_session(session_id: str, data: dict)` — save a session
   - `list_sessions() -> list[dict]` — list all sessions
   - `delete_expired_sessions()` — purge sessions past `expires_at`
-- [ ] Keep existing `load_config()` / `save_config()` working (now for infra-only config)
-- [ ] Keep existing DLQ methods unchanged (add `job_id` field to DLQ entries)
-- [ ] Add `"schema_version"` field to config document
-- [ ] Write unit tests for all new methods
+- [x] Keep existing `load_config()` / `save_config()` working (now for infra-only config)
+- [x] Keep existing DLQ methods unchanged (add `job_id` field to DLQ entries)
+- [x] Add `"schema_version"` field to config document
+- [x] Write unit tests for all new methods
 
 ### Phase 2: Migration Logic
 
+**Status:** ✅ COMPLETED
+
 **Goal:** Auto-migrate v1.x config to v2.0 schema on startup.
 
-- [ ] Add `migrate_v1_to_v2()` function in `cbl_store.py`
-- [ ] Extract `gateway` + `auth` + `changes_feed` → `inputs_changes` document
-- [ ] Extract `output` → appropriate `outputs_{type}` document based on `output.mode`
-- [ ] Extract `processing` + `checkpoint` + `retry` + `attachments` → `system` in a new job
-- [ ] Copy existing checkpoint → `checkpoint::{job_uuid}` in `checkpoints` collection
-- [ ] Copy existing mappings from `mappings` collection into the job's `schema_mapping`
-- [ ] Slim the `config` document to infra-only keys
-- [ ] Set `config.schema_version = "2.0"` to prevent re-migration
-- [ ] Ensure idempotency — running migration twice is safe
-- [ ] Write integration test: start with v1.x config.json → verify v2.0 documents exist
-- [ ] Update `migrate_files_to_cbl()` to handle the new document layout
+- [x] Add `migrate_v1_to_v2()` function in `cbl_store.py`
+- [x] Extract `gateway` + `auth` + `changes_feed` → `inputs_changes` document
+- [x] Extract `output` → appropriate `outputs_{type}` document based on `output.mode`
+- [x] Extract `processing` + `checkpoint` + `retry` + `attachments` → `system` in a new job
+- [x] Copy existing checkpoint → `checkpoint::{job_uuid}` in `checkpoints` collection
+- [x] Copy existing mappings from `mappings` collection into the job's `schema_mapping`
+- [x] Slim the `config` document to infra-only keys
+- [x] Set `config.schema_version = "2.0"` to prevent re-migration
+- [x] Ensure idempotency — running migration twice is safe
+- [x] Write integration test: start with v1.x config.json → verify v2.0 documents exist
+- [x] Update `migrate_files_to_cbl()` to handle the new document layout
 
 ### Phase 3: Wizard UI – Inputs Management
 

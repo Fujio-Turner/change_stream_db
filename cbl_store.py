@@ -2355,6 +2355,368 @@ class CBLStore:
         )
         return enrichments
 
+    # ── Migration (v1.x → v2.0) ────────────────────────────────────
+
+    def migrate_v1_to_v2(self) -> bool:
+        """Migrate v1.x config to v2.0 schema.
+
+        Reads the 'config' document. If it has v1.x structure (contains 'gateway', 'output', etc.),
+        extract into v2.0 documents:
+          - inputs_changes: from config.gateway + config.auth + config.changes_feed
+          - outputs_{type}: from config.output (split by mode)
+          - job: from the above + config.processing/checkpoint/retry/attachments
+          - checkpoint: from config.checkpoint (renamed to checkpoint::{job_uuid})
+
+        Sets config.schema_version = "2.0" to prevent re-migration.
+
+        Returns:
+            True if migration was performed; False if config is already v2.0 or doesn't exist.
+        """
+        import uuid
+        from pathlib import Path
+
+        ic("migrate_v1_to_v2: entry")
+        t0 = time.monotonic()
+
+        # Load config
+        config = self.load_config()
+        if not config:
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "no config found — skipping v1→v2 migration",
+                operation="MIGRATE",
+            )
+            return False
+
+        # Check if already migrated
+        if config.get("schema_version") == "2.0":
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "config already migrated to v2.0",
+                operation="MIGRATE",
+            )
+            return False
+
+        # Check if this is actually a v1.x config (has 'gateway' or 'output')
+        if "gateway" not in config and "output" not in config:
+            # Looks like a v2.0 config (or unknown format) — mark as migrated
+            config["schema_version"] = "2.0"
+            self.save_config(config)
+            log_event(
+                logger,
+                "info",
+                "CBL",
+                "config doesn't match v1.x or v2.0 pattern — marked v2.0",
+                operation="MIGRATE",
+            )
+            return False
+
+        # ─────────────────────────────────────────────────────────────
+        # Extract v1.x inputs → v2.0 inputs_changes
+        # ─────────────────────────────────────────────────────────────
+        inputs_changes_doc = None
+        if "gateway" in config or "auth" in config or "changes_feed" in config:
+            gateway = config.get("gateway", {})
+            auth = config.get("auth", {})
+            changes_feed = config.get("changes_feed", {})
+
+            src_id = (
+                gateway.get("database", "db")
+                + "_"
+                + gateway.get("collection", "collection")
+            )
+            src_entry = {
+                "id": src_id,
+                "name": "Migrated from v1.x",
+                "enabled": True,
+                "source_type": gateway.get("src", "sync_gateway"),
+                "host": gateway.get("url", ""),
+                "database": gateway.get("database", "db"),
+                "scope": gateway.get("scope", ""),
+                "collection": gateway.get("collection", ""),
+                "accept_self_signed_certs": gateway.get(
+                    "accept_self_signed_certs", False
+                ),
+                "auth": {
+                    "method": auth.get("method", "basic"),
+                    "username": auth.get("username", ""),
+                    "password": auth.get("password", ""),
+                    "session_cookie": auth.get("session_cookie", ""),
+                    "bearer_token": auth.get("bearer_token", ""),
+                },
+                "changes_feed": {
+                    "feed_type": changes_feed.get("feed_type", "longpoll"),
+                    "poll_interval_seconds": changes_feed.get(
+                        "poll_interval_seconds", 10
+                    ),
+                    "active_only": changes_feed.get("active_only", True),
+                    "include_docs": changes_feed.get("include_docs", False),
+                    "since": changes_feed.get("since", "0"),
+                    "channels": changes_feed.get("channels", []),
+                    "limit": changes_feed.get("limit", 0),
+                    "heartbeat_ms": changes_feed.get("heartbeat_ms", 30000),
+                    "timeout_ms": changes_feed.get("timeout_ms", 60000),
+                    "http_timeout_seconds": changes_feed.get(
+                        "http_timeout_seconds", 300
+                    ),
+                    "throttle_feed": changes_feed.get("throttle_feed", 5000),
+                    "continuous_catchup_limit": changes_feed.get(
+                        "continuous_catchup_limit", 5000
+                    ),
+                    "flood_threshold": changes_feed.get("flood_threshold", 10000),
+                    "optimize_initial_sync": changes_feed.get(
+                        "optimize_initial_sync", False
+                    ),
+                },
+            }
+            inputs_changes_doc = {
+                "type": "inputs_changes",
+                "src": [src_entry],
+            }
+            self.save_inputs_changes(inputs_changes_doc)
+            log_event(
+                logger,
+                "info",
+                "CBL",
+                "migrated v1.x gateway → inputs_changes",
+                operation="MIGRATE",
+                src_id=src_id,
+            )
+
+        # ─────────────────────────────────────────────────────────────
+        # Extract v1.x output → v2.0 outputs_{type}
+        # ─────────────────────────────────────────────────────────────
+        output_type = None
+        output_entry = None
+        if "output" in config:
+            output_cfg = config["output"]
+            mode = output_cfg.get("mode", "postgres")
+
+            # Determine output type from mode
+            if mode in ("postgres", "mysql", "mssql", "oracle", "db"):
+                output_type = "rdbms"
+                output_entry = {
+                    "id": f"output_{mode}",
+                    "name": f"Migrated {mode} output",
+                    "enabled": True,
+                    "engine": mode,
+                    "host": output_cfg[mode].get("host", "")
+                    if mode in output_cfg
+                    else "",
+                    "port": output_cfg[mode].get("port", 5432)
+                    if mode in output_cfg
+                    else 5432,
+                    "database": output_cfg[mode].get("database", "")
+                    if mode in output_cfg
+                    else "",
+                    "user": output_cfg[mode].get("user", "")
+                    if mode in output_cfg
+                    else "",
+                    "password": output_cfg[mode].get("password", "")
+                    if mode in output_cfg
+                    else "",
+                    "schema": output_cfg[mode].get("schema", "public")
+                    if mode in output_cfg
+                    else "public",
+                    "ssl": output_cfg[mode].get("ssl", False)
+                    if mode in output_cfg
+                    else False,
+                    "pool_min": output_cfg[mode].get("pool_min", 2)
+                    if mode in output_cfg
+                    else 2,
+                    "pool_max": output_cfg[mode].get("pool_max", 10)
+                    if mode in output_cfg
+                    else 10,
+                }
+            elif mode == "http":
+                output_type = "http"
+                output_entry = {
+                    "id": "output_http",
+                    "name": "Migrated HTTP output",
+                    "enabled": True,
+                    "target_url": output_cfg.get("target_url", ""),
+                    "url_template": output_cfg.get(
+                        "url_template", "{target_url}/{doc_id}"
+                    ),
+                    "write_method": output_cfg.get("write_method", "PUT"),
+                    "delete_method": output_cfg.get("delete_method", "DELETE"),
+                    "send_delete_body": output_cfg.get("send_delete_body", False),
+                    "request_timeout_seconds": output_cfg.get(
+                        "request_timeout_seconds", 30
+                    ),
+                    "accept_self_signed_certs": output_cfg.get(
+                        "accept_self_signed_certs", False
+                    ),
+                    "follow_redirects": output_cfg.get("follow_redirects", False),
+                    "auth": output_cfg.get("target_auth", {"method": "none"}),
+                    "retry": output_cfg.get("retry", {"max_retries": 3}),
+                    "halt_on_failure": output_cfg.get("halt_on_failure", True),
+                    "request_options": output_cfg.get("request_options", {}),
+                }
+            elif mode == "s3":
+                output_type = "cloud"
+                output_entry = {
+                    "id": "output_s3",
+                    "name": "Migrated S3 output",
+                    "enabled": True,
+                    "provider": "s3",
+                    **output_cfg.get("s3", {}),
+                }
+            elif mode == "stdout":
+                output_type = "stdout"
+                output_entry = {
+                    "id": "output_stdout",
+                    "name": "Migrated stdout output",
+                    "enabled": True,
+                    "output_format": output_cfg.get("output_format", "json"),
+                    "pretty_print": False,
+                }
+
+            if output_type and output_entry:
+                outputs_doc = {
+                    "type": f"outputs_{output_type}",
+                    "src": [output_entry],
+                }
+                self.save_outputs(output_type, outputs_doc)
+                log_event(
+                    logger,
+                    "info",
+                    "CBL",
+                    f"migrated v1.x output → outputs_{output_type}",
+                    operation="MIGRATE",
+                    output_type=output_type,
+                )
+
+        # ─────────────────────────────────────────────────────────────
+        # Extract existing checkpoint + mappings
+        # ─────────────────────────────────────────────────────────────
+        job_uuid = str(uuid.uuid4())
+
+        # Load checkpoint from file if it exists (will be saved per-job)
+        checkpoint_data = {}
+        cp_path = Path("checkpoint.json")
+        if cp_path.exists():
+            try:
+                cp_file_data = json.loads(cp_path.read_text())
+                checkpoint_data = {
+                    "last_seq": cp_file_data.get("SGs_Seq", "0"),
+                    "remote_counter": cp_file_data.get("remote_counter", 0),
+                }
+            except Exception as e:
+                log_event(
+                    logger,
+                    "warn",
+                    "CBL",
+                    f"failed to read checkpoint.json: {e}",
+                    operation="MIGRATE",
+                )
+
+        # Load mappings from mappings collection (if any)
+        schema_mapping = {}
+        try:
+            mapping_entries = self.list_mappings()
+            if mapping_entries:
+                # Take the first mapping (v1.x assumed one mapping per config)
+                first = mapping_entries[0]
+                mapping_content = self.get_mapping(first.get("name", ""))
+                if mapping_content:
+                    try:
+                        schema_mapping = json.loads(mapping_content)
+                    except json.JSONDecodeError:
+                        schema_mapping = {"raw": mapping_content}
+        except Exception as e:
+            log_event(
+                logger,
+                "warn",
+                "CBL",
+                f"failed to read mappings: {e}",
+                operation="MIGRATE",
+            )
+
+        # ─────────────────────────────────────────────────────────────
+        # Create job document (v2.0)
+        # ─────────────────────────────────────────────────────────────
+        job_data = {
+            "id": job_uuid,
+            "name": "Migrated Job",
+            "enabled": True,
+            "inputs": [inputs_changes_doc["src"][0]] if inputs_changes_doc else [],
+            "outputs": [output_entry] if output_entry else [],
+            "output_type": output_type or "stdout",
+            "system": {
+                "threads": config.get("threads", 4),
+                "processing": config.get("processing", {}),
+                "retry": config.get("retry", {}),
+                "attachments": config.get("attachments", {}),
+                "middleware": [],
+                "middleware_threads": 2,
+            },
+            "schema_mapping": schema_mapping,
+            "state": {
+                "status": "stopped",
+            },
+        }
+
+        self.save_job(job_uuid, job_data)
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "created v2.0 job from v1.x config",
+            operation="MIGRATE",
+            job_id=job_uuid,
+            output_type=output_type,
+        )
+
+        # Save checkpoint for the job
+        if checkpoint_data:
+            self.save_checkpoint(job_uuid, checkpoint_data)
+            log_event(
+                logger,
+                "info",
+                "CBL",
+                f"migrated checkpoint to job {job_uuid}",
+                operation="MIGRATE",
+                job_id=job_uuid,
+            )
+
+        # ─────────────────────────────────────────────────────────────
+        # Slim down the config document (remove pipeline sections)
+        # ─────────────────────────────────────────────────────────────
+        slimmed_config = {
+            "schema_version": "2.0",
+            "admin_ui": config.get("admin_ui", {}),
+            "metrics": config.get("metrics", {}),
+            "logging": config.get("logging", {}),
+            "couchbase_lite": config.get("couchbase_lite", {}),
+            "shutdown": config.get("shutdown", {}),
+        }
+        self.save_config(slimmed_config)
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "slimmed config to v2.0 (infra-only)",
+            operation="MIGRATE",
+        )
+
+        elapsed = (time.monotonic() - t0) * 1000
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "migration v1.x → v2.0 complete",
+            operation="MIGRATE",
+            job_id=job_uuid,
+            duration_ms=round(elapsed, 1),
+        )
+
+        return True
+
 
 # ---------------------------------------------------------------------------
 # Scheduled maintenance
@@ -2542,6 +2904,18 @@ def migrate_files_to_cbl(config_path: str = "config.json") -> None:
             "config already in CBL — ignoring %s" % config_path,
             operation="SELECT",
             doc_type="config",
+        )
+
+    # ── Migration: v1.x → v2.0 ────────────────────────────────────────
+    # Check if config needs migration (one-time operation)
+    migrated = store.migrate_v1_to_v2()
+    if migrated:
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "v1.x → v2.0 schema migration completed",
+            operation="MIGRATE",
         )
 
     # ── Mappings: disk is edit surface, CBL is runtime store ────────
