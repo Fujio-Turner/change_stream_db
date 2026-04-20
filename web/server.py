@@ -80,6 +80,10 @@ async def page_index(request):
     return web.FileResponse(WEB / "templates" / "index.html")
 
 
+async def page_index_beta(request):
+    return web.FileResponse(WEB / "templates" / "index_beta.html")
+
+
 async def page_config(request):
     return web.FileResponse(WEB / "templates" / "settings.html")
 
@@ -94,6 +98,10 @@ async def page_transforms(request):
 
 async def page_wizard(request):
     return web.FileResponse(WEB / "templates" / "wizard.html")
+
+
+async def page_jobs(request):
+    return web.FileResponse(WEB / "templates" / "jobs.html")
 
 
 async def page_help(request):
@@ -2113,7 +2121,9 @@ def create_app():
     # Pages
     app.router.add_get("/favicon.ico", favicon)
     app.router.add_get("/", page_index)
+    app.router.add_get("/beta", page_index_beta)
     app.router.add_get("/settings", page_config)
+    app.router.add_get("/jobs", page_jobs)
     app.router.add_get("/schema", page_schema)
     app.router.add_get("/glossary", page_transforms)
     app.router.add_get("/wizard", page_wizard)

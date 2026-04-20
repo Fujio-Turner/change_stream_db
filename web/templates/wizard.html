@@ -1062,6 +1062,21 @@
                 <input id="srcSelfSigned" type="checkbox" class="toggle toggle-sm toggle-success" />
               </label>
             </div>
+            <!-- Compress -->
+            <div class="flex items-end">
+              <label class="label cursor-pointer gap-2">
+                <span class="label-text text-xs font-semibold">Compress</span>
+                <input id="srcCompress" type="checkbox" class="toggle toggle-sm toggle-success" />
+                <div class="tooltip" data-tip="Enable gzip compression for requests. Reduces bandwidth over WAN but adds CPU overhead. Leave off for local deployments.">
+                  <button type="button" class="btn btn-ghost btn-circle btn-xs">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current w-4 h-4">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </button>
+                </div>
+              </label>
+            </div>
           </div>
 
           <!-- Auth -->
@@ -2067,7 +2082,8 @@ var SRC_SYSTEMS = [
       { id: 'src_password', label: 'Password', type: 'password', required: false, conditional: { field: 'src_auth_method', value: 'basic' } },
       { id: 'src_session_cookie', label: 'Session Cookie', type: 'text', required: false, conditional: { field: 'src_auth_method', value: 'session' } },
       { id: 'src_bearer_token', label: 'Bearer Token', type: 'password', required: false, conditional: { field: 'src_auth_method', value: 'bearer' } },
-      { id: 'src_accept_self_signed', label: 'Accept Self-Signed Certificates', type: 'checkbox', required: false }
+      { id: 'src_accept_self_signed', label: 'Accept Self-Signed Certificates', type: 'checkbox', required: false },
+      { id: 'src_compress', label: 'Compress (gzip)', type: 'checkbox', required: false }
     ]
   },
   {
@@ -2086,7 +2102,8 @@ var SRC_SYSTEMS = [
       { id: 'src_password', label: 'Password', type: 'password', required: false, conditional: { field: 'src_auth_method', value: 'basic' } },
       { id: 'src_bearer_token', label: 'Bearer Token / API Key', type: 'password', required: false, conditional: { field: 'src_auth_method', value: 'bearer' } },
       { id: 'src_session_cookie', label: 'Session Cookie', type: 'text', required: false, conditional: { field: 'src_auth_method', value: 'session' } },
-      { id: 'src_accept_self_signed', label: 'Accept Self-Signed Certificates', type: 'checkbox', required: false }
+      { id: 'src_accept_self_signed', label: 'Accept Self-Signed Certificates', type: 'checkbox', required: false },
+      { id: 'src_compress', label: 'Compress (gzip)', type: 'checkbox', required: false }
     ]
   },
   {
@@ -2102,7 +2119,8 @@ var SRC_SYSTEMS = [
       { id: 'src_collection', label: 'Collection', type: 'text', required: false, placeholder: '_default' },
       { id: 'src_username', label: 'Username', type: 'text', required: true },
       { id: 'src_password', label: 'Password', type: 'password', required: true },
-      { id: 'src_accept_self_signed', label: 'Accept Self-Signed Certificates', type: 'checkbox', required: false }
+      { id: 'src_accept_self_signed', label: 'Accept Self-Signed Certificates', type: 'checkbox', required: false },
+      { id: 'src_compress', label: 'Compress (gzip)', type: 'checkbox', required: false }
     ]
   },
   {
@@ -2121,7 +2139,8 @@ var SRC_SYSTEMS = [
       { id: 'src_bearer_token', label: 'JWT / Bearer Token', type: 'password', required: false, conditional: { field: 'src_auth_method', value: 'bearer' } },
       { id: 'src_proxy_username', label: 'Proxy Username Header', type: 'text', required: false, conditional: { field: 'src_auth_method', value: 'proxy' } },
       { id: 'src_proxy_roles', label: 'Proxy Roles Header (comma-separated)', type: 'text', required: false, conditional: { field: 'src_auth_method', value: 'proxy' } },
-      { id: 'src_accept_self_signed', label: 'Accept Self-Signed Certificates', type: 'checkbox', required: false }
+      { id: 'src_accept_self_signed', label: 'Accept Self-Signed Certificates', type: 'checkbox', required: false },
+      { id: 'src_compress', label: 'Compress (gzip)', type: 'checkbox', required: false }
     ]
   }
 ];
@@ -3604,7 +3623,8 @@ function getSrcConfig() {
       database: document.getElementById('srcDatabase').value.trim(),
       scope: document.getElementById('srcScope').value.trim() || '_default',
       collection: document.getElementById('srcCollection').value.trim() || '_default',
-      accept_self_signed_certs: document.getElementById('srcSelfSigned').checked
+      accept_self_signed_certs: document.getElementById('srcSelfSigned').checked,
+      compress: document.getElementById('srcCompress').checked
     },
     auth: {
       method: document.getElementById('srcAuthMethod').value,

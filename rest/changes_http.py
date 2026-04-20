@@ -274,7 +274,11 @@ async def _fetch_single_doc_with_retry(
     for attempt in range(1, max_retries + 1):
         try:
             resp = await http.request(
-                "GET", url, params=params, auth=auth, headers=headers
+                "GET",
+                url,
+                params=params,
+                auth=auth,
+                headers=headers,
             )
             raw_bytes = await resp.read()
             resp.release()
@@ -531,7 +535,11 @@ async def _fetch_docs_individually(
         async with sem:
             try:
                 resp = await http.request(
-                    "GET", url, params=params, auth=auth, headers=headers
+                    "GET",
+                    url,
+                    params=params,
+                    auth=auth,
+                    headers=headers,
                 )
                 raw_bytes = await resp.read()
                 if metrics:

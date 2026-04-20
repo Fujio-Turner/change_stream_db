@@ -1730,9 +1730,13 @@ def build_ssl_context(gw: dict) -> ssl.SSLContext | None:
     return ctx
 
 
-def build_auth_headers(auth_cfg: dict, src: str = "sync_gateway") -> dict:
+def build_auth_headers(
+    auth_cfg: dict, src: str = "sync_gateway", compress: bool = False
+) -> dict:
     method = auth_cfg.get("method", "basic")
     headers: dict[str, str] = {}
+    if compress:
+        headers["Accept-Encoding"] = "gzip"
     if method == "bearer":
         if src == "edge_server":
             logger.warning(
@@ -2217,7 +2221,7 @@ async def poll_changes(
         ) from e
     ssl_ctx = build_ssl_context(gw)
     basic_auth = build_basic_auth(auth_cfg)
-    auth_headers = build_auth_headers(auth_cfg, src)
+    auth_headers = build_auth_headers(auth_cfg, src, compress=gw.get("compress", False))
 
     channels = feed_cfg.get("channels", [])
     checkpoint = Checkpoint(
@@ -2705,7 +2709,7 @@ async def test_connection(cfg: dict, src: str) -> bool:
     root_url = gw["url"].rstrip("/")
     ssl_ctx = build_ssl_context(gw)
     basic_auth = build_basic_auth(auth_cfg)
-    auth_headers = build_auth_headers(auth_cfg, src)
+    auth_headers = build_auth_headers(auth_cfg, src, compress=gw.get("compress", False))
 
     connector = aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else aiohttp.TCPConnector()
     timeout = aiohttp.ClientTimeout(total=15)

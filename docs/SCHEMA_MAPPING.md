@@ -9,6 +9,21 @@ This document describes how the `schema/` module maps Couchbase JSON documents f
 
 ---
 
+## 📋 JSON Schema Standards for Mapping Definitions
+
+**All mapping definition files must follow the [JSON Schema Standards Guide](../guides/JSON_SCHEMA.md).**
+
+Key requirements for mapping definitions:
+- Field names are `snake_case` (e.g., `source_array`, `field_mapping`, `primary_key`)
+- Enum values are lowercase (e.g., `"upsert"`, `"insert"`, `"delete"`)
+- DateTime formats are consistent across all target tables
+- Metadata about the mapping (version, description, last updated) goes in a `meta` field
+- Logical field ordering: type/id → tables → transforms → metadata
+
+**All mapping definitions are validated against [`json_schema/changes-worker/mappings/schema.json`](../json_schema/changes-worker/mappings/schema.json).**
+
+---
+
 ## The Problem
 
 A single Couchbase document can contain:

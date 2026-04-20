@@ -1,0 +1,1314 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Job Builder — Change Stream DB</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
+  <script src="/static/js/tailwind.js"></script>
+  <script>
+    (function(){
+      var t = localStorage.getItem('cw_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+</head>
+
+<body class="min-h-screen bg-base-200">
+  <div id="sidebar-root"></div>
+
+  <div class="sidebar-main">
+    <main class="w-full mx-auto p-6 space-y-6">
+      <!-- ===== CARD 1: JOBS TABLE ===== -->
+      <div class="card bg-base-100 shadow rounded-2xl">
+        <div class="card-body p-4">
+          <div class="flex items-center gap-2 mb-3">
+            <h3 class="text-sm font-semibold">Jobs</h3>
+            <span id="jobCount" class="badge badge-ghost badge-sm">0</span>
+            <div class="tooltip tooltip-right" data-tip="All configured pipeline jobs.">
+              <span class="badge badge-ghost badge-sm cursor-help">?</span>
+            </div>
+            <button class="btn btn-primary btn-sm ml-auto" onclick="showJobBuilder()">+ New Job</button>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="table table-sm table-zebra w-full">
+              <thead>
+                <tr class="bg-base-200">
+                  <th class="text-xs font-semibold">Status</th>
+                  <th class="text-xs font-semibold">Job Name</th>
+                  <th class="text-xs font-semibold">Source Name / Type</th>
+                  <th class="text-xs font-semibold">Process</th>
+                  <th class="text-xs font-semibold">Output Name / Type</th>
+                  <th class="text-xs font-semibold">Last Run Date</th>
+                  <th class="text-xs font-semibold">Threads</th>
+                  <th class="text-xs font-semibold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="jobsTableBody">
+                <!-- dynamic rows -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== CARD 2: JOB BUILDER PANEL (hidden by default) ===== -->
+      <div id="jobBuilderContainer" class="hidden space-y-6">
+        <!-- Progress Steps -->
+        <div class="card bg-base-100 shadow-sm rounded-2xl border-process">
+          <div class="card-body p-3">
+            <ul class="steps steps-horizontal w-full text-sm">
+              <li id="jbStep1" class="step step-error" data-content="✕">Source Selected</li>
+              <li id="jbStep2" class="step step-error" data-content="✕">Process Configured</li>
+              <li id="jbStep3" class="step step-error" data-content="✕">Output Selected</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Job Name + Save -->
+        <div class="card bg-base-100 shadow-sm rounded-2xl">
+          <div class="card-body p-4 flex-row items-center gap-3 flex-wrap">
+            <div class="flex items-center gap-2">
+              <label class="label label-text text-xs font-semibold">Job Name</label>
+              <input id="jobName" type="text" class="input input-bordered input-sm w-64" placeholder="My Sync Job" />
+              <span id="jbJobIdDisplay" class="hidden text-xs font-mono opacity-50 ml-2">ID: <span id="jbJobIdValue"></span></span>
+            </div>
+            <div class="flex items-center gap-2 ml-auto">
+              <a id="jbViewJsonLink" class="btn btn-ghost btn-sm hidden" target="_blank" title="View raw job JSON">View JSON</a>
+              <button class="btn btn-ghost btn-sm" onclick="cancelJobBuilder()">Cancel</button>
+              <button class="btn btn-success btn-sm" onclick="saveJob()">Save Job</button>
+              <span id="jobSaveStatus" class="text-sm opacity-60"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3-Column Builder -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+          <!-- ─── SOURCE CARD (border-source = green left border) ─── -->
+          <div class="card bg-base-100 shadow-sm rounded-2xl border-source">
+            <div class="card-body p-4">
+              <div class="flex items-center gap-2 mb-3">
+                <h4 class="text-xs font-bold uppercase" style="color:var(--color-success)">Source</h4>
+                <div class="tooltip tooltip-right" data-tip="Choose which saved Input to read _changes from.">
+                  <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                </div>
+              </div>
+
+              <!-- Source type list with count badges -->
+              <div id="jbSourceTypeList" class="space-y-2">
+                <div class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-base-200 hover:bg-base-300 transition-colors"
+                     onclick="jbShowSourceType('sync_gateway')">
+                  <span class="badge badge-error badge-sm font-bold" id="jbSrcCountSG">0</span>
+                  <span class="text-sm font-semibold">Couchbase Sync Gateway</span>
+                </div>
+                <div class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-base-200 hover:bg-base-300 transition-colors"
+                     onclick="jbShowSourceType('app_services')">
+                  <span class="badge badge-error badge-sm font-bold" id="jbSrcCountAS">0</span>
+                  <span class="text-sm font-semibold">Couchbase App Services</span>
+                </div>
+                <div class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-base-200 hover:bg-base-300 transition-colors"
+                     onclick="jbShowSourceType('edge_server')">
+                  <span class="badge badge-error badge-sm font-bold" id="jbSrcCountES">0</span>
+                  <span class="text-sm font-semibold">Couchbase Edge Server</span>
+                </div>
+                <div class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-base-200 hover:bg-base-300 transition-colors"
+                     onclick="jbShowSourceType('couchdb')">
+                  <span class="badge badge-error badge-sm font-bold" id="jbSrcCountCDB">0</span>
+                  <span class="text-sm font-semibold">CouchDB</span>
+                </div>
+              </div>
+
+              <!-- Selected source indicator -->
+              <div id="jbSourceSelected" class="hidden mt-3 p-3 rounded-xl" style="background:var(--color-success);color:#fff;">
+                <div class="text-xs font-semibold">✓ Selected: <span id="jbSourceSelectedValue">—</span></div>
+              </div>
+
+              <!-- Source drill-down table (hidden by default) -->
+              <div id="jbSourceDrillDown" class="hidden">
+                <div class="flex items-center justify-between mb-3">
+                  <button class="btn btn-ghost btn-xs" onclick="jbBackToSourceTypes()">← Back</button>
+                  <span class="text-sm font-semibold" id="jbSrcDrillTitle">Sync Gateway Inputs</span>
+                  <button class="btn btn-primary btn-xs" onclick="jbAddNewSource()">+</button>
+                </div>
+
+                <div class="overflow-x-auto">
+                  <table class="table table-xs table-zebra w-full">
+                    <thead>
+                      <tr class="bg-base-200">
+                        <th class="text-xs font-semibold">Name</th>
+                        <th class="text-xs font-semibold">In Job</th>
+                        <th class="text-xs font-semibold">Select</th>
+                        <th class="text-xs font-semibold text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="jbSourceDrillTable">
+                      <!-- dynamic rows -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ─── PROCESS CARD (border-process = blue left border) ─── -->
+          <div class="card bg-base-100 shadow-sm rounded-2xl border-process">
+            <div class="card-body p-4">
+              <div class="flex items-center gap-2 mb-3">
+                <h4 class="text-xs font-bold uppercase" style="color:var(--color-info)">Process</h4>
+                <div class="tooltip tooltip-right" data-tip="Choose processing mode and schema mapping.">
+                  <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                </div>
+              </div>
+
+              <!-- Process Type (radio cards) -->
+              <div class="space-y-2 mb-4">
+                <label class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-base-200 hover:bg-base-300 transition-colors" id="jbProcessD">
+                  <input type="radio" name="processType" value="D" class="radio radio-sm radio-info" onchange="jbSelectProcess('D')" checked />
+                  <div>
+                    <div class="text-sm font-semibold">Data Only</div>
+                    <div class="text-xs opacity-60">Documents only, no attachments</div>
+                  </div>
+                </label>
+                <label class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-base-200 hover:bg-base-300 transition-colors" id="jbProcessDA">
+                  <input type="radio" name="processType" value="DA" class="radio radio-sm radio-info" onchange="jbSelectProcess('DA')" />
+                  <div>
+                    <div class="text-sm font-semibold">Data &amp; Attachments</div>
+                    <div class="text-xs opacity-60">Documents + binary attachments</div>
+                  </div>
+                </label>
+              </div>
+
+              <!-- Selected process indicator -->
+              <div id="jbProcessSelected" class="hidden p-3 rounded-xl" style="background:var(--color-success);color:#fff;">
+                <div class="text-xs font-semibold">✓ Selected: <span id="jbProcessSelectedValue">—</span></div>
+              </div>
+
+              <div class="divider text-xs opacity-60">Schema Mapping</div>
+
+              <div>
+                <label class="label label-text text-xs font-semibold">Mapping File</label>
+                <select id="jbMappingSelect" class="select select-bordered select-sm w-full">
+                  <option value="">None (pass-through)</option>
+                  <!-- populated from GET /api/mappings -->
+                </select>
+                <a href="/schema" target="_blank" class="text-xs text-primary mt-1 inline-block">Create new mapping →</a>
+              </div>
+
+              <div class="divider text-xs opacity-60">Settings</div>
+
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="label label-text text-xs font-semibold">Threads</label>
+                  <input id="jbThreads" type="number" class="input input-bordered input-sm w-full" value="4" min="1" />
+                </div>
+              </div>
+
+              <!-- Attachment config (shown only when Data & Attachments selected) -->
+              <div id="jbAttachConfig" class="hidden mt-4">
+                <div class="divider text-xs opacity-60">Attachment Settings</div>
+                <div class="grid grid-cols-2 gap-4">
+                  <div>
+                    <label class="label label-text text-xs font-semibold">Max Size (MB)</label>
+                    <input id="jbAttachMaxSize" type="number" class="input input-bordered input-sm w-full" value="20" min="1" />
+                  </div>
+                  <div>
+                    <label class="label cursor-pointer gap-2 mt-6">
+                      <span class="label-text text-xs font-semibold">Store inline</span>
+                      <input id="jbAttachInline" type="checkbox" class="checkbox checkbox-sm" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ─── OUTPUT CARD (border-output = amber left border) ─── -->
+          <div class="card bg-base-100 shadow-sm rounded-2xl border-output">
+            <div class="card-body p-4">
+              <div class="flex items-center gap-2 mb-3">
+                <h4 class="text-xs font-bold uppercase" style="color:var(--color-warning)">Output</h4>
+                <div class="tooltip tooltip-right" data-tip="Choose where processed documents are sent.">
+                  <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                </div>
+              </div>
+
+              <!-- Output type list with count badges -->
+              <div id="jbOutputTypeList" class="space-y-2">
+                <div class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-base-200 hover:bg-base-300 transition-colors"
+                     onclick="jbShowOutputType('rdbms')">
+                  <span class="badge badge-error badge-sm font-bold" id="jbOutCountRDBMS">0</span>
+                  <span class="text-sm font-semibold">RDBMS</span>
+                </div>
+                <div class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-base-200 hover:bg-base-300 transition-colors"
+                     onclick="jbShowOutputType('http')">
+                  <span class="badge badge-error badge-sm font-bold" id="jbOutCountHTTP">0</span>
+                  <span class="text-sm font-semibold">HTTP</span>
+                </div>
+                <div class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-base-200 hover:bg-base-300 transition-colors"
+                     onclick="jbShowOutputType('cloud')">
+                  <span class="badge badge-error badge-sm font-bold" id="jbOutCountCloud">0</span>
+                  <span class="text-sm font-semibold">☁️ Cloud Storage</span>
+                </div>
+                <div class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-base-200 hover:bg-base-300 transition-colors"
+                     onclick="jbSelectStdout()">
+                  <span class="badge badge-success badge-sm font-bold" id="jbOutCountStdout">✓</span>
+                  <span class="text-sm font-semibold">📺 Stdout</span>
+                  <span class="text-xs opacity-60">(always available)</span>
+                </div>
+              </div>
+
+              <!-- Selected output indicator -->
+              <div id="jbOutputSelected" class="hidden mt-3 p-3 rounded-xl" style="background:var(--color-success);color:#fff;">
+                <div class="text-xs font-semibold">✓ Selected: <span id="jbOutputSelectedValue">—</span></div>
+              </div>
+
+              <!-- Output drill-down table (hidden by default) -->
+              <div id="jbOutputDrillDown" class="hidden">
+                <div class="flex items-center justify-between mb-3">
+                  <button class="btn btn-ghost btn-xs" onclick="jbBackToOutputTypes()">← Back</button>
+                  <span class="text-sm font-semibold" id="jbOutputDrillTitle">Outputs</span>
+                  <button class="btn btn-primary btn-xs" onclick="jbAddNewOutput()">+</button>
+                </div>
+
+                <div class="overflow-x-auto">
+                  <table class="table table-xs table-zebra w-full">
+                    <thead id="jbOutputDrillHead">
+                      <!-- dynamic header per type -->
+                    </thead>
+                    <tbody id="jbOutputDrillTable">
+                      <!-- dynamic rows -->
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- RDBMS Tables panel (shown when Tables(N) clicked) -->
+                <div id="jbTablesPanel" class="hidden card bg-base-200 rounded-xl mt-2">
+                  <div class="card-body p-3">
+                    <div class="flex items-center justify-between mb-2">
+                      <h4 class="text-sm font-semibold" id="jbTablesPanelTitle">Tables</h4>
+                      <div class="flex gap-1">
+                        <button class="btn btn-ghost btn-xs" onclick="jbImportDDL()">Import DDL</button>
+                        <button class="btn btn-ghost btn-xs" onclick="jbIntrospectDb()">Fetch from DB</button>
+                        <button class="btn btn-primary btn-xs" onclick="jbAddTable()">+ Table</button>
+                      </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                      <table class="table table-xs w-full">
+                        <thead>
+                          <tr class="bg-base-300">
+                            <th class="text-xs font-semibold">Table Name</th>
+                            <th class="text-xs font-semibold">Columns</th>
+                            <th class="text-xs font-semibold">Primary Key</th>
+                            <th class="text-xs font-semibold">In Job</th>
+                            <th class="text-xs font-semibold text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody id="jbTablesPanelBody">
+                          <!-- dynamic rows -->
+                        </tbody>
+                      </table>
+                    </div>
+                    <!-- DDL viewer -->
+                    <div id="jbDdlViewer" class="hidden mt-3">
+                      <pre class="bg-base-200 p-4 rounded-xl font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-base-300" id="jbDdlContent"></pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Advanced Section (collapsed) -->
+        <div class="collapse collapse-arrow bg-base-300 rounded-xl">
+          <input type="checkbox" />
+          <div class="collapse-title text-xs font-semibold opacity-70">Advanced</div>
+          <div class="collapse-content">
+            <div class="grid grid-cols-3 gap-4">
+              <div>
+                <label class="label label-text text-xs font-semibold">Feed Type</label>
+                <select id="jbFeedType" class="select select-bordered select-sm w-full">
+                  <option value="longpoll">Long Poll</option>
+                  <option value="continuous">Continuous</option>
+                </select>
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Poll Interval (sec)</label>
+                <input id="jbPollInterval" type="number" class="input input-bordered input-sm w-full" value="10" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Heartbeat (ms)</label>
+                <input id="jbHeartbeat" type="number" class="input input-bordered input-sm w-full" value="30000" />
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-4 mt-3">
+              <div>
+                <label class="label label-text text-xs font-semibold">Timeout (ms)</label>
+                <input id="jbTimeout" type="number" class="input input-bordered input-sm w-full" value="60000" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">HTTP Timeout (sec)</label>
+                <input id="jbHttpTimeout" type="number" class="input input-bordered input-sm w-full" value="300" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Throttle Feed (ms)</label>
+                <input id="jbThrottleFeed" type="number" class="input input-bordered input-sm w-full" value="5000" />
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-4 mt-3">
+              <div>
+                <label class="label label-text text-xs font-semibold">Limit</label>
+                <input id="jbLimit" type="number" class="input input-bordered input-sm w-full" value="0" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Flood Threshold</label>
+                <input id="jbFloodThreshold" type="number" class="input input-bordered input-sm w-full" value="10000" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Catchup Limit</label>
+                <input id="jbCatchupLimit" type="number" class="input input-bordered input-sm w-full" value="5000" />
+              </div>
+            </div>
+            <div class="flex gap-6 mt-3">
+              <label class="label cursor-pointer gap-2">
+                <span class="label-text text-xs font-semibold">Active Only</span>
+                <input id="jbActiveOnly" type="checkbox" class="checkbox checkbox-sm" checked />
+              </label>
+              <label class="label cursor-pointer gap-2">
+                <span class="label-text text-xs font-semibold">Include Docs</span>
+                <input id="jbIncludeDocs" type="checkbox" class="checkbox checkbox-sm" />
+              </label>
+              <label class="label cursor-pointer gap-2">
+                <span class="label-text text-xs font-semibold">Optimize Initial Sync</span>
+                <input id="jbOptimizeSync" type="checkbox" class="checkbox checkbox-sm" />
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Sidebar -->
+  <script src="/static/js/sidebar.js"></script>
+
+  <!-- Jobs Page Script -->
+  <script>
+    // ===== Caches =====
+    var allInputs = [];   // populated from /api/inputs_changes
+    var allJobs = [];      // populated from /api/jobs/status
+    var currentDrillOutputType = null;
+    var currentDrillSourceType = null;
+    var currentTablesPanelOutputId = null;
+
+    // ===== State =====
+    var editingJobId = null;  // null = creating new, string = editing existing
+
+    var currentJobBuilder = {
+      sourceId: null,
+      sourceType: null,
+      processType: null,
+      outputId: null,
+      outputType: null,
+      mappingId: null,
+      jobName: ''
+    };
+
+    // ===== Helpers =====
+    function escHtml(s) {
+      var d = document.createElement('div');
+      d.textContent = s || '';
+      return d.innerHTML;
+    }
+
+    function showToast(msg, type) {
+      var el = document.getElementById('jobSaveStatus');
+      el.textContent = msg;
+      el.style.color = type === 'success' ? 'var(--color-success)' : 'var(--color-error)';
+      setTimeout(function(){ el.textContent = ''; }, 3000);
+    }
+
+    // ===== Load Jobs (status endpoint for richer data) =====
+    function loadJobs() {
+      return fetch('/api/jobs/status')
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          var jobs = data.jobs || [];
+          allJobs = jobs;
+
+          document.getElementById('jobCount').textContent = jobs.length;
+
+          var tbody = document.getElementById('jobsTableBody');
+          tbody.innerHTML = '';
+
+          jobs.forEach(function(job){
+            var row = document.createElement('tr');
+
+            // Status badge with richer states
+            var statusBadge = '';
+            var st = (job.status || 'idle').toLowerCase();
+            if (st === 'running') {
+              statusBadge = '<span class="badge badge-success badge-sm">● Running</span>';
+            } else if (st === 'error') {
+              statusBadge = '<span class="badge badge-error badge-sm">● Error</span>';
+            } else if (st === 'starting' || st === 'restarting') {
+              statusBadge = '<span class="badge badge-warning badge-sm">● ' + escHtml(st.charAt(0).toUpperCase() + st.slice(1)) + '</span>';
+            } else {
+              statusBadge = '<span class="badge badge-ghost badge-sm">● Stopped</span>';
+            }
+
+            var isRunning = (st === 'running' || st === 'starting' || st === 'restarting');
+
+            // Format uptime
+            var uptime = '--';
+            if (job.uptime_seconds != null) {
+              var h = Math.floor(job.uptime_seconds / 3600);
+              var m = Math.floor((job.uptime_seconds % 3600) / 60);
+              uptime = h + 'h ' + m + 'm';
+            }
+
+            var jobId = escHtml(job.job_id || job.id || '');
+            var jobName = escHtml(job.name || jobId);
+
+            // Delete button: disabled if running
+            var deleteBtn = isRunning
+              ? '<div class="tooltip tooltip-left" data-tip="Stop this job before deleting"><button class="btn btn-ghost btn-xs text-error" disabled>Delete</button></div>'
+              : '<button class="btn btn-ghost btn-xs text-error" onclick="deleteJob(\'' + jobId + '\')">Delete</button>';
+
+            row.innerHTML =
+              '<td>' + statusBadge + '</td>' +
+              '<td class="font-semibold cursor-pointer" onclick="editJob(\'' + jobId + '\')">' + jobName + '</td>' +
+              '<td>' +
+                '<div class="font-semibold">' + escHtml(job.input_name || '—') + '</div>' +
+                '<div class="text-xs opacity-60">' + escHtml(job.input_type || '—') + '</div>' +
+              '</td>' +
+              '<td><span class="badge badge-info badge-sm">' + escHtml(job.process_type || '—') + '</span></td>' +
+              '<td>' +
+                '<div class="font-semibold">' + escHtml(job.output_name || '—') + '</div>' +
+                '<div class="text-xs opacity-60">' + escHtml(job.output_type || '—') + '</div>' +
+              '</td>' +
+              '<td class="opacity-60">' + (job.last_sync_time ? new Date(job.last_sync_time).toISOString().split('T')[0] : '—') + '</td>' +
+              '<td class="font-mono">' + (job.threads || 1) + '</td>' +
+              '<td class="text-right">' +
+                '<div class="flex gap-1 justify-end">' +
+                  deleteBtn +
+                  '<button class="btn btn-ghost btn-xs text-warning" onclick="killJob(\'' + jobId + '\')" title="Kill (non-graceful)">Kill</button>' +
+                  '<button class="btn btn-ghost btn-xs" onclick="restartJob(\'' + jobId + '\')" title="Restart">Restart</button>' +
+                  '<button class="btn btn-ghost btn-xs" onclick="stopJob(\'' + jobId + '\')" title="Stop (graceful)">Stop</button>' +
+                  '<button class="btn btn-ghost btn-xs" onclick="startJob(\'' + jobId + '\')" title="Start">Start</button>' +
+                  '<button class="btn btn-ghost btn-xs" onclick="editJob(\'' + jobId + '\')" title="Edit">Edit</button>' +
+                '</div>' +
+              '</td>';
+            tbody.appendChild(row);
+          });
+        })
+        .catch(function(err){
+          console.error('Failed to load jobs:', err);
+        });
+    }
+
+    // ===== Load Source & Output Counts =====
+    function loadSourceCounts() {
+      fetch('/api/inputs_changes')
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          allInputs = data.src || [];
+          var counts = { sync_gateway: 0, app_services: 0, edge_server: 0, couchdb: 0 };
+          allInputs.forEach(function(inp){
+            var t = inp.source_type || '';
+            if (counts[t] !== undefined) counts[t]++;
+          });
+          updateCountBadge('jbSrcCountSG', counts.sync_gateway);
+          updateCountBadge('jbSrcCountAS', counts.app_services);
+          updateCountBadge('jbSrcCountES', counts.edge_server);
+          updateCountBadge('jbSrcCountCDB', counts.couchdb);
+        })
+        .catch(function(err){ console.error('Failed to load source counts:', err); });
+    }
+
+    function loadOutputCounts() {
+      var types = ['rdbms', 'http', 'cloud', 'stdout'];
+      var badgeIds = { rdbms: 'jbOutCountRDBMS', http: 'jbOutCountHTTP', cloud: 'jbOutCountCloud', stdout: 'jbOutCountStdout' };
+      types.forEach(function(t){
+        fetch('/api/outputs_' + t)
+          .then(function(r){ return r.json(); })
+          .then(function(data){
+            var count = (data.src || []).length;
+            if (t === 'stdout') {
+              // Stdout is always available
+              var el = document.getElementById(badgeIds[t]);
+              if (el) { el.className = 'badge badge-success badge-sm font-bold'; el.textContent = '✓'; }
+            } else {
+              updateCountBadge(badgeIds[t], count);
+            }
+          })
+          .catch(function(){ /* ignore */ });
+      });
+    }
+
+    function updateCountBadge(elId, count) {
+      var el = document.getElementById(elId);
+      if (!el) return;
+      el.textContent = count;
+      el.className = count > 0
+        ? 'badge badge-success badge-sm font-bold'
+        : 'badge badge-error badge-sm font-bold';
+    }
+
+    // Find which jobs reference a given input or output
+    function findJobsUsing(fieldKey, fieldValue) {
+      // allJobs may not have full detail — return empty for now if not enriched
+      return [];
+    }
+
+    // ===== Job Builder UI =====
+    function showJobBuilder() {
+      editingJobId = null;
+      document.getElementById('jobBuilderContainer').classList.remove('hidden');
+      document.getElementById('jobName').value = '';
+      document.getElementById('jbViewJsonLink').classList.add('hidden');
+      document.getElementById('jbJobIdDisplay').classList.add('hidden');
+      resetJobBuilder();
+      loadSourceCounts();
+      loadOutputCounts();
+    }
+
+    function cancelJobBuilder() {
+      document.getElementById('jobBuilderContainer').classList.add('hidden');
+      document.getElementById('jbViewJsonLink').classList.add('hidden');
+      document.getElementById('jbJobIdDisplay').classList.add('hidden');
+      resetJobBuilder();
+    }
+
+    function resetJobBuilder() {
+      currentJobBuilder = {
+        sourceId: null,
+        sourceType: null,
+        processType: null,
+        outputId: null,
+        outputType: null,
+        mappingId: null,
+        jobName: ''
+      };
+      // Reset radio
+      var radioD = document.querySelector('input[name="processType"][value="D"]');
+      if (radioD) radioD.checked = true;
+      // Reset attachment config
+      document.getElementById('jbAttachConfig').classList.add('hidden');
+      // Reset indicators
+      document.getElementById('jbSourceSelected').classList.add('hidden');
+      document.getElementById('jbProcessSelected').classList.add('hidden');
+      document.getElementById('jbOutputSelected').classList.add('hidden');
+      // Reset drilldowns
+      jbBackToSourceTypes();
+      jbBackToOutputTypes();
+      updateStepIndicators();
+    }
+
+    function updateStepIndicators() {
+      var steps = [
+        { el: document.getElementById('jbStep1'), done: !!currentJobBuilder.sourceId },
+        { el: document.getElementById('jbStep2'), done: !!currentJobBuilder.processType },
+        { el: document.getElementById('jbStep3'), done: !!currentJobBuilder.outputId }
+      ];
+      steps.forEach(function(s){
+        if (s.done) {
+          s.el.classList.remove('step-error');
+          s.el.classList.add('step-success');
+          s.el.dataset.content = '✓';
+        } else {
+          s.el.classList.remove('step-success');
+          s.el.classList.add('step-error');
+          s.el.dataset.content = '✕';
+        }
+      });
+    }
+
+    // ===== Source Handling =====
+    function jbShowSourceType(type) {
+      currentDrillSourceType = type;
+      document.getElementById('jbSourceTypeList').classList.add('hidden');
+      document.getElementById('jbSourceSelected').classList.add('hidden');
+      document.getElementById('jbSourceDrillDown').classList.remove('hidden');
+
+      var typeLabels = {
+        sync_gateway: 'Couchbase Sync Gateway',
+        app_services: 'Couchbase App Services',
+        edge_server: 'Couchbase Edge Server',
+        couchdb: 'CouchDB'
+      };
+      document.getElementById('jbSrcDrillTitle').textContent = (typeLabels[type] || type) + ' Inputs';
+
+      // Filter from cached allInputs
+      var filtered = allInputs.filter(function(inp){ return inp.source_type === type; });
+      var tbody = document.getElementById('jbSourceDrillTable');
+      tbody.innerHTML = '';
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center opacity-50 py-4">No inputs configured for this type.</td></tr>';
+        return;
+      }
+
+      filtered.forEach(function(inp){
+        var row = document.createElement('tr');
+        var inputId = escHtml(inp.id || '');
+        var inputName = escHtml(inp.name || inp.id || '');
+
+        // In Job — find if any running job uses this input
+        var inJobHtml = '<span class="opacity-60">--</span>';
+        var isInRunningJob = false;
+        allJobs.forEach(function(j){
+          if (j.input_id === inp.id || j.input_name === inp.name) {
+            var st = (j.status || '').toLowerCase();
+            inJobHtml = '<span class="badge badge-success badge-xs">' + escHtml(j.name || j.job_id) + '</span>';
+            if (st === 'running' || st === 'starting' || st === 'restarting') isInRunningJob = true;
+          }
+        });
+
+        // Select button — greyed out if already in a running job
+        var selectBtn = isInRunningJob
+          ? '<div class="tooltip tooltip-left" data-tip="Already in a running job"><button class="btn btn-ghost btn-xs" disabled>Select</button></div>'
+          : '<button class="btn btn-ghost btn-xs" onclick="jbSelectSource(\'' + inputId + '\', \'' + escHtml(type) + '\')">Select</button>';
+
+        row.innerHTML =
+          '<td class="font-semibold">' + inputName + '</td>' +
+          '<td>' + inJobHtml + '</td>' +
+          '<td>' + selectBtn + '</td>' +
+          '<td class="text-right">' +
+            '<div class="flex gap-1 justify-end">' +
+              '<button class="btn btn-ghost btn-xs" onclick="jbTestSourceConn(\'' + inputId + '\')">Test</button>' +
+              '<button class="btn btn-ghost btn-xs" onclick="jbEditSource(\'' + inputId + '\')">Edit</button>' +
+              '<button class="btn btn-ghost btn-xs text-error" onclick="jbDeleteSource(\'' + inputId + '\')"' + (isInRunningJob ? ' disabled' : '') + '>Delete</button>' +
+            '</div>' +
+          '</td>';
+        tbody.appendChild(row);
+      });
+    }
+
+    function jbBackToSourceTypes() {
+      document.getElementById('jbSourceTypeList').classList.remove('hidden');
+      document.getElementById('jbSourceDrillDown').classList.add('hidden');
+      if (currentJobBuilder.sourceId) {
+        document.getElementById('jbSourceSelected').classList.remove('hidden');
+      }
+    }
+
+    function jbSelectSource(sourceId, sourceType) {
+      currentJobBuilder.sourceId = sourceId;
+      currentJobBuilder.sourceType = sourceType;
+      document.getElementById('jbSourceSelectedValue').textContent = sourceId + ' (' + sourceType + ')';
+      document.getElementById('jbSourceSelected').classList.remove('hidden');
+      updateStepIndicators();
+      jbBackToSourceTypes();
+    }
+
+    function jbAddNewSource() {
+      window.open('/wizard', '_blank');
+    }
+
+    function jbTestSourceConn(inputId) {
+      // Find the full input config from allInputs cache
+      var inp = allInputs.find(function(i){ return i.id === inputId; });
+      if (!inp) { alert('Input "' + inputId + '" not found in cache.'); return; }
+
+      var payload = {
+        gateway: {
+          url: inp.host || inp.url || '',
+          database: inp.database || '',
+          scope: inp.scope || '_default',
+          collection: inp.collection || '_default',
+          src: inp.source_type || 'sync_gateway',
+          accept_self_signed_certs: inp.accept_self_signed_certs || false,
+          compress: inp.compress || false
+        },
+        auth: inp.auth || { method: 'none' }
+      };
+
+      fetch('/api/wizard/test-source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        var urlTested = payload.gateway.url + '/' + payload.gateway.database;
+        if (payload.gateway.scope && payload.gateway.scope !== '_default') {
+          urlTested += '.' + payload.gateway.scope;
+        }
+        if (payload.gateway.collection && payload.gateway.collection !== '_default') {
+          urlTested += '.' + payload.gateway.collection;
+        }
+        var authInfo = (payload.auth.method || 'none').toUpperCase();
+        if (data.error) {
+          alert('✕ Connection failed\n\nURL: ' + urlTested + '/_changes\nAuth: ' + authInfo + '\nError: ' + data.error);
+        } else {
+          alert('✓ Connection successful\n\nURL: ' + urlTested + '/_changes\nAuth: ' + authInfo + '\nDocs found: ' + (data.total || 0));
+        }
+      })
+      .catch(function(err){ alert('Test error: ' + err.message); });
+    }
+
+    function jbEditSource(inputId) {
+      window.open('/wizard', '_blank');
+    }
+
+    function jbDeleteSource(inputId) {
+      if (!confirm('Delete input "' + inputId + '"? This cannot be undone.')) return;
+      fetch('/api/inputs_changes/' + inputId, { method: 'DELETE' })
+        .then(function(r){ return r.json(); })
+        .then(function(){
+          loadSourceCounts();
+          if (currentDrillSourceType) jbShowSourceType(currentDrillSourceType);
+        })
+        .catch(function(err){ alert('Delete failed: ' + err.message); });
+    }
+
+    // ===== Process Handling =====
+    function jbSelectProcess(type) {
+      currentJobBuilder.processType = type;
+      document.getElementById('jbProcessSelectedValue').textContent =
+        type === 'D' ? 'Data Only' : 'Data & Attachments';
+      document.getElementById('jbProcessSelected').classList.remove('hidden');
+
+      // Show/hide attachment config
+      if (type === 'DA') {
+        document.getElementById('jbAttachConfig').classList.remove('hidden');
+      } else {
+        document.getElementById('jbAttachConfig').classList.add('hidden');
+      }
+
+      updateStepIndicators();
+    }
+
+    // ===== Output Handling =====
+    function jbShowOutputType(type) {
+      currentDrillOutputType = type;
+      document.getElementById('jbOutputTypeList').classList.add('hidden');
+      document.getElementById('jbOutputSelected').classList.add('hidden');
+      document.getElementById('jbOutputDrillDown').classList.remove('hidden');
+      document.getElementById('jbTablesPanel').classList.add('hidden');
+
+      var typeLabels = { rdbms: '🗄️ RDBMS', http: '📡 HTTP', cloud: '☁️ Cloud Storage' };
+      document.getElementById('jbOutputDrillTitle').textContent = (typeLabels[type] || type) + ' Outputs';
+
+      // Set header per type
+      var head = document.getElementById('jbOutputDrillHead');
+      if (type === 'http') {
+        head.innerHTML =
+          '<tr class="bg-base-200">' +
+            '<th class="text-xs font-semibold">Name</th>' +
+            '<th class="text-xs font-semibold">Target URL</th>' +
+            '<th class="text-xs font-semibold">Methods</th>' +
+            '<th class="text-xs font-semibold">Format</th>' +
+            '<th class="text-xs font-semibold">Auth</th>' +
+            '<th class="text-xs font-semibold">In Job</th>' +
+            '<th class="text-xs font-semibold text-right">Actions</th>' +
+          '</tr>';
+      } else if (type === 'rdbms') {
+        head.innerHTML =
+          '<tr class="bg-base-200">' +
+            '<th class="text-xs font-semibold">Name</th>' +
+            '<th class="text-xs font-semibold">In Job</th>' +
+            '<th class="text-xs font-semibold">Select</th>' +
+            '<th class="text-xs font-semibold">Tables</th>' +
+            '<th class="text-xs font-semibold text-right">Actions</th>' +
+          '</tr>';
+      } else {
+        head.innerHTML =
+          '<tr class="bg-base-200">' +
+            '<th class="text-xs font-semibold">Name</th>' +
+            '<th class="text-xs font-semibold">Provider / Region</th>' +
+            '<th class="text-xs font-semibold">Bucket</th>' +
+            '<th class="text-xs font-semibold">In Job</th>' +
+            '<th class="text-xs font-semibold text-right">Actions</th>' +
+          '</tr>';
+      }
+
+      // Fetch outputs for this type
+      fetch('/api/outputs_' + type)
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          var outputs = data.src || [];
+          var tbody = document.getElementById('jbOutputDrillTable');
+          tbody.innerHTML = '';
+
+          if (outputs.length === 0) {
+            var colSpan = type === 'http' ? 7 : type === 'rdbms' ? 5 : 5;
+            tbody.innerHTML = '<tr><td colspan="' + colSpan + '" class="text-center opacity-50 py-4">No outputs configured for this type.</td></tr>';
+            return;
+          }
+
+          outputs.forEach(function(out){
+            var row = document.createElement('tr');
+            var outId = escHtml(out.id || '');
+            var outName = escHtml(out.name || out.id || '');
+            var inJobHtml = '<span class="opacity-60">--</span>';
+            var isInRunningJob = false;
+            allJobs.forEach(function(j){
+              if (j.output_id === out.id || j.output_name === out.name) {
+                var st = (j.status || '').toLowerCase();
+                inJobHtml = '<span class="badge badge-success badge-xs">' + escHtml(j.name || j.job_id) + '</span>';
+                if (st === 'running' || st === 'starting' || st === 'restarting') isInRunningJob = true;
+              }
+            });
+            var actionBtns =
+              '<div class="flex gap-1 justify-end">' +
+                '<button class="btn btn-ghost btn-xs" onclick="jbTestOutputConn(\'' + outId + '\', \'' + escHtml(type) + '\')">Test</button>' +
+                '<button class="btn btn-ghost btn-xs" onclick="jbEditOutput(\'' + outId + '\')">Edit</button>' +
+                '<button class="btn btn-ghost btn-xs text-error" onclick="jbDeleteOutput(\'' + outId + '\', \'' + escHtml(type) + '\')"' + (isInRunningJob ? ' disabled' : '') + '>Delete</button>' +
+              '</div>';
+
+            if (type === 'http') {
+              var writeMethod = escHtml(out.write_method || out.method || 'PUT');
+              var deleteMethod = escHtml(out.delete_method || 'DELETE');
+              var format = escHtml(out.output_format || out.format || 'JSON');
+              var auth = escHtml(out.auth_method || out.auth_type || 'None');
+              var targetUrl = escHtml(out.target_url || out.url || '—');
+              var urlTemplate = out.url_template ? '<br/><span class="opacity-60">' + escHtml(out.url_template) + '</span>' : '';
+
+              row.innerHTML =
+                '<td class="font-semibold">' + outName + '</td>' +
+                '<td class="font-mono text-xs">' + targetUrl + urlTemplate + '</td>' +
+                '<td>' +
+                  '<span class="badge badge-info badge-xs">' + writeMethod + '</span> ' +
+                  '<span class="badge badge-error badge-xs">' + deleteMethod + '</span>' +
+                '</td>' +
+                '<td><span class="badge badge-ghost badge-xs">' + format + '</span></td>' +
+                '<td><span class="badge badge-ghost badge-xs">' + auth + '</span></td>' +
+                '<td>' + inJobHtml + '</td>' +
+                '<td class="text-right">' + actionBtns + '</td>';
+            } else if (type === 'rdbms') {
+              var tables = out.tables || [];
+              var tableCount = tables.length;
+              var tableBtnClass = tableCount > 0 ? 'btn btn-info btn-xs' : 'btn btn-error btn-xs';
+
+              // Select button — greyed out if in a running job
+              var selectBtn = isInRunningJob
+                ? '<div class="tooltip tooltip-left" data-tip="Already in a running job"><button class="btn btn-ghost btn-xs" disabled>Select</button></div>'
+                : '<button class="btn btn-ghost btn-xs" onclick="jbSelectOutput(\'' + outId + '\', \'' + escHtml(type) + '\')">Select</button>';
+
+              row.innerHTML =
+                '<td class="font-semibold">' + outName + '</td>' +
+                '<td>' + inJobHtml + '</td>' +
+                '<td>' + selectBtn + '</td>' +
+                '<td><button class="' + tableBtnClass + '" onclick="jbShowTables(\'' + outId + '\', \'' + escHtml(type) + '\')">Tables(' + tableCount + ')</button></td>' +
+                '<td class="text-right">' + actionBtns + '</td>';
+            } else {
+              // cloud
+              var provider = escHtml(out.provider || '—');
+              var region = escHtml(out.region || '');
+              var bucket = escHtml(out.bucket || '—');
+
+              row.innerHTML =
+                '<td class="font-semibold">' + outName + '</td>' +
+                '<td class="text-xs">' + provider + (region ? ' / ' + region : '') + '</td>' +
+                '<td class="font-mono text-xs">' + bucket + '</td>' +
+                '<td>' + inJobHtml + '</td>' +
+                '<td class="text-right">' + actionBtns + '</td>';
+            }
+            tbody.appendChild(row);
+          });
+        })
+        .catch(function(err){
+          console.error('Failed to load outputs:', err);
+        });
+    }
+
+    function jbBackToOutputTypes() {
+      document.getElementById('jbOutputTypeList').classList.remove('hidden');
+      document.getElementById('jbOutputDrillDown').classList.add('hidden');
+      document.getElementById('jbTablesPanel').classList.add('hidden');
+      if (currentJobBuilder.outputId) {
+        document.getElementById('jbOutputSelected').classList.remove('hidden');
+      }
+    }
+
+    function jbSelectOutput(outputId, outputType) {
+      currentJobBuilder.outputId = outputId;
+      currentJobBuilder.outputType = outputType;
+      document.getElementById('jbOutputSelectedValue').textContent = outputId + ' (' + outputType + ')';
+      document.getElementById('jbOutputSelected').classList.remove('hidden');
+      updateStepIndicators();
+      jbBackToOutputTypes();
+    }
+
+    function jbSelectStdout() {
+      currentJobBuilder.outputId = 'stdout';
+      currentJobBuilder.outputType = 'stdout';
+      document.getElementById('jbOutputSelectedValue').textContent = 'Stdout (console)';
+      document.getElementById('jbOutputSelected').classList.remove('hidden');
+      updateStepIndicators();
+    }
+
+    function jbAddNewOutput() {
+      window.open('/wizard', '_blank');
+    }
+
+    function jbTestOutputConn(outputId, outputType) {
+      fetch('/api/wizard/test-output', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: outputId, type: outputType })
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.status === 'ok' || data.success) {
+          alert('✓ Connection successful for ' + outputId);
+        } else {
+          alert('✕ Connection failed: ' + (data.error || 'Unknown error'));
+        }
+      })
+      .catch(function(err){ alert('Test error: ' + err.message); });
+    }
+
+    function jbEditOutput(outputId) {
+      window.open('/wizard', '_blank');
+    }
+
+    function jbDeleteOutput(outputId, outputType) {
+      if (!confirm('Delete output "' + outputId + '"? This cannot be undone.')) return;
+      fetch('/api/outputs_' + outputType + '/' + outputId, { method: 'DELETE' })
+        .then(function(r){ return r.json(); })
+        .then(function(){
+          loadOutputCounts();
+          if (currentDrillOutputType) jbShowOutputType(currentDrillOutputType);
+        })
+        .catch(function(err){ alert('Delete failed: ' + err.message); });
+    }
+
+    // ===== RDBMS Tables Panel =====
+    function jbShowTables(outputId, outputType) {
+      currentTablesPanelOutputId = outputId;
+      document.getElementById('jbTablesPanelTitle').textContent = 'Tables — ' + outputId;
+      document.getElementById('jbTablesPanel').classList.remove('hidden');
+      document.getElementById('jbDdlViewer').classList.add('hidden');
+
+      // Fetch output to get tables
+      fetch('/api/outputs_' + outputType)
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          var outputs = data.src || [];
+          var out = outputs.find(function(o){ return o.id === outputId; });
+          var tables = (out && out.tables) || [];
+
+          var tbody = document.getElementById('jbTablesPanelBody');
+          tbody.innerHTML = '';
+
+          if (tables.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center opacity-50 py-4">No tables defined.</td></tr>';
+            return;
+          }
+
+          tables.forEach(function(tbl){
+            var row = document.createElement('tr');
+            var tName = escHtml(tbl.name || tbl.table_name || '');
+            var cols = tbl.columns || [];
+            var pk = escHtml(tbl.primary_key || 'id');
+            var inJobHtml = '<span class="opacity-60">--</span>';
+
+            row.innerHTML =
+              '<td class="font-mono text-xs font-semibold">' + tName + '</td>' +
+              '<td class="text-xs"><span class="badge badge-ghost badge-xs">' + cols.length + ' cols</span></td>' +
+              '<td class="font-mono text-xs opacity-60">' + pk + '</td>' +
+              '<td>' + inJobHtml + '</td>' +
+              '<td class="text-right">' +
+                '<div class="flex gap-1 justify-end">' +
+                  '<button class="btn btn-ghost btn-xs" onclick="jbViewDDL(\'' + tName + '\')">View DDL</button>' +
+                  '<button class="btn btn-ghost btn-xs" onclick="jbEditTable(\'' + tName + '\')">Edit</button>' +
+                  '<button class="btn btn-ghost btn-xs text-error" onclick="jbRemoveTable(\'' + tName + '\')">Remove</button>' +
+                '</div>' +
+              '</td>';
+            tbody.appendChild(row);
+          });
+        })
+        .catch(function(err){ console.error('Failed to load tables:', err); });
+    }
+
+    function jbViewDDL(tableName) {
+      document.getElementById('jbDdlViewer').classList.toggle('hidden');
+      document.getElementById('jbDdlContent').textContent =
+        '-- DDL for ' + tableName + '\n-- (DDL viewing requires fetching from DB or stored schema)';
+    }
+
+    function jbEditTable(tableName) {
+      window.open('/schema', '_blank');
+    }
+
+    function jbRemoveTable(tableName) {
+      alert('Remove table: ' + tableName + ' (not yet implemented)');
+    }
+
+    function jbImportDDL() {
+      window.open('/schema', '_blank');
+    }
+
+    function jbIntrospectDb() {
+      alert('Introspect DB for ' + currentTablesPanelOutputId + ' (not yet implemented)');
+    }
+
+    function jbAddTable() {
+      alert('Add table to ' + currentTablesPanelOutputId + ' (not yet implemented)');
+    }
+
+    // ===== Mapping Handling =====
+    function loadMappings() {
+      fetch('/api/mappings')
+        .then(function(r){ return r.json(); })
+        .then(function(mappings){
+          var list = Array.isArray(mappings) ? mappings : (mappings.mappings || []);
+          var select = document.getElementById('jbMappingSelect');
+          list.forEach(function(mapping){
+            var option = document.createElement('option');
+            option.value = mapping.id || mapping.name || '';
+            option.textContent = mapping.name || mapping.id || 'Unnamed';
+            select.appendChild(option);
+          });
+        })
+        .catch(function(err){ console.error('Failed to load mappings:', err); });
+    }
+
+    // ===== Save Job =====
+    function saveJob() {
+      var jobName = document.getElementById('jobName').value.trim();
+
+      if (!jobName) {
+        alert('Please enter a job name');
+        return;
+      }
+
+      if (!currentJobBuilder.sourceId || !currentJobBuilder.processType || !currentJobBuilder.outputId) {
+        alert('Please complete all 3 steps: Source, Process, and Output');
+        return;
+      }
+
+      var mappingId = document.getElementById('jbMappingSelect').value || null;
+      var threads = parseInt(document.getElementById('jbThreads').value, 10) || 4;
+      var attachmentsEnabled = currentJobBuilder.processType === 'DA';
+
+      var payload = {
+        name: jobName,
+        input_id: currentJobBuilder.sourceId,
+        process_type: currentJobBuilder.processType,
+        output_id: currentJobBuilder.outputId,
+        output_type: currentJobBuilder.outputType,
+        mapping_id: mappingId,
+        system: {
+          threads: threads,
+          attachments_enabled: attachmentsEnabled
+        }
+      };
+
+      var url = editingJobId ? '/api/v2/jobs/' + editingJobId : '/api/v2/jobs';
+      var method = editingJobId ? 'PUT' : 'POST';
+
+      fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      .then(function(r){
+        if (r.ok) {
+          showToast(editingJobId ? '✓ Job updated!' : '✓ Job saved!', 'success');
+          setTimeout(function(){
+            cancelJobBuilder();
+            loadJobs();
+          }, 1500);
+        } else {
+          return r.text().then(function(t){ alert('Failed to save job: ' + t); });
+        }
+      })
+      .catch(function(err){ alert('Error saving job: ' + err.message); });
+    }
+
+    // ===== Job Control =====
+    function startJob(jobId) {
+      fetch('/api/jobs/' + jobId + '/start', { method: 'POST' })
+        .then(function(r){ return r.json(); })
+        .then(function(){ showToast('Job started', 'success'); loadJobs(); })
+        .catch(function(err){ alert('Failed to start job: ' + err.message); });
+    }
+
+    function stopJob(jobId) {
+      if (!confirm('Stop this job gracefully?')) return;
+      fetch('/api/jobs/' + jobId + '/stop', { method: 'POST' })
+        .then(function(r){ return r.json(); })
+        .then(function(){ showToast('Job stopping...', 'success'); loadJobs(); })
+        .catch(function(err){ alert('Failed to stop job: ' + err.message); });
+    }
+
+    function restartJob(jobId) {
+      fetch('/api/jobs/' + jobId + '/restart', { method: 'POST' })
+        .then(function(r){ return r.json(); })
+        .then(function(){ showToast('Job restarting...', 'success'); loadJobs(); })
+        .catch(function(err){ alert('Failed to restart job: ' + err.message); });
+    }
+
+    function killJob(jobId) {
+      if (!confirm('KILL this job (non-graceful)? This may lose checkpoint progress.')) return;
+      fetch('/api/jobs/' + jobId + '/kill', { method: 'POST' })
+        .then(function(r){ return r.json(); })
+        .then(function(){ showToast('Job killed', 'success'); loadJobs(); })
+        .catch(function(err){ alert('Failed to kill job: ' + err.message); });
+    }
+
+    function editJob(jobId) {
+      // Strip job:: prefix for API call
+      var apiId = jobId.replace(/^job::/, '');
+      fetch('/api/v2/jobs/' + apiId)
+        .then(function(r){ return r.json(); })
+        .then(function(job){
+          if (job.error) { alert('Could not load job: ' + job.error); return; }
+
+          editingJobId = apiId;
+
+          // Open the builder panel
+          document.getElementById('jobBuilderContainer').classList.remove('hidden');
+          loadSourceCounts();
+          loadOutputCounts();
+
+          // Show View JSON link
+          var jsonLink = document.getElementById('jbViewJsonLink');
+          jsonLink.href = '/api/v2/jobs/' + encodeURIComponent(apiId);
+          jsonLink.classList.remove('hidden');
+
+          // Show Job ID (read-only)
+          document.getElementById('jbJobIdValue').textContent = job.id || apiId;
+          document.getElementById('jbJobIdDisplay').classList.remove('hidden');
+
+          // Populate job name (name only, not the ID)
+          document.getElementById('jobName').value = job.name || '';
+
+          // Populate source from job.inputs[0]
+          var inp = (job.inputs && job.inputs[0]) || {};
+          currentJobBuilder.sourceId = inp.id || null;
+          currentJobBuilder.sourceType = inp.source_type || null;
+          if (currentJobBuilder.sourceId) {
+            var srcLabel = (inp.name || inp.id || currentJobBuilder.sourceId);
+            if (currentJobBuilder.sourceType) srcLabel += ' (' + currentJobBuilder.sourceType + ')';
+            document.getElementById('jbSourceSelectedValue').textContent = srcLabel;
+            document.getElementById('jbSourceSelected').classList.remove('hidden');
+          }
+
+          // Populate process type from system config
+          var sys = job.system || {};
+          var attachCfg = sys.attachments || {};
+          var pType = (sys.attachments_enabled || attachCfg.enabled) ? 'DA' : 'D';
+          currentJobBuilder.processType = pType;
+          var radio = document.querySelector('input[name="processType"][value="' + pType + '"]');
+          if (radio) radio.checked = true;
+          document.getElementById('jbProcessSelectedValue').textContent =
+            pType === 'D' ? 'Data Only' : 'Data & Attachments';
+          document.getElementById('jbProcessSelected').classList.remove('hidden');
+          if (pType === 'DA') {
+            document.getElementById('jbAttachConfig').classList.remove('hidden');
+          }
+
+          // Populate threads
+          document.getElementById('jbThreads').value = sys.threads || sys.middleware_threads || 4;
+
+          // Populate Advanced fields from inputs[0].changes_feed
+          var cf = inp.changes_feed || {};
+          if (cf.feed_type) {
+            document.getElementById('jbFeedType').value = cf.feed_type;
+          }
+          if (cf.poll_interval_seconds != null) {
+            document.getElementById('jbPollInterval').value = cf.poll_interval_seconds;
+          }
+          if (cf.heartbeat_ms != null) {
+            document.getElementById('jbHeartbeat').value = cf.heartbeat_ms;
+          }
+          if (cf.timeout_ms != null) {
+            document.getElementById('jbTimeout').value = cf.timeout_ms;
+          }
+          if (cf.http_timeout_seconds != null) {
+            document.getElementById('jbHttpTimeout').value = cf.http_timeout_seconds;
+          }
+          if (cf.throttle_feed != null) {
+            document.getElementById('jbThrottleFeed').value = cf.throttle_feed;
+          }
+          if (cf.limit != null) {
+            document.getElementById('jbLimit').value = cf.limit;
+          }
+          if (cf.flood_threshold != null) {
+            document.getElementById('jbFloodThreshold').value = cf.flood_threshold;
+          }
+          if (cf.continuous_catchup_limit != null) {
+            document.getElementById('jbCatchupLimit').value = cf.continuous_catchup_limit;
+          }
+          document.getElementById('jbActiveOnly').checked = !!cf.active_only;
+          document.getElementById('jbIncludeDocs').checked = !!cf.include_docs;
+          document.getElementById('jbOptimizeSync').checked = !!cf.optimize_initial_sync;
+
+          // Populate output from job.outputs[0]
+          var out = (job.outputs && job.outputs[0]) || {};
+          currentJobBuilder.outputId = out.id || null;
+          currentJobBuilder.outputType = job.output_type || null;
+          if (currentJobBuilder.outputId) {
+            var outLabel = (out.name || out.id || currentJobBuilder.outputId);
+            if (currentJobBuilder.outputType) outLabel += ' (' + currentJobBuilder.outputType + ')';
+            document.getElementById('jbOutputSelectedValue').textContent = outLabel;
+            document.getElementById('jbOutputSelected').classList.remove('hidden');
+          }
+
+          // Populate mapping — try job.mapping, job.mapping_id, or job.mapping.name
+          var mappingSelect = document.getElementById('jbMappingSelect');
+          var mappingId = '';
+          if (job.mapping && typeof job.mapping === 'object') {
+            mappingId = job.mapping.id || job.mapping.name || '';
+          } else if (job.mapping && typeof job.mapping === 'string') {
+            mappingId = job.mapping;
+          }
+          if (!mappingId) mappingId = job.mapping_id || '';
+          // Try to match by value in the dropdown options
+          if (mappingId) {
+            mappingSelect.value = mappingId;
+            // If value didn't match, try matching by text content
+            if (!mappingSelect.value || mappingSelect.value === '') {
+              for (var i = 0; i < mappingSelect.options.length; i++) {
+                if (mappingSelect.options[i].text === mappingId ||
+                    mappingSelect.options[i].value === mappingId) {
+                  mappingSelect.selectedIndex = i;
+                  break;
+                }
+              }
+            }
+          }
+
+          updateStepIndicators();
+
+          // Scroll to builder
+          document.getElementById('jobBuilderContainer').scrollIntoView({ behavior: 'smooth' });
+        })
+        .catch(function(err){ alert('Error loading job: ' + err.message); });
+    }
+
+    function deleteJob(jobId) {
+      if (!confirm('Are you sure you want to delete this job?')) return;
+      fetch('/api/v2/jobs/' + jobId, { method: 'DELETE' })
+        .then(function(r){ return r.json(); })
+        .then(function(){ showToast('Job deleted', 'success'); loadJobs(); })
+        .catch(function(err){ alert('Failed to delete job: ' + err.message); });
+    }
+
+    // ===== Init =====
+    document.addEventListener('DOMContentLoaded', function(){
+      loadJobs();
+      loadMappings();
+      loadSourceCounts();
+      loadOutputCounts();
+
+      // Auto-open editor if ?edit=jobId in URL
+      var params = new URLSearchParams(window.location.search);
+      var editId = params.get('edit');
+      if (editId) {
+        editJob(editId);
+      }
+    });
+  </script>
+</body>
+</html>

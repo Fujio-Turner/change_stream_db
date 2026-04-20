@@ -6,6 +6,22 @@
 
 ---
 
+## 📋 JSON Schema Standards
+
+**All v2.0 documents must follow the [JSON Schema Standards Guide](../guides/JSON_SCHEMA.md).**
+
+Key standards:
+- **Field naming:** Mandatory `snake_case` (no camelCase, no PascalCase)
+- **Reserved fields:** `_` prefix forbidden at top level except `meta` container
+- **DateTime:** Unix epoch for perf-critical fields, ISO-8601 for UI/readability
+- **Enums:** Always lowercase with underscores (e.g., `"sequential"`, `"halt"`)
+- **Metadata:** Use `meta` field for application-level metadata (updated_at, saved_at, etc.)
+- **Field order:** type/id → config → timestamps → meta
+
+**All document schemas in v2.0 must pass validation against JSON Schema definitions in [`json_schema/changes-worker/`](../json_schema/changes-worker/).**
+
+---
+
 ## 🎯 Phases Summary
 
 **Phase 1** ✅ — CBL Schema & `cbl_store.py` Updates  

@@ -374,7 +374,12 @@ class AttachmentProcessor:
                 )
                 resp = None
                 try:
-                    resp = await http.request("GET", url, auth=auth, headers=headers)
+                    resp = await http.request(
+                        "GET",
+                        url,
+                        auth=auth,
+                        headers=headers,
+                    )
                     result = await self._streamer.stream_attachment(
                         doc, name, stub, resp
                     )
