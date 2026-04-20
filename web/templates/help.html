@@ -241,6 +241,37 @@
           </table>
         </div>
         <p class="text-sm opacity-60 mt-3">Each DLQ entry includes: <code>doc_id</code>, <code>seq</code>, <code>method</code>, <code>status</code>, <code>error</code>, <code>timestamp</code>, and full <code>doc</code> body. The DLQ is <strong>not automatically drained</strong> — an operator or external process must replay failed entries.</p>
+
+        <div class="divider my-4"></div>
+
+        <h3 class="text-lg font-semibold mb-2">How DLQ Handles Documents with Attachments</h3>
+        <p class="text-sm opacity-80 mb-3">When attachments processing is enabled and a document with attachments fails to deliver:</p>
+        
+        <div class="alert alert-info my-3">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+          <div>
+            <strong>Binary attachments are NOT stored in DLQ.</strong> Only metadata goes in. Actual attachment binaries remain safely in their original locations (S3, storage destination, and Sync Gateway).
+          </div>
+        </div>
+
+        <table class="table table-sm text-sm">
+          <thead><tr><th>Failure Type</th><th>What's in DLQ</th><th>Attachment Binaries</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>Attachment upload fails</strong><br/><span class="opacity-60">(fetch or S3 upload error)</span></td>
+              <td>Temp file path, error details, metadata</td>
+              <td>Kept in <code>temp_dir</code> for replay</td>
+            </tr>
+            <tr>
+              <td><strong>Document output fails</strong><br/><span class="opacity-60">(after attachments uploaded successfully)</span></td>
+              <td>Document with <code>attachments_external</code> URLs (metadata only, ~KB per attachment)</td>
+              <td>Already in S3 + originals in Sync Gateway</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p class="text-sm opacity-70 mt-3"><strong>Example:</strong> A document with 5×10MB attachments fails output delivery after attachments are uploaded. DLQ stores the document with attachment URLs (~1KB per attachment), not the 50MB binaries. Originals remain in Sync Gateway.</p>
+        <p class="text-sm opacity-70"><strong>On replay:</strong> DLQ entry is retransmitted to the output endpoint. If attachments were uploaded, the endpoint receives the same <code>attachments_external</code> field pointing to S3.</p>
       </div>
     </div>
 

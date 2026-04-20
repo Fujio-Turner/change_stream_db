@@ -650,6 +650,7 @@
        <div id="csQuestionCard" class="card bg-base-100 shadow-sm rounded-2xl">
          <div class="card-body">
            <h2 id="csQuestionTitle" class="text-lg font-bold mb-4"></h2>
+           <div id="csNoteContainer" class="mb-3"></div>
            <div id="csChoices" class="flex flex-col gap-3"></div>
          </div>
        </div>
@@ -2013,6 +2014,7 @@ var SW_ATTACH = [
       { label: 'Save to DLQ', value: 'dlq', description: 'Failed docs are saved to a dead-letter queue for later inspection/replay. Processing continues with other docs.' },
       { label: 'Drop and discard', value: 'skip', description: 'Drop failed docs without saving. Processing continues with other docs.' }
     ],
+    note: '⚠️ <strong>Important:</strong> When documents with large attachments fail <em>after</em> attachments are uploaded to S3, only metadata (URLs) is stored in the DLQ—not the binary files. Attachment binaries remain safely in S3 and originals in Sync Gateway.',
     followup: {
       dlq: {
         id: 'attach_dlq_retention',
@@ -2493,28 +2495,36 @@ function swGetQuestions() {
  }
 
  function csRenderQuestion() {
-   var q = CS_QUESTIONS[csCurrentQ];
-   document.getElementById('csProgress').textContent = 'Question ' + (csCurrentQ + 1) + ' of ' + CS_QUESTIONS.length;
-   document.getElementById('csProgressBar').style.width = (((csCurrentQ + 1) / CS_QUESTIONS.length) * 100) + '%';
-   document.getElementById('csQuestionTitle').textContent = q.title;
-   document.getElementById('csBtnPrev').disabled = (csCurrentQ === 0);
+    var q = CS_QUESTIONS[csCurrentQ];
+    document.getElementById('csProgress').textContent = 'Question ' + (csCurrentQ + 1) + ' of ' + CS_QUESTIONS.length;
+    document.getElementById('csProgressBar').style.width = (((csCurrentQ + 1) / CS_QUESTIONS.length) * 100) + '%';
+    document.getElementById('csQuestionTitle').textContent = q.title;
+    document.getElementById('csBtnPrev').disabled = (csCurrentQ === 0);
 
-   var selected = csAnswers[q.id] || null;
-   var html = '';
-   for (var i = 0; i < q.choices.length; i++) {
-     var c = q.choices[i];
-     var isSelected = selected === c.value;
-     var btnClass = 'btn btn-lg justify-start gap-3 text-left' + (isSelected ? ' btn-primary' : ' btn-outline');
-     html += '<button class="' + btnClass + '" onclick="csSelectAnswer(\'' + esc(q.id) + '\',\'' + esc(c.value) + '\')">' +
-       '<div><div class="font-bold">' + esc(c.label) + '</div>' +
-       '<div class="text-xs opacity-80 font-normal">' + c.description + '</div></div></button>';
-   }
-   document.getElementById('csChoices').innerHTML = html;
+    // Show optional note/warning above choices
+    var noteHtml = '';
+    if (q.note) {
+      noteHtml = '<div class="alert alert-warning text-sm mb-4"><div>' + q.note + '</div></div>';
+    }
+    var noteContainer = document.getElementById('csNoteContainer');
+    if (noteContainer) noteContainer.innerHTML = noteHtml;
 
-   var nextBtn = document.getElementById('csBtnNext');
-   if (selected) nextBtn.classList.remove('hidden');
-   else nextBtn.classList.add('hidden');
- }
+    var selected = csAnswers[q.id] || null;
+    var html = '';
+    for (var i = 0; i < q.choices.length; i++) {
+      var c = q.choices[i];
+      var isSelected = selected === c.value;
+      var btnClass = 'btn btn-lg justify-start gap-3 text-left' + (isSelected ? ' btn-primary' : ' btn-outline');
+      html += '<button class="' + btnClass + '" onclick="csSelectAnswer(\'' + esc(q.id) + '\',\'' + esc(c.value) + '\')">' +
+        '<div><div class="font-bold">' + esc(c.label) + '</div>' +
+        '<div class="text-xs opacity-80 font-normal">' + c.description + '</div></div></button>';
+    }
+    document.getElementById('csChoices').innerHTML = html;
+
+    var nextBtn = document.getElementById('csBtnNext');
+    if (selected) nextBtn.classList.remove('hidden');
+    else nextBtn.classList.add('hidden');
+  }
 
  function csSelectAnswer(qId, value) {
    csAnswers[qId] = value;
