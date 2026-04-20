@@ -98,8 +98,15 @@
              <p class="text-sm opacity-60">Connect source, configure output, map fields</p>
            </div>
          </div>
-       </div>
-      </div>
+         <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startJobsManager()">
+           <div class="card-body items-center text-center">
+             <span class="text-5xl mb-3">🎯</span>
+             <h2 class="card-title text-lg">Jobs</h2>
+             <p class="text-sm opacity-60">Manage pipeline jobs (Phase 5B)</p>
+           </div>
+         </div>
+         </div>
+         </div>
 
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- SETTINGS WIZARD                                        -->
@@ -1518,7 +1525,121 @@
 
     </div><!-- /mappingWizard -->
 
-<script>
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- JOBS MANAGER (Phase 5B)                                 -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div id="jobsManager" class="hidden max-w-5xl mx-auto">
+     <div class="flex items-center justify-between mb-4">
+       <button class="btn btn-ghost btn-sm" onclick="jobsHideManager()">← Back to Wizards</button>
+       <span class="text-sm opacity-60">Jobs Manager (Phase 5B)</span>
+     </div>
+
+     <!-- Jobs List Card -->
+     <div id="jobsListCard" class="card bg-base-100 shadow-sm rounded-2xl mb-6 border-l-4 border-warning">
+       <div class="card-body">
+         <div class="flex items-center justify-between mb-3">
+           <h3 class="text-lg font-bold">🎯 Pipeline Jobs</h3>
+           <span id="jobsCount" class="badge badge-warning text-xs">0 jobs</span>
+         </div>
+         
+         <!-- Jobs Table -->
+         <div class="overflow-x-auto">
+           <table class="table table-xs table-zebra w-full">
+             <thead>
+               <tr class="bg-base-200">
+                 <th class="text-xs font-semibold">Job ID</th>
+                 <th class="text-xs font-semibold">Name</th>
+                 <th class="text-xs font-semibold">System</th>
+                 <th class="text-xs font-semibold">Input</th>
+                 <th class="text-xs font-semibold">Output</th>
+                 <th class="text-xs font-semibold">Fields</th>
+                 <th class="text-xs font-semibold text-right">Actions</th>
+               </tr>
+             </thead>
+             <tbody id="jobsTableBody">
+               <tr><td colspan="7" class="text-center opacity-60">Loading jobs...</td></tr>
+             </tbody>
+           </table>
+         </div>
+
+         <!-- Action Buttons -->
+         <div class="mt-4 flex gap-2">
+           <button class="btn btn-primary btn-sm" onclick="jobsAddNew()">+ Create Job</button>
+           <button class="btn btn-ghost btn-sm" onclick="jobsLoadList()">Refresh</button>
+         </div>
+       </div>
+     </div>
+
+     <!-- Create/Edit Job Form Card -->
+     <div id="jobsFormCard" class="hidden card bg-base-100 shadow-sm rounded-2xl mb-6">
+       <div class="card-body">
+         <h2 id="jobsFormTitle" class="text-xl font-bold mb-4">Create Job</h2>
+         
+         <div class="space-y-4">
+           <!-- Job ID & Name -->
+           <div class="grid grid-cols-2 gap-4">
+             <div>
+               <label class="label"><span class="label-text font-semibold">Job ID</span></label>
+               <input id="jobsFormJobId" type="text" class="input input-bordered w-full text-sm" placeholder="auto-generated" />
+             </div>
+             <div>
+               <label class="label"><span class="label-text font-semibold">Job Name</span></label>
+               <input id="jobsFormName" type="text" class="input input-bordered w-full" placeholder="e.g., Orders Export" />
+             </div>
+           </div>
+
+           <!-- Input Selection -->
+           <div>
+             <label class="label"><span class="label-text font-semibold">Select Input (Source)</span></label>
+             <select id="jobsFormInput" class="select select-bordered w-full">
+               <option value="">Choose input...</option>
+             </select>
+           </div>
+
+           <!-- Output Type & Selection -->
+           <div class="grid grid-cols-2 gap-4">
+             <div>
+               <label class="label"><span class="label-text font-semibold">Output Type</span></label>
+               <select id="jobsFormOutputType" class="select select-bordered w-full" onchange="jobsChangeOutputType()">
+                 <option value="rdbms">RDBMS</option>
+                 <option value="http">HTTP</option>
+                 <option value="cloud">Cloud Storage</option>
+                 <option value="stdout">Stdout</option>
+               </select>
+             </div>
+             <div>
+               <label class="label"><span class="label-text font-semibold">Select Output</span></label>
+               <select id="jobsFormOutput" class="select select-bordered w-full">
+                 <option value="">Choose output...</option>
+               </select>
+             </div>
+           </div>
+
+           <!-- Mapping & System -->
+           <div class="grid grid-cols-2 gap-4">
+             <div>
+               <label class="label"><span class="label-text font-semibold">Field Mapping</span></label>
+               <select id="jobsFormMapping" class="select select-bordered w-full">
+                 <option value="">No mapping</option>
+               </select>
+             </div>
+             <div>
+               <label class="label"><span class="label-text font-semibold">System Configuration</span></label>
+               <input id="jobsFormSystem" type="text" class="input input-bordered w-full" placeholder="default" />
+             </div>
+           </div>
+
+           <!-- Save & Cancel Buttons -->
+           <div class="flex gap-2 mt-6">
+             <button class="btn btn-success" onclick="jobsSaveJob()">Save Job</button>
+             <button class="btn btn-ghost" onclick="jobsResetForm()">Cancel</button>
+           </div>
+         </div>
+       </div>
+     </div>
+    </div>
+
+    <script>
 // ── Utility ──────────────────────────────────────────────────
 function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
@@ -1526,13 +1647,25 @@ function esc(s) { var d = document.createElement('div'); d.textContent = s || ''
 var wizardMode = 'landing';
 
 function showWizardLanding() {
-  wizardMode = 'landing';
-  document.getElementById('wizardLanding').classList.remove('hidden');
-  document.getElementById('settingsWizard').classList.add('hidden');
-  document.getElementById('mappingWizard').classList.add('hidden');
-  document.getElementById('cloudStorageWizard').classList.add('hidden');
-  document.getElementById('sourceWizard').classList.add('hidden');
-  document.getElementById('rdbmsSchemaWizard').classList.add('hidden');
+   wizardMode = 'landing';
+   document.getElementById('wizardLanding').classList.remove('hidden');
+   document.getElementById('settingsWizard').classList.add('hidden');
+   document.getElementById('mappingWizard').classList.add('hidden');
+   document.getElementById('cloudStorageWizard').classList.add('hidden');
+   document.getElementById('sourceWizard').classList.add('hidden');
+   document.getElementById('rdbmsSchemaWizard').classList.add('hidden');
+   document.getElementById('jobsManager').classList.add('hidden');
+}
+
+function hideAllWizards() {
+   document.getElementById('wizardLanding').classList.add('hidden');
+   document.getElementById('settingsWizard').classList.add('hidden');
+   document.getElementById('mappingWizard').classList.add('hidden');
+   document.getElementById('cloudStorageWizard').classList.add('hidden');
+   document.getElementById('sourceWizard').classList.add('hidden');
+   document.getElementById('rdbmsSchemaWizard').classList.add('hidden');
+   document.getElementById('inputsWizard').classList.add('hidden');
+   document.getElementById('outputsWizard').classList.add('hidden');
 }
 
  function startSettingsWizard() {
@@ -5081,6 +5214,278 @@ function outputsClearAll(type) {
     .then(r => r.json())
     .then(() => outputsLoadExisting(type))
     .catch(e => console.error('Error clearing outputs', e));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// JOBS MANAGER (Phase 5B)
+// ═══════════════════════════════════════════════════════════════
+
+async function startJobsManager() {
+  hideAllWizards();
+  document.getElementById('jobsManager').classList.remove('hidden');
+  jobsLoadList();
+  jobsResetForm();
+}
+
+function jobsHideManager() {
+  showWizardLanding();
+  document.getElementById('jobsManager').classList.add('hidden');
+}
+
+let jobsState = {
+  jobs: [],
+  inputs: [],
+  outputs: { rdbms: [], http: [], cloud: [], stdout: [] },
+  mappings: [],
+  currentJob: null,
+  isEditing: false
+};
+
+async function jobsLoadList() {
+  try {
+    const resp = await fetch('/api/jobs');
+    const data = await resp.json();
+    jobsState.jobs = data.jobs || [];
+    jobsRenderList();
+  } catch (e) {
+    showToast('Error loading jobs: ' + e.message, 'error');
+  }
+}
+
+async function jobsLoadInputs() {
+  try {
+    const resp = await fetch('/api/inputs');
+    const data = await resp.json();
+    jobsState.inputs = data.inputs || [];
+  } catch (e) {
+    showToast('Error loading inputs: ' + e.message, 'error');
+  }
+}
+
+async function jobsLoadOutputs(outputType) {
+  try {
+    const resp = await fetch('/api/outputs/' + outputType);
+    const data = await resp.json();
+    jobsState.outputs[outputType] = data[outputType] || [];
+  } catch (e) {
+    showToast('Error loading outputs: ' + e.message, 'error');
+  }
+}
+
+async function jobsLoadMappings() {
+  try {
+    const resp = await fetch('/api/mappings');
+    const data = await resp.json();
+    jobsState.mappings = data.mappings || [];
+  } catch (e) {
+    showToast('Error loading mappings: ' + e.message, 'error');
+  }
+}
+
+function jobsRenderList() {
+  const tbody = document.getElementById('jobsTableBody');
+  tbody.innerHTML = '';
+  
+  if (jobsState.jobs.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center opacity-60">No jobs yet. Create one to get started.</td></tr>';
+    document.getElementById('jobsCount').textContent = '0 jobs';
+    return;
+  }
+  
+  jobsState.jobs.forEach(job => {
+    const row = document.createElement('tr');
+    const inputName = jobsState.inputs.find(i => i.input_id === job.input_id)?.name || job.input_id;
+    const outputType = job.output_type || 'unknown';
+    const fieldCount = Object.keys(job.mapping || {}).length;
+    
+    row.innerHTML = `
+      <td class="font-mono text-xs">${job.job_id.slice(0,8)}...</td>
+      <td>${job.name || '(unnamed)'}</td>
+      <td><span class="badge badge-sm">${job.system || 'default'}</span></td>
+      <td>${inputName}</td>
+      <td><span class="badge badge-outline">${outputType}</span></td>
+      <td class="text-xs">${fieldCount} fields</td>
+      <td>
+        <button class="btn btn-xs btn-ghost" onclick="jobsEditJob('${job.job_id}')">Edit</button>
+        <button class="btn btn-xs btn-error btn-ghost" onclick="jobsDeleteJob('${job.job_id}')">Delete</button>
+      </td>
+    `;
+    tbody.appendChild(row);
+  });
+  
+  document.getElementById('jobsCount').textContent = jobsState.jobs.length + ' job' + (jobsState.jobs.length !== 1 ? 's' : '');
+}
+
+function jobsResetForm() {
+  jobsState.currentJob = null;
+  jobsState.isEditing = false;
+  document.getElementById('jobsFormCard').classList.add('hidden');
+  document.getElementById('jobsListCard').classList.remove('hidden');
+}
+
+async function jobsAddNew() {
+  jobsState.currentJob = {
+    job_id: 'job_' + Date.now(),
+    name: '',
+    input_id: '',
+    output_type: 'rdbms',
+    output_id: '',
+    mapping: {},
+    system: 'default',
+    enabled: true
+  };
+  jobsState.isEditing = false;
+  
+  // Load dropdowns
+  await Promise.all([
+    jobsLoadInputs(),
+    jobsLoadMappings(),
+    jobsLoadOutputs('rdbms')
+  ]);
+  
+  jobsShowForm();
+}
+
+async function jobsEditJob(jobId) {
+  const job = jobsState.jobs.find(j => j.job_id === jobId);
+  if (!job) {
+    showToast('Job not found', 'error');
+    return;
+  }
+  
+  jobsState.currentJob = JSON.parse(JSON.stringify(job));
+  jobsState.isEditing = true;
+  
+  // Load all data
+  await Promise.all([
+    jobsLoadInputs(),
+    jobsLoadMappings(),
+    jobsLoadOutputs(job.output_type || 'rdbms')
+  ]);
+  
+  jobsShowForm();
+}
+
+function jobsShowForm() {
+  document.getElementById('jobsListCard').classList.add('hidden');
+  document.getElementById('jobsFormCard').classList.remove('hidden');
+  jobsRenderForm();
+}
+
+function jobsRenderForm() {
+  const job = jobsState.currentJob;
+  const title = jobsState.isEditing ? 'Edit Job' : 'Create Job';
+  
+  document.getElementById('jobsFormTitle').textContent = title;
+  document.getElementById('jobsFormJobId').value = job.job_id;
+  document.getElementById('jobsFormJobId').disabled = jobsState.isEditing;
+  document.getElementById('jobsFormName').value = job.name || '';
+  
+  // Populate input dropdown
+  const inputSel = document.getElementById('jobsFormInput');
+  inputSel.innerHTML = '<option value="">Choose input...</option>';
+  jobsState.inputs.forEach(inp => {
+    const opt = document.createElement('option');
+    opt.value = inp.input_id;
+    opt.textContent = inp.name || inp.input_id;
+    if (inp.input_id === job.input_id) opt.selected = true;
+    inputSel.appendChild(opt);
+  });
+  
+  // Output type selector
+  const typeSel = document.getElementById('jobsFormOutputType');
+  typeSel.value = job.output_type || 'rdbms';
+  
+  // Populate output dropdown
+  const outputSel = document.getElementById('jobsFormOutput');
+  const outputs = jobsState.outputs[job.output_type || 'rdbms'] || [];
+  outputSel.innerHTML = '<option value="">Choose output...</option>';
+  outputs.forEach(out => {
+    const key = job.output_type === 'http' ? 'output_id' : 
+               job.output_type === 'cloud' ? 'output_id' : 'output_id';
+    const outId = out[key] || out.output_id;
+    const outName = out.name || outId;
+    const opt = document.createElement('option');
+    opt.value = outId;
+    opt.textContent = outName;
+    if (outId === job.output_id) opt.selected = true;
+    outputSel.appendChild(opt);
+  });
+  
+  // Populate mappings dropdown
+  const mapSel = document.getElementById('jobsFormMapping');
+  mapSel.innerHTML = '<option value="">No mapping</option>';
+  jobsState.mappings.forEach(map => {
+    const opt = document.createElement('option');
+    opt.value = map._id;
+    opt.textContent = map.name || map._id;
+    if (map._id === job.mapping_id) opt.selected = true;
+    mapSel.appendChild(opt);
+  });
+  
+  document.getElementById('jobsFormSystem').value = job.system || 'default';
+}
+
+async function jobsChangeOutputType() {
+  const type = document.getElementById('jobsFormOutputType').value;
+  jobsState.currentJob.output_type = type;
+  jobsState.currentJob.output_id = '';
+  await jobsLoadOutputs(type);
+  jobsRenderForm();
+}
+
+async function jobsSaveJob() {
+  const job = jobsState.currentJob;
+  
+  // Validate
+  if (!job.name) { showToast('Job name required', 'error'); return; }
+  if (!job.input_id) { showToast('Input required', 'error'); return; }
+  if (!job.output_id) { showToast('Output required', 'error'); return; }
+  
+  // Update system field
+  job.system = document.getElementById('jobsFormSystem').value || 'default';
+  
+  try {
+    const url = jobsState.isEditing ? `/api/jobs/${job.job_id}` : '/api/jobs';
+    const method = jobsState.isEditing ? 'PUT' : 'POST';
+    
+    const resp = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(job)
+    });
+    
+    const data = await resp.json();
+    if (!data.ok) {
+      showToast('Error saving job: ' + (data.error || 'Unknown error'), 'error');
+      return;
+    }
+    
+    showToast(jobsState.isEditing ? 'Job updated' : 'Job created', 'success');
+    await jobsLoadList();
+    jobsResetForm();
+  } catch (e) {
+    showToast('Error saving job: ' + e.message, 'error');
+  }
+}
+
+async function jobsDeleteJob(jobId) {
+  if (!confirm('Delete job and its checkpoint? This cannot be undone.')) return;
+  
+  try {
+    const resp = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
+    const data = await resp.json();
+    
+    if (!data.ok) {
+      showToast('Error deleting job: ' + (data.error || 'Unknown error'), 'error');
+      return;
+    }
+    
+    showToast('Job deleted', 'success');
+    await jobsLoadList();
+  } catch (e) {
+    showToast('Error deleting job: ' + e.message, 'error');
+  }
 }
 
 // ── Init ─────────────────────────────────────────────────────
