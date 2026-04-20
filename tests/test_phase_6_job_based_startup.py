@@ -49,18 +49,19 @@ class TestLoadEnabledJobs(unittest.TestCase):
         self.assertEqual(jobs[1]["_id"], "job3")
 
     def test_load_enabled_jobs_handles_missing_enabled_field(self):
-        """Test that jobs without 'enabled' field default to False"""
+        """Test that jobs without 'enabled' field default to True"""
         db = Mock()
         db.list_jobs.return_value = [
             {"_id": "job1", "name": "Job 1", "enabled": True},
-            {"_id": "job2", "name": "Job 2"},  # No 'enabled' field
+            {"_id": "job2", "name": "Job 2"},  # No 'enabled' field — defaults to True
         ]
 
         jobs = load_enabled_jobs(db)
 
-        # Only job1 (with enabled=True) should be returned
-        self.assertEqual(len(jobs), 1)
+        # Both jobs should be returned (missing 'enabled' defaults to True)
+        self.assertEqual(len(jobs), 2)
         self.assertEqual(jobs[0]["_id"], "job1")
+        self.assertEqual(jobs[1]["_id"], "job2")
 
     def test_load_enabled_jobs_handles_error(self):
         """Test error handling when list_jobs fails"""
