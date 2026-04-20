@@ -337,7 +337,12 @@ async def _fetch_docs_bulk_get(
     metrics: MetricsCollector | None = None,
 ) -> list[dict]:
     """Fetch full docs via _bulk_get (Sync Gateway / App Services)."""
-    docs_req = [{"id": r["id"], "rev": r["changes"][0]["rev"]} for r in rows]
+    docs_req = []
+    docs_req_ids: set[str] = set()
+    for row in rows:
+        doc_id = row["id"]
+        docs_req_ids.add(doc_id)
+        docs_req.append({"id": doc_id, "rev": row["changes"][0]["rev"]})
     if not docs_req:
         return []
     url = f"{base_url}/_bulk_get?revs=false"
@@ -351,14 +356,15 @@ async def _fetch_docs_bulk_get(
         doc_count=requested_count,
     )
     # DEBUG: log the individual _id,_rev pairs being requested
-    for dr in docs_req:
-        log_event(
-            logger,
-            "debug",
-            "HTTP",
-            "_bulk_get request item",
-            doc_id=dr["id"],
-        )
+    if logger.isEnabledFor(logging.DEBUG):
+        for dr in docs_req:
+            log_event(
+                logger,
+                "debug",
+                "HTTP",
+                "_bulk_get request item",
+                doc_id=dr["id"],
+            )
     ic(url, requested_count)
     t0 = time.monotonic()
     resp = await http.request(
@@ -428,14 +434,17 @@ async def _fetch_docs_bulk_get(
         input_count=requested_count,
         bytes=response_bytes,
     )
-    for doc in results:
-        log_event(
-            logger,
-            "debug",
-            "HTTP",
-            "_bulk_get result doc",
-            doc_id=doc.get("_id", ""),
-        )
+    if logger.isEnabledFor(logging.DEBUG):
+        for doc in results:
+            log_event(
+                logger,
+                "debug",
+                "HTTP",
+                "_bulk_get result doc",
+                doc_id=doc.get("_id", ""),
+            )
+
+    returned_ids = {doc.get("_id", "") for doc in results if doc.get("_id")}
 
     # -- Verify we got all requested docs back --
     returned_count = len(results)
@@ -453,8 +462,8 @@ async def _fetch_docs_bulk_get(
         )
 
         # Determine which doc IDs are missing
-        returned_ids = {doc.get("_id", "") for doc in results}
-        missing_rows = [r for r in rows if r["id"] not in returned_ids]
+        missing_ids = docs_req_ids - returned_ids
+        missing_rows = [r for r in rows if r["id"] in missing_ids]
 
         ic("bulk_get: fetching missing docs individually", len(missing_rows))
 
@@ -586,6 +595,9 @@ async def _fetch_docs_individually(
 # Helpers: shared batch processing & continuous feed
 # ---------------------------------------------------------------------------
 
+# Pre-compiled regex for _parse_seq_number — avoids re-compiling on every call
+_SEQ_SPLIT_RE = re.compile(r"[:\-]")
+
 
 def _parse_seq_number(seq) -> int:
     """Extract the numeric portion of a sequence value for comparison.
@@ -599,7 +611,7 @@ def _parse_seq_number(seq) -> int:
     """
     s = str(seq)
     # Split on both ":" (SG compound) and "-" (CouchDB opaque) delimiters
-    parts = re.split(r"[:\-]", s)
+    parts = _SEQ_SPLIT_RE.split(s)
     best = 0
     for part in parts:
         try:
@@ -791,10 +803,12 @@ async def _process_changes_batch(
 
     if not results:
         new_since = str(last_seq)
-        await checkpoint.save(new_since, http, base_url, basic_auth, auth_headers)
-        if metrics:
-            metrics.inc("checkpoint_saves_total")
-            metrics.set("checkpoint_seq", new_since)
+        # Skip checkpoint save if sequence hasn't changed (eliminates ~8,640 PUTs/day on idle feeds)
+        if new_since != checkpoint.seq:
+            await checkpoint.save(new_since, http, base_url, basic_auth, auth_headers)
+            if metrics:
+                metrics.inc("checkpoint_saves_total")
+                metrics.set("checkpoint_seq", new_since)
         return new_since, False
 
     if metrics and len(results) >= metrics.flood_threshold:
@@ -1202,7 +1216,7 @@ async def _process_changes_batch(
         _job = job_id or getattr(checkpoint, "_client_id", "")
         dlq.flush_insert_meta(_job)
         if metrics:
-            metrics.set("dlq_pending_count", len(dlq.list_pending()))
+            metrics.set("dlq_pending_count", dlq.pending_count())
 
     output.log_stats()
 
