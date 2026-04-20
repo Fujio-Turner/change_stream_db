@@ -28,10 +28,35 @@ except ImportError:
 CBL_DB_DIR = os.environ.get("CBL_DB_DIR", "/app/data")
 CBL_DB_NAME = os.environ.get("CBL_DB_NAME", "changes_worker_db")
 CBL_SCOPE = "changes-worker"
-COLL_CONFIG = "config"
+
+# ── Collections (v2.0) ────────────────────────────────────────
+# Pipeline Collections (core data model)
+COLL_INPUTS_CHANGES = "inputs_changes"
+COLL_OUTPUTS_RDBMS = "outputs_rdbms"
+COLL_OUTPUTS_HTTP = "outputs_http"
+COLL_OUTPUTS_CLOUD = "outputs_cloud"
+COLL_OUTPUTS_STDOUT = "outputs_stdout"
+COLL_JOBS = "jobs"
+
+# Runtime Collections
 COLL_CHECKPOINTS = "checkpoints"
-COLL_MAPPINGS = "mappings"
 COLL_DLQ = "dlq"
+COLL_DATA_QUALITY = "data_quality"
+COLL_ENRICHMENTS = "enrichments"
+
+# Infrastructure Collections
+COLL_CONFIG = "config"
+
+# Auth & Identity Collections (future)
+COLL_USERS = "users"
+COLL_SESSIONS = "sessions"
+
+# Observability Collections (future)
+COLL_AUDIT_LOG = "audit_log"
+COLL_NOTIFICATIONS = "notifications"
+
+# Legacy (phased out)
+COLL_MAPPINGS = "mappings"  # Deprecated — mappings now embedded in jobs
 
 
 def configure_cbl(db_dir: str | None = None, db_name: str | None = None) -> None:
@@ -470,11 +495,29 @@ class CBLStore:
             "db_path": _db_file_path(),
             "db_size_mb": _db_size_mb(),
             "scope": CBL_SCOPE,
-            "collections": [COLL_CONFIG, COLL_CHECKPOINTS, COLL_MAPPINGS, COLL_DLQ],
+            "collections": [
+                COLL_CONFIG,
+                COLL_INPUTS_CHANGES,
+                COLL_OUTPUTS_RDBMS,
+                COLL_OUTPUTS_HTTP,
+                COLL_OUTPUTS_CLOUD,
+                COLL_OUTPUTS_STDOUT,
+                COLL_JOBS,
+                COLL_CHECKPOINTS,
+                COLL_DLQ,
+                COLL_DATA_QUALITY,
+                COLL_ENRICHMENTS,
+                COLL_SESSIONS,
+                COLL_USERS,
+                COLL_AUDIT_LOG,
+                COLL_NOTIFICATIONS,
+                COLL_MAPPINGS,
+            ],
             "config_exists": _coll_get_doc(self.db, COLL_CONFIG, "config") is not None,
             "mappings_count": len(
                 self._get_manifest(COLL_MAPPINGS, "manifest:mappings")
             ),
+            "jobs_count": len(self.list_jobs()),
             "dlq_count": self.dlq_count(),
             "checkpoint_manifest": len(
                 self._get_manifest(COLL_CHECKPOINTS, "manifest:checkpoints")
@@ -544,6 +587,7 @@ class CBLStore:
             doc = MutableDocument("config")
         doc["type"] = "config"
         doc["data"] = json.dumps(cfg)
+        doc["schema_version"] = "2.0"
         doc["updated_at"] = int(time.time())
         _coll_save_doc(self.db, COLL_CONFIG, doc)
         elapsed = (time.monotonic() - t0) * 1000
@@ -555,6 +599,7 @@ class CBLStore:
             operation="INSERT" if elapsed else "UPDATE",
             doc_id="config",
             doc_type="config",
+            schema_version="2.0",
             duration_ms=round(elapsed, 1),
         )
 
@@ -1630,6 +1675,685 @@ class CBLStore:
         for op in ("compact", "optimize"):
             results[op] = getattr(self, op)()
         return results
+
+    # ── Inputs/Outputs (v2.0) ──────────────────────────────────
+
+    def load_inputs_changes(self) -> dict | None:
+        """Load input source definitions from 'inputs_changes' document."""
+        doc_id = "inputs_changes"
+        ic("load_inputs_changes: entry", doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_doc(self.db, COLL_INPUTS_CHANGES, doc_id)
+        elapsed = (time.monotonic() - t0) * 1000
+        if not doc:
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "inputs_changes not found",
+                operation="SELECT",
+                doc_id=doc_id,
+                doc_type="inputs_changes",
+                duration_ms=round(elapsed, 1),
+            )
+            return None
+        result = {
+            "type": doc.get("type", "inputs_changes"),
+            "src": list(doc.get("src") or []),
+        }
+        if "_meta" in doc:
+            result["_meta"] = dict(doc["_meta"])
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "inputs_changes loaded",
+            operation="SELECT",
+            doc_id=doc_id,
+            doc_type="inputs_changes",
+            duration_ms=round(elapsed, 1),
+        )
+        return result
+
+    def save_inputs_changes(self, data: dict) -> None:
+        """Save input source definitions to 'inputs_changes' document."""
+        doc_id = "inputs_changes"
+        ic("save_inputs_changes: entry", doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_mutable_doc(self.db, COLL_INPUTS_CHANGES, doc_id)
+        is_new = doc is None
+        if not doc:
+            doc = MutableDocument(doc_id)
+        doc["type"] = "inputs_changes"
+        doc["src"] = data.get("src", [])
+        doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if "_meta" in data:
+            doc["_meta"] = data["_meta"]
+        _coll_save_doc(self.db, COLL_INPUTS_CHANGES, doc)
+        elapsed = (time.monotonic() - t0) * 1000
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "inputs_changes saved",
+            operation="INSERT" if is_new else "UPDATE",
+            doc_id=doc_id,
+            doc_type="inputs_changes",
+            duration_ms=round(elapsed, 1),
+        )
+
+    def load_outputs(self, output_type: str) -> dict | None:
+        """Load output definitions for a given type (rdbms/http/cloud/stdout)."""
+        coll_map = {
+            "rdbms": COLL_OUTPUTS_RDBMS,
+            "http": COLL_OUTPUTS_HTTP,
+            "cloud": COLL_OUTPUTS_CLOUD,
+            "stdout": COLL_OUTPUTS_STDOUT,
+        }
+        if output_type not in coll_map:
+            raise ValueError(f"Invalid output_type: {output_type}")
+        coll_name = coll_map[output_type]
+        doc_id = f"outputs_{output_type}"
+        ic("load_outputs: entry", output_type, doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_doc(self.db, coll_name, doc_id)
+        elapsed = (time.monotonic() - t0) * 1000
+        if not doc:
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                f"outputs_{output_type} not found",
+                operation="SELECT",
+                doc_id=doc_id,
+                output_type=output_type,
+                duration_ms=round(elapsed, 1),
+            )
+            return None
+        result = {
+            "type": doc.get("type", f"outputs_{output_type}"),
+            "src": list(doc.get("src") or []),
+        }
+        if "_meta" in doc:
+            result["_meta"] = dict(doc["_meta"])
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            f"outputs_{output_type} loaded",
+            operation="SELECT",
+            doc_id=doc_id,
+            output_type=output_type,
+            duration_ms=round(elapsed, 1),
+        )
+        return result
+
+    def save_outputs(self, output_type: str, data: dict) -> None:
+        """Save output definitions for a given type (rdbms/http/cloud/stdout)."""
+        coll_map = {
+            "rdbms": COLL_OUTPUTS_RDBMS,
+            "http": COLL_OUTPUTS_HTTP,
+            "cloud": COLL_OUTPUTS_CLOUD,
+            "stdout": COLL_OUTPUTS_STDOUT,
+        }
+        if output_type not in coll_map:
+            raise ValueError(f"Invalid output_type: {output_type}")
+        coll_name = coll_map[output_type]
+        doc_id = f"outputs_{output_type}"
+        ic("save_outputs: entry", output_type, doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_mutable_doc(self.db, coll_name, doc_id)
+        is_new = doc is None
+        if not doc:
+            doc = MutableDocument(doc_id)
+        doc["type"] = f"outputs_{output_type}"
+        doc["src"] = data.get("src", [])
+        doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if "_meta" in data:
+            doc["_meta"] = data["_meta"]
+        _coll_save_doc(self.db, coll_name, doc)
+        elapsed = (time.monotonic() - t0) * 1000
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            f"outputs_{output_type} saved",
+            operation="INSERT" if is_new else "UPDATE",
+            doc_id=doc_id,
+            output_type=output_type,
+            duration_ms=round(elapsed, 1),
+        )
+
+    # ── Jobs (v2.0) ────────────────────────────────────────────
+
+    def load_job(self, job_id: str) -> dict | None:
+        """Load a job definition."""
+        doc_id = f"job::{job_id}"
+        ic("load_job: entry", job_id, doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_doc(self.db, COLL_JOBS, doc_id)
+        elapsed = (time.monotonic() - t0) * 1000
+        if not doc:
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "job not found",
+                operation="SELECT",
+                doc_id=doc_id,
+                job_id=job_id,
+                duration_ms=round(elapsed, 1),
+            )
+            return None
+        result = doc.properties.copy() if hasattr(doc, "properties") else dict(doc)
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "job loaded",
+            operation="SELECT",
+            doc_id=doc_id,
+            job_id=job_id,
+            duration_ms=round(elapsed, 1),
+        )
+        return result
+
+    def save_job(self, job_id: str, job_data: dict) -> None:
+        """Save a job definition."""
+        doc_id = f"job::{job_id}"
+        ic("save_job: entry", job_id, doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_mutable_doc(self.db, COLL_JOBS, doc_id)
+        is_new = doc is None
+        if not doc:
+            doc = MutableDocument(doc_id)
+        doc["type"] = "job"
+        doc["id"] = job_id
+        doc["inputs"] = job_data.get("inputs", [])
+        doc["outputs"] = job_data.get("outputs", [])
+        doc["output_type"] = job_data.get("output_type")
+        doc["system"] = job_data.get("system", {})
+        doc["state"] = job_data.get("state", {})
+        doc["created_at"] = job_data.get(
+            "created_at",
+            datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        )
+        doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if "_meta" in job_data:
+            doc["_meta"] = job_data["_meta"]
+        _coll_save_doc(self.db, COLL_JOBS, doc)
+        elapsed = (time.monotonic() - t0) * 1000
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "job saved",
+            operation="INSERT" if is_new else "UPDATE",
+            doc_id=doc_id,
+            job_id=job_id,
+            duration_ms=round(elapsed, 1),
+        )
+
+    def delete_job(self, job_id: str) -> None:
+        """Delete a job definition."""
+        doc_id = f"job::{job_id}"
+        ic("delete_job: entry", job_id, doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_doc(self.db, COLL_JOBS, doc_id)
+        elapsed = (time.monotonic() - t0) * 1000
+        if not doc:
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "job not found for delete",
+                operation="DELETE",
+                doc_id=doc_id,
+                job_id=job_id,
+                duration_ms=round(elapsed, 1),
+            )
+            return
+        _coll_purge_doc(self.db, COLL_JOBS, doc_id)
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "job deleted",
+            operation="DELETE",
+            doc_id=doc_id,
+            job_id=job_id,
+        )
+
+    def list_jobs(self) -> list[dict]:
+        """List all jobs with their IDs and types."""
+        ic("list_jobs: entry")
+        t0 = time.monotonic()
+        query = f"""
+            SELECT _id, type, id, state, created_at, updated_at
+            FROM {CBL_SCOPE}.{COLL_JOBS}
+            WHERE type = 'job'
+            ORDER BY updated_at DESC
+        """
+        results = _run_n1ql(self.db, query)
+        elapsed = (time.monotonic() - t0) * 1000
+        jobs = []
+        for row in results:
+            jobs.append(
+                {
+                    "doc_id": row.get("_id"),
+                    "type": row.get("type"),
+                    "id": row.get("id"),
+                    "state": row.get("state", {}),
+                    "created_at": row.get("created_at"),
+                    "updated_at": row.get("updated_at"),
+                }
+            )
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            f"listed {len(jobs)} jobs",
+            operation="SELECT",
+            doc_type="job",
+            count=len(jobs),
+            duration_ms=round(elapsed, 1),
+        )
+        return jobs
+
+    def update_job_state(self, job_id: str, state: dict) -> None:
+        """Update the runtime state of a job."""
+        doc_id = f"job::{job_id}"
+        ic("update_job_state: entry", job_id, doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_mutable_doc(self.db, COLL_JOBS, doc_id)
+        elapsed = (time.monotonic() - t0) * 1000
+        if not doc:
+            log_event(
+                logger,
+                "error",
+                "CBL",
+                "job not found for state update",
+                operation="UPDATE",
+                doc_id=doc_id,
+                job_id=job_id,
+            )
+            raise RuntimeError(f"Job {job_id} not found")
+        doc["state"] = state
+        doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        _coll_save_doc(self.db, COLL_JOBS, doc)
+        elapsed = (time.monotonic() - t0) * 1000
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "job state updated",
+            operation="UPDATE",
+            doc_id=doc_id,
+            job_id=job_id,
+            duration_ms=round(elapsed, 1),
+        )
+
+    # ── Checkpoints (v2.0) ─────────────────────────────────────
+
+    def load_checkpoint(self, job_id: str) -> dict | None:
+        """Load checkpoint for a specific job."""
+        doc_id = f"checkpoint::{job_id}"
+        ic("load_checkpoint: entry", job_id, doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_doc(self.db, COLL_CHECKPOINTS, doc_id)
+        elapsed = (time.monotonic() - t0) * 1000
+        if not doc:
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "checkpoint not found",
+                operation="SELECT",
+                doc_id=doc_id,
+                job_id=job_id,
+                duration_ms=round(elapsed, 1),
+            )
+            return None
+        result = doc.properties.copy() if hasattr(doc, "properties") else dict(doc)
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "checkpoint loaded",
+            operation="SELECT",
+            doc_id=doc_id,
+            job_id=job_id,
+            duration_ms=round(elapsed, 1),
+        )
+        return result
+
+    def save_checkpoint(self, job_id: str, data: dict) -> None:
+        """Save checkpoint for a specific job."""
+        doc_id = f"checkpoint::{job_id}"
+        ic("save_checkpoint: entry", job_id, doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_mutable_doc(self.db, COLL_CHECKPOINTS, doc_id)
+        is_new = doc is None
+        if not doc:
+            doc = MutableDocument(doc_id)
+        doc["type"] = "checkpoint"
+        doc["job_id"] = job_id
+        doc["last_seq"] = data.get("last_seq", "0")
+        doc["remote_counter"] = data.get("remote_counter", 0)
+        doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if "_meta" in data:
+            doc["_meta"] = data["_meta"]
+        _coll_save_doc(self.db, COLL_CHECKPOINTS, doc)
+        elapsed = (time.monotonic() - t0) * 1000
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "checkpoint saved",
+            operation="INSERT" if is_new else "UPDATE",
+            doc_id=doc_id,
+            job_id=job_id,
+            last_seq=data.get("last_seq"),
+            duration_ms=round(elapsed, 1),
+        )
+
+    # ── Sessions (v2.0) ────────────────────────────────────────
+
+    def save_session(self, session_id: str, data: dict) -> None:
+        """Save a session document."""
+        doc_id = f"session::{session_id}"
+        ic("save_session: entry", session_id, doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_mutable_doc(self.db, COLL_SESSIONS, doc_id)
+        is_new = doc is None
+        if not doc:
+            doc = MutableDocument(doc_id)
+        doc["type"] = "session"
+        doc["session_id"] = session_id
+        doc["cookie"] = data.get("cookie")
+        doc["expires_at"] = data.get("expires_at")
+        doc["created_at"] = data.get("created_at", int(time.time()))
+        doc["updated_at"] = int(time.time())
+        if "_meta" in data:
+            doc["_meta"] = data["_meta"]
+        _coll_save_doc(self.db, COLL_SESSIONS, doc)
+        elapsed = (time.monotonic() - t0) * 1000
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "session saved",
+            operation="INSERT" if is_new else "UPDATE",
+            doc_id=doc_id,
+            session_id=session_id,
+            duration_ms=round(elapsed, 1),
+        )
+
+    def load_session(self, session_id: str) -> dict | None:
+        """Load a session document."""
+        doc_id = f"session::{session_id}"
+        ic("load_session: entry", session_id, doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_doc(self.db, COLL_SESSIONS, doc_id)
+        elapsed = (time.monotonic() - t0) * 1000
+        if not doc:
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "session not found",
+                operation="SELECT",
+                doc_id=doc_id,
+                session_id=session_id,
+                duration_ms=round(elapsed, 1),
+            )
+            return None
+        result = doc.properties.copy() if hasattr(doc, "properties") else dict(doc)
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "session loaded",
+            operation="SELECT",
+            doc_id=doc_id,
+            session_id=session_id,
+            duration_ms=round(elapsed, 1),
+        )
+        return result
+
+    def list_sessions(self) -> list[dict]:
+        """List all active sessions."""
+        ic("list_sessions: entry")
+        t0 = time.monotonic()
+        query = f"""
+            SELECT _id, type, session_id, expires_at, created_at
+            FROM {CBL_SCOPE}.{COLL_SESSIONS}
+            WHERE type = 'session'
+            ORDER BY updated_at DESC
+        """
+        results = _run_n1ql(self.db, query)
+        elapsed = (time.monotonic() - t0) * 1000
+        sessions = []
+        for row in results:
+            sessions.append(
+                {
+                    "doc_id": row.get("_id"),
+                    "type": row.get("type"),
+                    "session_id": row.get("session_id"),
+                    "expires_at": row.get("expires_at"),
+                    "created_at": row.get("created_at"),
+                }
+            )
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            f"listed {len(sessions)} sessions",
+            operation="SELECT",
+            doc_type="session",
+            count=len(sessions),
+            duration_ms=round(elapsed, 1),
+        )
+        return sessions
+
+    def delete_expired_sessions(self) -> int:
+        """Delete all sessions that have expired."""
+        ic("delete_expired_sessions: entry")
+        now = int(time.time())
+        t0 = time.monotonic()
+        query = f"""
+            SELECT _id FROM {CBL_SCOPE}.{COLL_SESSIONS}
+            WHERE type = 'session' AND expires_at < {now}
+        """
+        results = _run_n1ql(self.db, query)
+        count = 0
+
+        def _delete_expired_in_txn():
+            nonlocal count
+            for row in results:
+                doc_id = row.get("_id")
+                if doc_id:
+                    _coll_purge_doc(self.db, COLL_SESSIONS, doc_id)
+                    count += 1
+
+        with _transaction(self.db):
+            _delete_expired_in_txn()
+
+        elapsed = (time.monotonic() - t0) * 1000
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            f"deleted {count} expired sessions",
+            operation="DELETE",
+            doc_type="session",
+            count=count,
+            duration_ms=round(elapsed, 1),
+        )
+        return count
+
+    # ── Data Quality (v2.0) ────────────────────────────────────
+
+    def add_data_quality_entry(self, job_id: str, entry: dict) -> None:
+        """Log a data quality issue (e.g., value coercion)."""
+        timestamp = int(time.time() * 1000)
+        doc_id = f"dq::{job_id}::{entry.get('doc_id')}::{timestamp}"
+        ic("add_data_quality_entry: entry", job_id, doc_id)
+        t0 = time.monotonic()
+        doc = MutableDocument(doc_id)
+        doc["type"] = "data_quality"
+        doc["job_id"] = job_id
+        doc["doc_id"] = entry.get("doc_id")
+        doc["table_name"] = entry.get("table_name")
+        doc["column_name"] = entry.get("column_name")
+        doc["original_value"] = entry.get("original_value")
+        doc["coerced_value"] = entry.get("coerced_value")
+        doc["coerce_type"] = entry.get("coerce_type")
+        doc["timestamp"] = timestamp
+        doc["created_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        _coll_save_doc(self.db, COLL_DATA_QUALITY, doc)
+        elapsed = (time.monotonic() - t0) * 1000
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "data quality entry logged",
+            operation="INSERT",
+            doc_id=doc_id,
+            job_id=job_id,
+            coerce_type=entry.get("coerce_type"),
+            duration_ms=round(elapsed, 1),
+        )
+
+    def list_data_quality(self, job_id: str | None = None) -> list[dict]:
+        """List data quality entries, optionally filtered by job."""
+        ic("list_data_quality: entry", job_id)
+        t0 = time.monotonic()
+        if job_id:
+            query = f"""
+                SELECT _id, type, job_id, doc_id, table_name, column_name,
+                       original_value, coerced_value, coerce_type, timestamp
+                FROM {CBL_SCOPE}.{COLL_DATA_QUALITY}
+                WHERE type = 'data_quality' AND job_id = '{job_id}'
+                ORDER BY timestamp DESC
+            """
+        else:
+            query = f"""
+                SELECT _id, type, job_id, doc_id, table_name, column_name,
+                       original_value, coerced_value, coerce_type, timestamp
+                FROM {CBL_SCOPE}.{COLL_DATA_QUALITY}
+                WHERE type = 'data_quality'
+                ORDER BY timestamp DESC
+            """
+        results = _run_n1ql(self.db, query)
+        elapsed = (time.monotonic() - t0) * 1000
+        entries = []
+        for row in results:
+            entries.append(
+                {
+                    "doc_id": row.get("_id"),
+                    "type": row.get("type"),
+                    "job_id": row.get("job_id"),
+                    "source_doc_id": row.get("doc_id"),
+                    "table_name": row.get("table_name"),
+                    "column_name": row.get("column_name"),
+                    "original_value": row.get("original_value"),
+                    "coerced_value": row.get("coerced_value"),
+                    "coerce_type": row.get("coerce_type"),
+                    "timestamp": row.get("timestamp"),
+                }
+            )
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            f"listed {len(entries)} data quality entries",
+            operation="SELECT",
+            doc_type="data_quality",
+            job_id=job_id,
+            count=len(entries),
+            duration_ms=round(elapsed, 1),
+        )
+        return entries
+
+    # ── Enrichments (v2.0) ─────────────────────────────────────
+
+    def add_enrichment(self, job_id: str, enrichment: dict) -> None:
+        """Log an enrichment result (e.g., ML analysis, external API)."""
+        timestamp = int(time.time() * 1000)
+        doc_id = f"enrich::{job_id}::{enrichment.get('doc_id')}::{timestamp}"
+        ic("add_enrichment: entry", job_id, doc_id)
+        t0 = time.monotonic()
+        doc = MutableDocument(doc_id)
+        doc["type"] = "enrichment"
+        doc["job_id"] = job_id
+        doc["doc_id"] = enrichment.get("doc_id")
+        doc["source"] = enrichment.get("source")
+        doc["status"] = enrichment.get("status")
+        doc["result"] = enrichment.get("result")
+        doc["timestamp"] = timestamp
+        doc["created_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        _coll_save_doc(self.db, COLL_ENRICHMENTS, doc)
+        elapsed = (time.monotonic() - t0) * 1000
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "enrichment logged",
+            operation="INSERT",
+            doc_id=doc_id,
+            job_id=job_id,
+            source=enrichment.get("source"),
+            status=enrichment.get("status"),
+            duration_ms=round(elapsed, 1),
+        )
+
+    def list_enrichments(
+        self, job_id: str | None = None, source: str | None = None
+    ) -> list[dict]:
+        """List enrichments, optionally filtered by job and/or source."""
+        ic("list_enrichments: entry", job_id, source)
+        t0 = time.monotonic()
+        query_parts = [
+            f"SELECT _id, type, job_id, doc_id, source, status, result, timestamp",
+            f"FROM {CBL_SCOPE}.{COLL_ENRICHMENTS}",
+            "WHERE type = 'enrichment'",
+        ]
+        if job_id:
+            query_parts.append(f"AND job_id = '{job_id}'")
+        if source:
+            query_parts.append(f"AND source = '{source}'")
+        query_parts.append("ORDER BY timestamp DESC")
+        query = " ".join(query_parts)
+        results = _run_n1ql(self.db, query)
+        elapsed = (time.monotonic() - t0) * 1000
+        enrichments = []
+        for row in results:
+            enrichments.append(
+                {
+                    "doc_id": row.get("_id"),
+                    "type": row.get("type"),
+                    "job_id": row.get("job_id"),
+                    "source_doc_id": row.get("doc_id"),
+                    "source": row.get("source"),
+                    "status": row.get("status"),
+                    "result": row.get("result"),
+                    "timestamp": row.get("timestamp"),
+                }
+            )
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            f"listed {len(enrichments)} enrichments",
+            operation="SELECT",
+            doc_type="enrichment",
+            job_id=job_id,
+            source=source,
+            count=len(enrichments),
+            duration_ms=round(elapsed, 1),
+        )
+        return enrichments
 
 
 # ---------------------------------------------------------------------------
