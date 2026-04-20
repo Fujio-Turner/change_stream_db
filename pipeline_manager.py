@@ -32,6 +32,7 @@ class PipelineManager:
         config: Dict[str, Any],
         metrics: Optional[Any],
         logger: logging.Logger,
+        poll_changes_func=None,
     ):
         """
         Parameters:
@@ -39,11 +40,13 @@ class PipelineManager:
             config: Global config with max_threads, etc.
             metrics: MetricsCollector instance
             logger: Logger instance
+            poll_changes_func: The poll_changes coroutine to run for each job.
         """
         self.cbl_store = cbl_store
         self.config = config
         self.metrics = metrics
         self.logger = logger
+        self.poll_changes_func = poll_changes_func
 
         # Global limits
         self.max_threads = config.get("max_threads", 10)
@@ -82,15 +85,26 @@ class PipelineManager:
 
             # Create Pipeline for each job
             for job_doc in jobs:
-                job_id = job_doc.get("_id", "unknown")
+                # Job ID can be in doc_id (from Meta), _id (document field), or id
+                job_id = (
+                    job_doc.get("doc_id")  # N1QL Meta().id
+                    or job_doc.get("_id")  # Document ID field
+                    or job_doc.get("id")  # Job's internal id field
+                    or "unknown"
+                )
+                # Ensure job_id has job:: prefix if not already present
+                if job_id != "unknown" and not job_id.startswith("job::"):
+                    job_id = f"job::{job_id}"
+
                 try:
                     self._start_job_internal(job_id, job_doc)
                 except Exception as e:
                     log_event(
                         self.logger,
                         "error",
-                        "JOB_START_FAILED",
-                        f"failed to start job {job_id}: {e}",
+                        "CHANGES",
+                        f"Failed to start job: {e}",
+                        job_id=job_id,
                     )
 
             self._running = True
@@ -151,8 +165,9 @@ class PipelineManager:
                 log_event(
                     self.logger,
                     "error",
-                    "JOB_STOP_ERROR",
-                    f"error stopping job {job_id}: {e}",
+                    "CHANGES",
+                    f"Error stopping job: {e}",
+                    job_id=job_id,
                 )
 
         # Stop monitor thread
@@ -173,14 +188,19 @@ class PipelineManager:
         Returns:
             True if started, False if already running or error.
         """
+        # Normalise: ensure job:: prefix for registry lookups
+        if not job_id.startswith("job::"):
+            job_id = f"job::{job_id}"
+
         with self._lock:
             if job_id in self._pipelines:
                 if self._pipelines[job_id].is_running():
                     log_event(
                         self.logger,
                         "warning",
-                        "JOB_ALREADY_RUNNING",
-                        f"job {job_id} already running",
+                        "CHANGES",
+                        f"Job already running",
+                        job_id=job_id,
                     )
                     return False
                 else:
@@ -190,13 +210,16 @@ class PipelineManager:
 
         # Load job from CBL
         try:
-            job_doc = self.cbl_store.get_job(job_id)
+            # Strip job:: prefix — load_job adds it internally
+            raw_id = job_id.removeprefix("job::")
+            job_doc = self.cbl_store.load_job(raw_id)
             if not job_doc:
                 log_event(
                     self.logger,
                     "error",
-                    "JOB_NOT_FOUND",
-                    f"job {job_id} not found",
+                    "CHANGES",
+                    f"Job not found",
+                    job_id=job_id,
                 )
                 return False
 
@@ -207,8 +230,9 @@ class PipelineManager:
             log_event(
                 self.logger,
                 "error",
-                "JOB_START_ERROR",
-                f"error starting job {job_id}: {e}",
+                "CHANGES",
+                f"Error starting job: {e}",
+                job_id=job_id,
             )
             return False
 
@@ -219,13 +243,17 @@ class PipelineManager:
         Returns:
             True if stopped, False if not running or timeout.
         """
+        if not job_id.startswith("job::"):
+            job_id = f"job::{job_id}"
+
         with self._lock:
             if job_id not in self._pipelines:
                 log_event(
                     self.logger,
                     "warning",
-                    "JOB_NOT_RUNNING",
-                    f"job {job_id} not in registry",
+                    "CHANGES",
+                    f"Job not in registry",
+                    job_id=job_id,
                 )
                 return True
 
@@ -247,8 +275,9 @@ class PipelineManager:
             log_event(
                 self.logger,
                 "warning",
-                "JOB_RESTART_TIMEOUT",
-                f"job {job_id} did not stop within timeout",
+                "CHANGES",
+                f"Job did not stop within timeout",
+                job_id=job_id,
             )
         return self.start_job(job_id)
 
@@ -271,12 +300,15 @@ class PipelineManager:
                 log_event(
                     self.logger,
                     "error",
-                    "JOB_RESTART_ERROR",
-                    f"error restarting job {job_id}: {e}",
+                    "CHANGES",
+                    f"Error restarting job: {e}",
+                    job_id=job_id,
                 )
 
     def get_job_state(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get the state of a single job."""
+        if not job_id.startswith("job::"):
+            job_id = f"job::{job_id}"
         with self._lock:
             if job_id not in self._pipelines:
                 return None
@@ -312,8 +344,9 @@ class PipelineManager:
                 log_event(
                     self.logger,
                     "warning",
-                    "JOB_ALREADY_RUNNING",
-                    f"job {job_id} already running",
+                    "CHANGES",
+                    f"Job already running",
+                    job_id=job_id,
                 )
                 return
 
@@ -323,8 +356,9 @@ class PipelineManager:
                 log_event(
                     self.logger,
                     "warning",
-                    "MAX_THREADS_REACHED",
-                    f"max_threads limit ({self.max_threads}) reached; queuing job {job_id}",
+                    "CHANGES",
+                    f"Max threads limit ({self.max_threads}) reached; queuing job",
+                    job_id=job_id,
                 )
                 # For now, just log. In the future, we could queue this.
                 return
@@ -339,6 +373,7 @@ class PipelineManager:
                 middleware_threads=job_doc.get("system", {}).get(
                     "middleware_threads", 2
                 ),
+                poll_changes_func=self.poll_changes_func,
             )
 
             # Start the thread
@@ -348,8 +383,9 @@ class PipelineManager:
             log_event(
                 self.logger,
                 "info",
-                "JOB_STARTED",
-                f"job {job_id} started",
+                "CHANGES",
+                f"Job started",
+                job_id=job_id,
             )
 
     def _monitor_threads(self) -> None:
@@ -388,8 +424,9 @@ class PipelineManager:
                         log_event(
                             self.logger,
                             "error",
-                            "MONITOR_ERROR",
-                            f"error monitoring job {job_id}: {e}",
+                            "CHANGES",
+                            f"Error monitoring job: {e}",
+                            job_id=job_id,
                         )
 
             except Exception as e:
@@ -423,8 +460,9 @@ class PipelineManager:
             log_event(
                 self.logger,
                 "info",
-                "CRASH_BACKOFF",
-                f"job {job_id} in backoff (attempt {attempt}, {remaining:.1f}s remaining)",
+                "CHANGES",
+                f"Job in backoff (attempt {attempt}, {remaining:.1f}s remaining)",
+                job_id=job_id,
             )
             self._crash_backoff[job_id] = (attempt, last_time)
             return
@@ -432,8 +470,9 @@ class PipelineManager:
         log_event(
             self.logger,
             "info",
-            "CRASH_RESTART",
-            f"restarting crashed job {job_id} (attempt {attempt})",
+            "CHANGES",
+            f"Restarting crashed job (attempt {attempt})",
+            job_id=job_id,
         )
 
         # Try to restart
@@ -443,10 +482,22 @@ class PipelineManager:
             self._crash_backoff[job_id] = (attempt, now)
 
     def _load_enabled_jobs(self) -> List[Dict[str, Any]]:
-        """Load all enabled jobs from CBL."""
+        """Load all enabled jobs from CBL (full documents, not summaries)."""
         try:
-            all_jobs = self.cbl_store.list_jobs()
-            enabled = [j for j in all_jobs if j.get("enabled", True)]
+            job_summaries = self.cbl_store.list_jobs()
+            enabled = []
+            for summary in job_summaries:
+                # list_jobs returns summary rows; load the full document
+                raw_id = summary.get("id") or summary.get("doc_id", "").removeprefix(
+                    "job::"
+                )
+                if not raw_id:
+                    continue
+                full_doc = self.cbl_store.load_job(raw_id)
+                if full_doc and full_doc.get("enabled", True):
+                    # Preserve the doc_id for _start_job_internal
+                    full_doc["doc_id"] = summary.get("doc_id")
+                    enabled.append(full_doc)
             return enabled
         except Exception as e:
             log_event(

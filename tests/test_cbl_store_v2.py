@@ -221,7 +221,7 @@ class TestJobs(TestCBLStoreBase):
     def test_list_jobs(self):
         """Test listing all jobs."""
         mock_results = [
-            {"_id": f"job::{self.job_id}", "type": "job", "id": self.job_id}
+            {"doc_id": f"job::{self.job_id}", "type": "job", "id": self.job_id}
         ]
         with patch.object(cbl_store, "_run_n1ql", return_value=mock_results):
             result = self.store.list_jobs()

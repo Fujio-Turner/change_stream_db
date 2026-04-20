@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/mappings.schema.json",
+  "title": "Schema Mapping (Deprecated)",
+  "description": "Legacy schema mapping configuration. Deprecated in v2.0 — mappings now embedded in jobs",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "mapping",
+      "description": "Document type identifier"
+    },
+    "name": {
+      "type": "string",
+      "description": "Mapping name"
+    },
+    "content": {
+      "type": "string",
+      "description": "Mapping configuration (JSON or custom format)"
+    },
+    "active": {
+      "type": ["boolean", "null"],
+      "default": true,
+      "description": "Whether this mapping is active"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Last update timestamp"
+    },
+    "deprecated": {
+      "type": ["boolean", "null"],
+      "default": true,
+      "description": "This collection is deprecated in v2.0"
+    }
+  },
+  "required": [
+    "type",
+    "name",
+    "content"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "mapping",
+      "name": "hotel_mapping",
+      "content": "{\"type\": \"object\", \"properties\": {\"name\": {\"type\": \"string\"}}}",
+      "active": false,
+      "deprecated": true
+    }
+  ]
+}

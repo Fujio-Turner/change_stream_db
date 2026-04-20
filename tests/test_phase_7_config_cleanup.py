@@ -42,7 +42,8 @@ class TestPhase7ConfigValidation(AioHTTPTestCase):
         self.use_cbl_patcher = patch("web.server.USE_CBL", True)
         self.signal_patcher = patch(
             "web.server._signal_worker_restart",
-            return_value=AsyncMock(return_value="ok"),
+            new_callable=AsyncMock,
+            return_value="ok",
         )
 
         self.cbl_patcher.start()
@@ -210,6 +211,10 @@ class TestPhase7ConfigMigration:
         with patch("cbl_store.CBLStore") as MockCBL:
             mock_instance = MagicMock()
             mock_instance.load_config.return_value = None
+            mock_instance.migrate_job_config_from_settings.return_value = {
+                "migrated": False,
+                "error": "no config found",
+            }
             MockCBL.return_value = mock_instance
 
             result = mock_instance.migrate_job_config_from_settings()
@@ -235,6 +240,10 @@ class TestPhase7ConfigMigration:
         with patch("cbl_store.CBLStore") as MockCBL:
             mock_instance = MagicMock()
             mock_instance.load_config.return_value = config
+            mock_instance.migrate_job_config_from_settings.return_value = {
+                "migrated": False,
+                "removed_fields": [],
+            }
             MockCBL.return_value = mock_instance
 
             result = mock_instance.migrate_job_config_from_settings()

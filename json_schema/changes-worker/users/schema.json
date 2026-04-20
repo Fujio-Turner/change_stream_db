@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/users.schema.json",
+  "title": "User Account",
+  "description": "User accounts for authentication and access control (future use)",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "user",
+      "description": "Document type identifier"
+    },
+    "username": {
+      "type": "string",
+      "description": "Unique username"
+    },
+    "email": {
+      "type": ["string", "null"],
+      "format": "email",
+      "description": "User email address"
+    },
+    "password_hash": {
+      "type": ["string", "null"],
+      "description": "Hashed password (bcrypt or similar)"
+    },
+    "full_name": {
+      "type": ["string", "null"],
+      "description": "User's full name"
+    },
+    "roles": {
+      "type": ["array", "null"],
+      "description": "List of assigned roles",
+      "items": {
+        "type": "string",
+        "enum": [
+          "admin",
+          "operator",
+          "viewer",
+          "analyst"
+        ]
+      }
+    },
+    "permissions": {
+      "type": ["array", "null"],
+      "description": "List of explicit permissions",
+      "items": {
+        "type": "string"
+      }
+    },
+    "active": {
+      "type": ["boolean", "null"],
+      "default": true,
+      "description": "Whether user account is active"
+    },
+    "created_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Account creation timestamp"
+    },
+    "last_login": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Last login timestamp"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Last update timestamp"
+    }
+  },
+  "required": [
+    "type",
+    "username"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "user",
+      "username": "john_admin",
+      "email": "john@example.com",
+      "full_name": "John Administrator",
+      "roles": [
+        "admin"
+      ],
+      "active": true,
+      "created_at": "2024-01-01T00:00:00Z"
+    }
+  ]
+}

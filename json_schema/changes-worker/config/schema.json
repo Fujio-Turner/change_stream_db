@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/config.schema.json",
+  "title": "System Configuration",
+  "description": "Global system configuration and settings for the changes worker",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "config",
+      "description": "Document type identifier"
+    },
+    "logging": {
+      "type": ["object", "null"],
+      "description": "Logging configuration",
+      "properties": {
+        "level": {
+          "type": ["string", "null"],
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error",
+            "critical"
+          ],
+          "default": "info"
+        },
+        "format": {
+          "type": ["string", "null"],
+          "enum": [
+            "json",
+            "text",
+            "structured"
+          ],
+          "default": "json"
+        },
+        "output": {
+          "type": ["string", "null"],
+          "enum": [
+            "stdout",
+            "stderr",
+            "file",
+            "syslog"
+          ]
+        }
+      }
+    },
+    "database": {
+      "type": ["object", "null"],
+      "description": "Database connection settings",
+      "properties": {
+        "max_connections": {
+          "type": ["integer", "null"],
+          "default": 50
+        },
+        "connection_timeout": {
+          "type": ["integer", "null"],
+          "default": 30
+        },
+        "pool_idle_timeout": {
+          "type": ["integer", "null"],
+          "default": 300
+        }
+      }
+    },
+    "performance": {
+      "type": ["object", "null"],
+      "description": "Performance tuning options",
+      "properties": {
+        "batch_size": {
+          "type": ["integer", "null"],
+          "default": 100
+        },
+        "batch_timeout_ms": {
+          "type": ["integer", "null"],
+          "default": 5000
+        },
+        "worker_threads": {
+          "type": ["integer", "null"],
+          "description": "Number of worker threads"
+        },
+        "queue_max_size": {
+          "type": ["integer", "null"],
+          "default": 10000
+        }
+      }
+    },
+    "security": {
+      "type": ["object", "null"],
+      "description": "Security settings",
+      "properties": {
+        "ssl_enabled": {
+          "type": ["boolean", "null"],
+          "default": true
+        },
+        "verify_certificate": {
+          "type": ["boolean", "null"],
+          "default": true
+        },
+        "encryption_key": {
+          "type": ["string", "null"],
+          "description": "Master encryption key (should be encrypted)"
+        }
+      }
+    },
+    "monitoring": {
+      "type": ["object", "null"],
+      "description": "Monitoring and metrics configuration",
+      "properties": {
+        "metrics_enabled": {
+          "type": ["boolean", "null"],
+          "default": true
+        },
+        "metrics_port": {
+          "type": ["integer", "null"],
+          "default": 9090
+        },
+        "health_check_interval": {
+          "type": ["integer", "null"],
+          "default": 60
+        }
+      }
+    },
+    "dlq": {
+      "type": ["object", "null"],
+      "description": "Dead Letter Queue configuration",
+      "properties": {
+        "enabled": {
+          "type": ["boolean", "null"],
+          "default": true
+        },
+        "ttl_seconds": {
+          "type": ["integer", "null"],
+          "default": 604800,
+          "description": "Default 7 days"
+        },
+        "max_retries": {
+          "type": ["integer", "null"],
+          "default": 3
+        }
+      }
+    },
+    "created_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Configuration creation timestamp"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Last update timestamp"
+    }
+  },
+  "required": ["type"],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "config",
+      "logging": {
+        "level": "info",
+        "format": "json",
+        "output": "stdout"
+      },
+      "database": {
+        "max_connections": 100,
+        "connection_timeout": 45
+      },
+      "performance": {
+        "batch_size": 500,
+        "batch_timeout_ms": 10000,
+        "worker_threads": 4
+      },
+      "security": {
+        "ssl_enabled": true,
+        "verify_certificate": true
+      },
+      "monitoring": {
+        "metrics_enabled": true,
+        "metrics_port": 9090
+      },
+      "dlq": {
+        "enabled": true,
+        "ttl_seconds": 604800,
+        "max_retries": 5
+      }
+    }
+  ]
+}

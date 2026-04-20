@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/outputs_stdout.schema.json",
+  "title": "STDOUT Output Configuration",
+  "description": "Defines console/STDOUT logging output destinations",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "outputs_stdout",
+      "description": "Document type identifier"
+    },
+    "src": {
+      "type": "array",
+      "description": "Array of STDOUT output definitions",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this STDOUT output"
+          },
+          "format": {
+            "type": ["string", "null"],
+            "enum": [
+              "json",
+              "jsonl",
+              "pretty",
+              "csv"
+            ],
+            "default": "jsonl",
+            "description": "Output format"
+          },
+          "level": {
+            "type": ["string", "null"],
+            "enum": [
+              "debug",
+              "info",
+              "warn",
+              "error"
+            ],
+            "default": "info",
+            "description": "Log level"
+          },
+          "batch_size": {
+            "type": ["integer", "null"],
+            "default": 10,
+            "description": "Number of documents per log flush"
+          },
+          "include_metadata": {
+            "type": ["boolean", "null"],
+            "default": true,
+            "description": "Include document metadata in output"
+          }
+        },
+        "required": ["id"],
+        "additionalProperties": true
+      }
+    },
+    "meta": {
+      "type": ["object", "null"],
+      "description": "Metadata for tracking and audit purposes"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update"
+    }
+  },
+  "required": ["type", "src"],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "outputs_stdout",
+      "src": [
+        {
+          "id": "console-log",
+          "format": "jsonl",
+          "level": "info",
+          "batch_size": 50,
+          "include_metadata": true
+        }
+      ]
+    }
+  ]
+}

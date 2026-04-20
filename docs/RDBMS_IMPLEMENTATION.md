@@ -343,7 +343,114 @@ The rest of the pipeline (checkpoint, DLQ, halt_on_failure, metrics) works ident
 
 ---
 
+## Connection Configuration
+
+The `PostgresOutputForwarder` reads connection fields from the resolved engine config dictionary (`pg_cfg`). The following fields are recognized:
+
+| Field | Default | Notes |
+|---|---|---|
+| `host` | `"localhost"` | Hostname or IP of the PostgreSQL server |
+| `port` | `5432` | Port number |
+| `database` | `""` | Target database name |
+| `username` | `"postgres"` | **Canonical field** for the database user. The forwarder also accepts `user` as a fallback (`pg_cfg.get("username") or pg_cfg.get("user") or "postgres"`), but `username` is preferred. An empty string value for `username` falls through to `user`, then to the default `"postgres"`. |
+| `password` | `""` | Database password |
+| `schema` | `"public"` | PostgreSQL schema for table references |
+| `ssl` | `false` | Enable SSL connections. When `true`, creates a default SSL context with hostname checking disabled. |
+| `pool_min` | `2` | Minimum number of connections in the asyncpg pool |
+| `pool_max` | `10` | Maximum number of connections in the asyncpg pool |
+
+> **Important:** The `mode` field must be present in the output config entry (e.g., `"postgres"`, `"mysql"`). Without it, the pipeline defaults to stdout output.
+
+---
+
+## Config Resolution — `_get_engine_cfg()`
+
+The `_get_engine_cfg()` method resolves which dictionary contains the connection fields. It supports three config layouts, checked in order:
+
+### Nested (v1.x) — `out_cfg.db` or `out_cfg.postgres`
+
+Connection fields live under a sub-key. This is the original config format used by `config.json`:
+
+```jsonc
+{
+  "output": {
+    "mode": "db",
+    "db": {               // ← _get_engine_cfg returns this dict
+      "engine": "postgres",
+      "host": "localhost",
+      "port": 5432,
+      "database": "mydb",
+      "username": "app_user",
+      "password": "secret"
+    }
+  }
+}
+```
+
+The method checks for a `"db"` key first, then `"postgres"`. Either sub-key works.
+
+### Top-level (v2.0) — fields directly on the output entry
+
+Job documents and the v2 API store connection fields at the top level of the output entry — no nested sub-key. The method detects this when `host`, `port`, or `database` exists directly on `out_cfg`:
+
+```json
+{
+  "id": "output_postgres",
+  "name": "Production Postgres",
+  "enabled": true,
+  "mode": "postgres",
+  "engine": "postgres",
+  "host": "db.example.com",
+  "port": 5432,
+  "database": "mydb",
+  "username": "app_user",
+  "password": "secret",
+  "schema": "public",
+  "ssl": false,
+  "pool_min": 2,
+  "pool_max": 10
+}
+```
+
+### Fallback — empty dict
+
+If neither nested keys nor top-level connection fields are found, `_get_engine_cfg()` returns `{}` and all fields fall back to their defaults.
+
+### Resolution order summary
+
+```
+1. out_cfg["db"]       → nested dict (v1.x)
+2. out_cfg["postgres"] → nested dict (v1.x alternate key)
+3. out_cfg itself      → if "host", "port", or "database" present (v2.0)
+4. {}                  → empty fallback (all defaults)
+```
+
+---
+
 ## Example Configs
+
+### v2.0 Output Entry (Job Documents)
+
+The preferred format for v2.0 job documents. All connection fields sit at the top level alongside `mode` and `engine`:
+
+```json
+{
+  "id": "output_postgres",
+  "name": "Production Postgres",
+  "enabled": true,
+  "mode": "postgres",
+  "engine": "postgres",
+  "host": "db.example.com",
+  "port": 5432,
+  "database": "mydb",
+  "username": "app_user",
+  "password": "secret",
+  "schema": "public",
+  "ssl": false,
+  "pool_min": 2,
+  "pool_max": 10
+}
+```
 
 ### Single-Table JSONB Mode (Simplest)
 

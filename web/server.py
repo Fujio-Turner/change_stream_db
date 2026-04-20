@@ -1,6 +1,7 @@
 """aiohttp web server for the changes_worker admin UI."""
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -14,6 +15,23 @@ import datetime
 
 from cbl_store import USE_CBL, CBLStore
 from schema.mapper import SchemaMapper
+from rest.api_v2 import (
+    api_get_inputs_changes,
+    api_post_inputs_changes,
+    api_put_inputs_changes_entry,
+    api_delete_inputs_changes_entry,
+    api_get_outputs,
+    api_post_outputs,
+    api_put_outputs_entry,
+    api_delete_outputs_entry,
+    api_get_jobs,
+    api_get_job,
+    api_post_jobs,
+    api_put_job,
+    api_delete_job,
+    api_refresh_job_input,
+    api_refresh_job_output,
+)
 
 logger = logging.getLogger("changes_worker")
 
@@ -353,7 +371,7 @@ async def list_mappings(request):
         meta = {"active": True, "updated_at": ""}
         try:
             parsed = json.loads(content)
-            m = parsed.get("_meta", {})
+            m = parsed.get("meta", {})
             meta["active"] = m.get("active", True)
             meta["updated_at"] = m.get("updated_at", "")
         except (json.JSONDecodeError, AttributeError):
@@ -388,14 +406,14 @@ async def put_mapping(request):
     content = await request.text()
     if USE_CBL:
         CBLStore().save_mapping(name, content)
-    # Inject _meta into JSON content before writing to filesystem
+    # Inject meta into JSON content before writing to filesystem
     try:
         parsed = json.loads(content)
-        meta = parsed.get("_meta", {})
+        meta = parsed.get("meta", {})
         meta["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         if "active" not in meta:
             meta["active"] = True
-        parsed["_meta"] = meta
+        parsed["meta"] = meta
         content = json.dumps(parsed, indent=2)
     except (json.JSONDecodeError, ValueError):
         pass  # not valid JSON, save as-is
@@ -426,12 +444,12 @@ async def patch_mapping_active(request):
     if path.is_file():
         try:
             parsed = json.loads(path.read_text())
-            meta = parsed.get("_meta", {})
+            meta = parsed.get("meta", {})
             meta["active"] = active
             meta["updated_at"] = datetime.datetime.now(
                 datetime.timezone.utc
             ).isoformat()
-            parsed["_meta"] = meta
+            parsed["meta"] = meta
             path.write_text(json.dumps(parsed, indent=2))
         except (json.JSONDecodeError, ValueError):
             pass
@@ -578,8 +596,56 @@ async def get_status(request):
     )
 
 
+async def get_jobs(request):
+    """GET /api/jobs — List all jobs with basic info for dropdown population.
+
+    Returns:
+    {
+        "jobs": [
+            {
+                "id": "job::2162fb33-6213-456d-93c1-213a64654e59",
+                "job_id": "job::2162fb33-6213-456d-93c1-213a64654e59",
+                "name": "Job Name"
+            }
+        ],
+        "count": 1
+    }
+    """
+    if not USE_CBL:
+        return json_response({"jobs": [], "count": 0})
+
+    try:
+        store = CBLStore()
+        jobs = store.list_jobs()
+
+        result_jobs = []
+        for job in jobs:
+            # Get the raw job ID (with job:: prefix if present)
+            raw_job_id = job.get("doc_id") or job.get("_id") or ""
+            # Ensure job:: prefix for consistency with logs
+            if raw_job_id and not raw_job_id.startswith("job::"):
+                job_id_with_prefix = f"job::{raw_job_id}"
+            else:
+                job_id_with_prefix = raw_job_id
+
+            result_jobs.append(
+                {
+                    "id": job_id_with_prefix,
+                    "job_id": job_id_with_prefix,
+                    "name": job.get("name", raw_job_id),
+                }
+            )
+
+        return json_response({"jobs": result_jobs, "count": len(result_jobs)})
+    except Exception as e:
+        logger.exception("Error listing jobs")
+        return error_response(str(e), status=500)
+
+
 async def get_jobs_status(request):
     """GET /api/jobs/status — Return list of all jobs with status, checkpoint, and metrics.
+
+    Enriches stored job data with live pipeline state from the worker.
 
     Returns:
     {
@@ -588,7 +654,8 @@ async def get_jobs_status(request):
                 "job_id": "job-123",
                 "name": "Job Name",
                 "enabled": true,
-                "status": "running|idle|error",
+                "status": "running|idle|error|stopped",
+                "uptime_seconds": 123.4,
                 "last_sync_time": "2024-01-01T10:00:00Z",
                 "docs_processed": 1234,
                 "errors": 5
@@ -604,6 +671,32 @@ async def get_jobs_status(request):
         store = CBLStore()
         jobs = store.list_jobs()
 
+        # Fetch live pipeline states from the worker
+        live_states = {}
+        try:
+            worker_host = os.environ.get("METRICS_HOST")
+            if worker_host:
+                cfg = store.load_config() or {}
+                port = cfg.get("metrics", {}).get("port", 9090)
+                async with _aiohttp.ClientSession() as session:
+                    for job in jobs:
+                        jid = (
+                            (job.get("doc_id") or job.get("_id") or "")
+                            .replace("job::", "")
+                            .replace("job:", "")
+                        )
+                        try:
+                            url = f"http://{worker_host}:{port}/api/jobs/{jid}/state"
+                            async with session.get(
+                                url, timeout=_aiohttp.ClientTimeout(total=3)
+                            ) as resp:
+                                if resp.status == 200:
+                                    live_states[jid] = await resp.json()
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
         result_jobs = []
         for job in jobs:
             job_id = (
@@ -615,20 +708,31 @@ async def get_jobs_status(request):
             # Load checkpoint for this job
             checkpoint = store.load_checkpoint(job_id) or {}
 
-            # Build status entry
-            state = job.get("state", {})
+            # Use live state if available, otherwise fall back to stored state
+            live = live_states.get(job_id)
+            if live:
+                status = live.get("status", "unknown")
+                uptime = live.get("uptime_seconds")
+                error_count = live.get("error_count", 0)
+            else:
+                state = job.get("state", {})
+                status = state.get("status", "idle")
+                uptime = None
+                error_count = 0
+
             status_entry = {
                 "job_id": job_id,
                 "name": (job.get("id") or job_id or "")
                 .replace("job::", "")
                 .replace("job:", "")
                 or job_id,
-                "enabled": state.get("enabled", True),
-                "status": state.get("status", "idle"),
+                "enabled": job.get("enabled", True),
+                "status": status,
+                "uptime_seconds": uptime,
                 "last_sync_time": checkpoint.get("updated_at")
                 or checkpoint.get("timestamp"),
                 "docs_processed": checkpoint.get("seq", 0),
-                "errors": 0,
+                "errors": error_count,
             }
             result_jobs.append(status_entry)
 
@@ -755,6 +859,90 @@ async def get_worker_status(request):
     """Proxy GET to the worker's /_status endpoint."""
     result = await _worker_control("_status", method="GET")
     return json_response(result)
+
+
+# --- Job Control API (proxy to metrics server) ---
+
+
+async def job_control_proxy(request, endpoint: str):
+    """Generic proxy for job control endpoints to the metrics server."""
+    try:
+        worker_host = os.environ.get("METRICS_HOST")
+        if not worker_host:
+            return json_response({"error": "metrics_unreachable"}, status=502)
+
+        cfg = (
+            CBLStore().load_config() if USE_CBL else json.loads(CONFIG_PATH.read_text())
+        )
+        port = cfg.get("metrics", {}).get("port", 9090)
+    except Exception:
+        port = 9090
+
+    url = f"http://{worker_host}:{port}/{endpoint}"
+    logger.debug(f"Proxying request to {url}")
+    try:
+        # Increased timeout from 5s to 30s for job control operations
+        # Job operations may take time due to thread pool executor and CBL operations
+        async with _aiohttp.ClientSession() as session:
+            async with session.post(
+                url, timeout=_aiohttp.ClientTimeout(total=30)
+            ) as resp:
+                try:
+                    data = await resp.json()
+                except:
+                    # If response isn't JSON, get text instead
+                    text = await resp.text()
+                    data = {"error": f"Invalid response from metrics server: {text}"}
+                logger.debug(f"Proxy response: {resp.status}")
+                return json_response(data, status=resp.status)
+    except _aiohttp.ClientConnectorError as exc:
+        logger.error(f"Cannot connect to metrics server at {url}: {exc}")
+        return json_response(
+            {"error": f"Metrics server unreachable: {exc}"}, status=502
+        )
+    except asyncio.TimeoutError as exc:
+        logger.error(f"Timeout calling metrics server at {url} after 30s")
+        return json_response(
+            {"error": "Job operation timed out - may be slow"}, status=504
+        )
+    except Exception as exc:
+        import traceback
+
+        logger.error(f"Job control proxy error: {exc}")
+        logger.error(traceback.format_exc())
+        return json_response({"error": f"Proxy error: {str(exc)}"}, status=502)
+
+
+async def post_job_start(request):
+    """POST /api/jobs/{job_id}/start"""
+    job_id = request.match_info.get("job_id")
+    if not job_id:
+        return json_response({"error": "job_id required"}, status=400)
+    return await job_control_proxy(request, f"api/jobs/{job_id}/start")
+
+
+async def post_job_stop(request):
+    """POST /api/jobs/{job_id}/stop"""
+    job_id = request.match_info.get("job_id")
+    if not job_id:
+        return json_response({"error": "job_id required"}, status=400)
+    return await job_control_proxy(request, f"api/jobs/{job_id}/stop")
+
+
+async def post_job_restart(request):
+    """POST /api/jobs/{job_id}/restart"""
+    job_id = request.match_info.get("job_id")
+    if not job_id:
+        return json_response({"error": "job_id required"}, status=400)
+    return await job_control_proxy(request, f"api/jobs/{job_id}/restart")
+
+
+async def post_job_kill(request):
+    """POST /api/jobs/{job_id}/kill"""
+    job_id = request.match_info.get("job_id")
+    if not job_id:
+        return json_response({"error": "job_id required"}, status=400)
+    return await job_control_proxy(request, f"api/jobs/{job_id}/kill")
 
 
 # --- Sample Doc API (fetch one doc from changes feed in dry-run mode) ---
@@ -951,7 +1139,7 @@ async def db_test_connection(request):
                 host=body.get("host", "localhost"),
                 port=body.get("port", 5432),
                 database=body.get("database", ""),
-                user=body.get("user", "postgres"),
+                user=body.get("username") or body.get("user", "postgres"),
                 password=body.get("password", ""),
                 ssl=ssl_ctx,
             )
@@ -972,7 +1160,7 @@ async def db_test_connection(request):
                 host=body.get("host", "localhost"),
                 port=body.get("port", 3306),
                 db=body.get("database", ""),
-                user=body.get("user", "root"),
+                user=body.get("username") or body.get("user", "root"),
                 password=body.get("password", ""),
                 ssl=ssl_ctx,
             )
@@ -993,7 +1181,7 @@ async def db_test_connection(request):
                 f"DRIVER={{{driver}}}",
                 f"SERVER={host},{port}",
                 f"DATABASE={body.get('database', '')}",
-                f"UID={body.get('user', 'sa')}",
+                f"UID={body.get('username') or body.get('user', 'sa')}",
                 f"PWD={body.get('password', '')}",
             ]
             if body.get("trust_server_certificate", True):
@@ -1016,7 +1204,7 @@ async def db_test_connection(request):
                 database = body.get("database", "")
                 dsn = f"{host}:{port}/{database}"
             conn = await _oracledb.connect_async(
-                user=body.get("user", ""),
+                user=body.get("username") or body.get("user", ""),
                 password=body.get("password", ""),
                 dsn=dsn,
             )
@@ -1778,8 +1966,8 @@ async def save_source(request):
         "type": "source",
         "system": body["system"],
         "config": body["config"],
-        "_meta": {
-            **body.get("_meta", {}),
+        "meta": {
+            **body.get("meta", {}),
             "saved_at": datetime.datetime.utcnow().isoformat(),
         },
     }
@@ -1963,6 +2151,7 @@ def create_app():
 
     # Status API
     app.router.add_get("/api/status", get_status)
+    app.router.add_get("/api/jobs", get_jobs)
     app.router.add_get("/api/jobs/status", get_jobs_status)
 
     # Metrics API
@@ -1974,6 +2163,12 @@ def create_app():
     app.router.add_post("/api/offline", post_offline)
     app.router.add_post("/api/online", post_online)
     app.router.add_get("/api/worker-status", get_worker_status)
+
+    # Job Control API
+    app.router.add_post("/api/jobs/{job_id}/start", post_job_start)
+    app.router.add_post("/api/jobs/{job_id}/stop", post_job_stop)
+    app.router.add_post("/api/jobs/{job_id}/restart", post_job_restart)
+    app.router.add_post("/api/jobs/{job_id}/kill", post_job_kill)
 
     # Sample Doc API
     app.router.add_get("/api/sample-doc", get_sample_doc)
@@ -1997,6 +2192,33 @@ def create_app():
     app.router.add_post("/api/source/delete", delete_source)
     app.router.add_post("/api/source/clear", clear_all_sources)
     app.router.add_post("/api/source/test", test_source)
+
+    # API v2.0 - Inputs (changes)
+    app.router.add_get("/api/inputs_changes", api_get_inputs_changes)
+    app.router.add_post("/api/inputs_changes", api_post_inputs_changes)
+    app.router.add_put("/api/inputs_changes/{id}", api_put_inputs_changes_entry)
+    app.router.add_delete("/api/inputs_changes/{id}", api_delete_inputs_changes_entry)
+
+    # API v2.0 - Outputs (dynamic type: rdbms, http, cloud, stdout)
+    app.router.add_get(r"/api/outputs_{type:rdbms|http|cloud|stdout}", api_get_outputs)
+    app.router.add_post(
+        r"/api/outputs_{type:rdbms|http|cloud|stdout}", api_post_outputs
+    )
+    app.router.add_put(
+        r"/api/outputs_{type:rdbms|http|cloud|stdout}/{id}", api_put_outputs_entry
+    )
+    app.router.add_delete(
+        r"/api/outputs_{type:rdbms|http|cloud|stdout}/{id}", api_delete_outputs_entry
+    )
+
+    # API v2.0 - Jobs
+    app.router.add_get("/api/v2/jobs", api_get_jobs)
+    app.router.add_post("/api/v2/jobs", api_post_jobs)
+    app.router.add_get("/api/v2/jobs/{id}", api_get_job)
+    app.router.add_put("/api/v2/jobs/{id}", api_put_job)
+    app.router.add_delete("/api/v2/jobs/{id}", api_delete_job)
+    app.router.add_post("/api/v2/jobs/{id}/refresh-input", api_refresh_job_input)
+    app.router.add_post("/api/v2/jobs/{id}/refresh-output", api_refresh_job_output)
 
     # Static files
     app.router.add_static("/static/", WEB / "static", show_index=False)

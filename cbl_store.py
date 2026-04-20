@@ -730,7 +730,7 @@ class CBLStore:
                 "gateway": found_fields.get("gateway", {}),
                 "auth": found_fields.get("auth", {}),
                 "changes_feed": found_fields.get("changes_feed", {}),
-                "_meta": {
+                "meta": {
                     "migrated_from": "settings",
                     "migrated_at": datetime.datetime.now(
                         datetime.timezone.utc
@@ -1033,8 +1033,8 @@ class CBLStore:
             "dialect": doc.get("dialect", "sql"),
             "data": doc.get("data", {}),
         }
-        if "_meta" in doc:
-            schema["_meta"] = dict(doc["_meta"])
+        if "meta" in doc:
+            schema["meta"] = dict(doc["meta"])
         return schema
 
     def save_schema(self, schema: dict) -> None:
@@ -1049,8 +1049,8 @@ class CBLStore:
         doc["type"] = schema.get("type", "rdbms")
         doc["dialect"] = schema.get("dialect", "sql")
         doc["data"] = schema.get("data", {})
-        if "_meta" in schema:
-            doc["_meta"] = schema["_meta"]
+        if "meta" in schema:
+            doc["meta"] = schema["meta"]
         _coll_save_doc(self.db, COLL_MAPPINGS, doc)
         elapsed = (time.monotonic() - t0) * 1000
 
@@ -1111,7 +1111,7 @@ class CBLStore:
                         "type": doc.get("type", "source"),
                         "system": doc.get("system"),
                         "config": doc.get("config", {}),
-                        "_meta": dict(doc.get("_meta", {})) if doc.get("_meta") else {},
+                        "meta": dict(doc.get("meta", {})) if doc.get("meta") else {},
                     }
             return sources
         except Exception as e:
@@ -1136,8 +1136,8 @@ class CBLStore:
         doc["type"] = "source"
         doc["system"] = source_doc.get("system")
         doc["config"] = source_doc.get("config", {})
-        if "_meta" in source_doc:
-            doc["_meta"] = source_doc["_meta"]
+        if "meta" in source_doc:
+            doc["meta"] = source_doc["meta"]
         _coll_save_doc(self.db, COLL_MAPPINGS, doc)
 
         # Update the source index document
@@ -1857,8 +1857,8 @@ class CBLStore:
             "type": doc.get("type", "inputs_changes"),
             "src": list(doc.get("src") or []),
         }
-        if "_meta" in doc:
-            result["_meta"] = dict(doc["_meta"])
+        if "meta" in doc:
+            result["meta"] = dict(doc["meta"])
         log_event(
             logger,
             "debug",
@@ -1883,8 +1883,8 @@ class CBLStore:
         doc["type"] = "inputs_changes"
         doc["src"] = data.get("src", [])
         doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        if "_meta" in data:
-            doc["_meta"] = data["_meta"]
+        if "meta" in data:
+            doc["meta"] = data["meta"]
         _coll_save_doc(self.db, COLL_INPUTS_CHANGES, doc)
         elapsed = (time.monotonic() - t0) * 1000
         log_event(
@@ -1930,8 +1930,8 @@ class CBLStore:
             "type": doc.get("type", f"outputs_{output_type}"),
             "src": list(doc.get("src") or []),
         }
-        if "_meta" in doc:
-            result["_meta"] = dict(doc["_meta"])
+        if "meta" in doc:
+            result["meta"] = dict(doc["meta"])
         log_event(
             logger,
             "debug",
@@ -1965,8 +1965,8 @@ class CBLStore:
         doc["type"] = f"outputs_{output_type}"
         doc["src"] = data.get("src", [])
         doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        if "_meta" in data:
-            doc["_meta"] = data["_meta"]
+        if "meta" in data:
+            doc["meta"] = data["meta"]
         _coll_save_doc(self.db, coll_name, doc)
         elapsed = (time.monotonic() - t0) * 1000
         log_event(
@@ -2025,6 +2025,8 @@ class CBLStore:
             doc = MutableDocument(doc_id)
         doc["type"] = "job"
         doc["id"] = job_id
+        doc["enabled"] = job_data.get("enabled", True)
+        doc["name"] = job_data.get("name", "")
         doc["inputs"] = job_data.get("inputs", [])
         doc["outputs"] = job_data.get("outputs", [])
         doc["output_type"] = job_data.get("output_type")
@@ -2035,8 +2037,8 @@ class CBLStore:
             datetime.datetime.now(datetime.timezone.utc).isoformat(),
         )
         doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        if "_meta" in job_data:
-            doc["_meta"] = job_data["_meta"]
+        if "meta" in job_data:
+            doc["meta"] = job_data["meta"]
         _coll_save_doc(self.db, COLL_JOBS, doc)
         elapsed = (time.monotonic() - t0) * 1000
         log_event(
@@ -2084,7 +2086,8 @@ class CBLStore:
         """List all jobs with their IDs and types."""
         t0 = time.monotonic()
         query = f"""
-            SELECT META(d).id AS doc_id, d.type, d.id, d.state, d.created_at, d.updated_at
+            SELECT META(d).id AS doc_id, d.type, d.id, d.name, d.enabled,
+                   d.state, d.created_at, d.updated_at
             FROM {CBL_SCOPE_Q}.{COLL_JOBS} AS d
             WHERE d.type = 'job'
             ORDER BY d.updated_at DESC
@@ -2098,6 +2101,8 @@ class CBLStore:
                     "doc_id": row.get("doc_id"),
                     "type": row.get("type"),
                     "id": row.get("id"),
+                    "name": row.get("name", ""),
+                    "enabled": row.get("enabled", True),
                     "state": row.get("state", {}),
                     "created_at": row.get("created_at"),
                     "updated_at": row.get("updated_at"),
@@ -2195,8 +2200,8 @@ class CBLStore:
         doc["last_seq"] = data.get("last_seq", "0")
         doc["remote_counter"] = data.get("remote_counter", 0)
         doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        if "_meta" in data:
-            doc["_meta"] = data["_meta"]
+        if "meta" in data:
+            doc["meta"] = data["meta"]
         _coll_save_doc(self.db, COLL_CHECKPOINTS, doc)
         elapsed = (time.monotonic() - t0) * 1000
         log_event(
@@ -2258,8 +2263,8 @@ class CBLStore:
         doc["expires_at"] = data.get("expires_at")
         doc["created_at"] = data.get("created_at", int(time.time()))
         doc["updated_at"] = int(time.time())
-        if "_meta" in data:
-            doc["_meta"] = data["_meta"]
+        if "meta" in data:
+            doc["meta"] = data["meta"]
         _coll_save_doc(self.db, COLL_SESSIONS, doc)
         elapsed = (time.monotonic() - t0) * 1000
         log_event(
@@ -2618,7 +2623,9 @@ class CBLStore:
                 "name": "Migrated from v1.x",
                 "enabled": True,
                 "source_type": gateway.get("src", "sync_gateway"),
+                "src": gateway.get("src", "sync_gateway"),
                 "host": gateway.get("url", ""),
+                "url": gateway.get("url", ""),
                 "database": gateway.get("database", "db"),
                 "scope": gateway.get("scope", ""),
                 "collection": gateway.get("collection", ""),
@@ -2683,11 +2690,13 @@ class CBLStore:
             # Determine output type from mode
             if mode in ("postgres", "mysql", "mssql", "oracle", "db"):
                 output_type = "rdbms"
+                _mode = mode if mode != "db" else "postgres"
                 output_entry = {
-                    "id": f"output_{mode}",
-                    "name": f"Migrated {mode} output",
+                    "id": f"output_{_mode}",
+                    "name": f"Migrated {_mode} output",
                     "enabled": True,
-                    "engine": mode,
+                    "mode": _mode,
+                    "engine": _mode,
                     "host": output_cfg[mode].get("host", "")
                     if mode in output_cfg
                     else "",
@@ -2697,7 +2706,7 @@ class CBLStore:
                     "database": output_cfg[mode].get("database", "")
                     if mode in output_cfg
                     else "",
-                    "user": output_cfg[mode].get("user", "")
+                    "username": output_cfg[mode].get("user", "")
                     if mode in output_cfg
                     else "",
                     "password": output_cfg[mode].get("password", "")

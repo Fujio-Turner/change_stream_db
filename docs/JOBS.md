@@ -187,6 +187,188 @@ At render time, `MetricsCollector.render()` calls `DbMetrics.render_all()` which
 
 ---
 
+## v2.0 Job Document Schema
+
+A **job document** is a self-contained record stored in Couchbase Lite. It holds everything needed to run one pipeline — the input source, output destination, mapping, system config, and runtime state.
+
+```jsonc
+{
+  "type": "job",
+  "id": "a1b2c3d4-...",                    // UUID, generated on creation
+  "name": "us-orders-sync",                // Display name
+  "enabled": true,                         // PipelineManager only starts enabled jobs
+
+  "inputs": [
+    {
+      // Copied verbatim from inputs_changes.src[] — MUST include
+      // both the pipeline-expected fields AND the source fields.
+      "id": "sg-prod",
+      "url": "https://sg.example.com:4984/db",   // pipeline expects "url"
+      "src": "sync_gateway",                      // pipeline expects "src"
+      "host": "sg.example.com",                   // source doc uses "host"
+      "source_type": "sync_gateway",              // source doc uses "source_type"
+      "auth": { "username": "user", "password": "pass" },
+      "changes_feed": { "style": "main_only", "limit": 1000 },
+      "processing": { "sequential": false, "max_concurrent": 20 }
+    }
+  ],
+
+  "outputs": [
+    {
+      // Copied verbatim from outputs_rdbms.src[] (or outputs_http, etc.)
+      "id": "pg-prod",
+      "mode": "postgres",                         // REQUIRED — the pipeline dispatches on this
+      "engine": "postgres",
+      "host": "db.example.com",
+      "port": 5432,
+      "database": "mydb",
+      "schema": "public",
+      "username": "app_user",                     // "username", NOT "user"
+      "password": "secret",
+      "ssl": true,
+      "pool_min": 2,
+      "pool_max": 10
+    }
+  ],
+
+  "output_type": "rdbms",                  // One of: "rdbms", "http", "cloud", "stdout"
+
+  "mapping": {                             // Optional — schema mapping definition
+    // ...
+  },
+
+  "system": {                              // Processing / retry / attachment config
+    "checkpoint": { "interval": 5 },
+    "processing": { "sequential": false, "max_concurrent": 20 },
+    "retry": { "max_retries": 3, "backoff": 1.0 },
+    "shutdown": { "timeout": 30 },
+    "attachments": {}
+  },
+
+  "state": {                               // Runtime state, updated by PipelineManager
+    "status": "idle",                      // "idle" | "running" | "stopped" | "error"
+    "last_updated": null
+  }
+}
+```
+
+### Job Creation Flow
+
+1. Client `POST /api/jobs` with `input_id`, `output_id`, `output_type`, and optional `name`, `system`, `mapping`.
+2. Server looks up the input entry from `inputs_changes.src[]` by `input_id` and copies it verbatim into `inputs[0]`.
+3. Server looks up the output entry from `outputs_{type}.src[]` by `output_id` and copies it verbatim into `outputs[0]`.
+4. A UUID is generated, the job document is saved, and an initial checkpoint is created.
+
+---
+
+## Field Name Convention
+
+The `_build_job_config` method in `pipeline.py` copies `inputs[0]` and `outputs[0]` **as-is** into the legacy config dict — **no field translation or normalization happens**. This means the source collection entries (`inputs_changes.src[]`, `outputs_rdbms.src[]`, etc.) **must already contain the exact field names the pipeline expects**.
+
+### Input fields
+
+| Pipeline expects | Source doc may also have | Notes |
+|---|---|---|
+| `url` | `host` | Both should be present; pipeline reads `url` |
+| `src` | `source_type` | Both should be present; pipeline reads `src` |
+| `auth` | — | Nested object with `username` / `password` |
+| `changes_feed` | — | Feed parameters (`style`, `limit`, etc.) |
+| `processing` | — | Optional per-input processing overrides |
+
+### Output fields (RDBMS)
+
+| Pipeline expects | ⚠ Common mistake | Notes |
+|---|---|---|
+| `mode` | *(missing)* | **Required** — dispatcher uses this to select the engine |
+| `engine` | — | Engine identifier (e.g. `"postgres"`, `"mysql"`, `"oracle"`) |
+| `username` | `user` | Must be `username`, not `user` |
+| `host` | — | Database hostname |
+| `port` | — | Database port (integer) |
+| `database` | — | Database name |
+| `schema` | — | Target schema (e.g. `"public"`) |
+| `ssl` | — | Boolean |
+| `pool_min` / `pool_max` | — | Connection pool bounds |
+| `password` | — | Database password |
+
+> **Rule of thumb:** If you update a source document (`inputs_changes` or `outputs_rdbms`), the existing jobs will **not** pick up the changes automatically. Use the [Refresh Endpoints](#refresh-endpoints) to re-copy the updated entry into the job.
+
+---
+
+## Job Control Endpoints
+
+These endpoints manage the runtime lifecycle of individual jobs via the `PipelineManager`.
+
+| Method | Route | Description |
+|---|---|---|
+| `POST` | `/api/jobs/{job_id}/start` | Start a stopped/idle job. Returns `409` if already running. |
+| `POST` | `/api/jobs/{job_id}/stop` | Gracefully stop a running job. |
+| `POST` | `/api/jobs/{job_id}/restart` | Stop then start a job. |
+| `POST` | `/api/jobs/{job_id}/kill` | Non-graceful stop (currently same as stop). |
+| `GET`  | `/api/jobs/{job_id}/state` | Get current runtime state (`status`, timestamps). Returns `404` if unknown. |
+| `POST` | `/api/_restart` | Restart **all** jobs. |
+| `POST` | `/api/_offline` | Pause all jobs. |
+| `POST` | `/api/_online` | Resume all jobs. |
+
+### Response examples
+
+```jsonc
+// POST /api/jobs/{id}/start — success
+{ "status": "started", "job_id": "a1b2c3d4-..." }
+
+// POST /api/jobs/{id}/start — already running
+// HTTP 409
+{ "status": "already_running", "job_id": "a1b2c3d4-..." }
+
+// POST /api/jobs/{id}/stop — success
+{ "status": "stopped", "job_id": "a1b2c3d4-..." }
+
+// GET /api/jobs/{id}/state
+{ "status": "running", "last_updated": "2026-04-20T12:00:00Z", ... }
+```
+
+---
+
+## Refresh Endpoints
+
+When a source collection entry is updated (e.g. you change the password in `outputs_rdbms.src[]`), existing jobs still hold the **old** copy. Use these endpoints to re-copy the current entry into the job document.
+
+### `POST /api/jobs/{id}/refresh-input`
+
+Re-copies the input entry from `inputs_changes.src[]` into `job.inputs[0]`, matching by the input's `id` field.
+
+```jsonc
+// Request: POST /api/jobs/a1b2c3d4-.../refresh-input
+// (no body required)
+
+// Response — 200
+{
+  "status": "ok",
+  "job_id": "a1b2c3d4-...",
+  "input_id": "sg-prod"
+}
+```
+
+### `POST /api/jobs/{id}/refresh-output`
+
+Re-copies the output entry from `outputs_{type}.src[]` into `job.outputs[0]`, matching by the output's `id` field. The `output_type` is read from the job document.
+
+```jsonc
+// Request: POST /api/jobs/a1b2c3d4-.../refresh-output
+// (no body required)
+
+// Response — 200
+{
+  "status": "ok",
+  "job_id": "a1b2c3d4-...",
+  "output_id": "pg-prod",
+  "output_type": "rdbms"
+}
+```
+
+> **Tip:** After refreshing, you may want to `POST /api/jobs/{id}/restart` so the pipeline picks up the new config.
+
+---
+
 ## Future State – Full Job ID Across All Stages
 
 When multi-pipeline support lands (see [`MULTI_PIPELINE_PLAN.md`](MULTI_PIPELINE_PLAN.md)), the `job_id` will be promoted to a top-level pipeline concept and flow through all three stages:

@@ -129,3 +129,61 @@ All settings live in a single `config.json` file. Here is a complete reference w
   }
 }
 ```
+
+---
+
+## v2.0 Job-Based Configuration
+
+In v2.0 the configuration model changed significantly. Per-job settings have moved out of the global `config.json` and into **job documents** stored in Couchbase Lite.
+
+### What stays in `config.json`
+
+The global config file now contains **infrastructure-only** settings:
+
+| Key               | Purpose                                    |
+|-------------------|--------------------------------------------|
+| `couchbase_lite`  | Local CBL database path and options        |
+| `logging`         | Log level (`DEBUG`, `INFO`, …)             |
+| `admin_ui`        | Admin web-UI host / port                   |
+| `metrics`         | Prometheus `/_metrics` endpoint settings   |
+| `shutdown`        | Graceful-shutdown behaviour                |
+
+Settings such as `gateway`, `auth`, `changes_feed`, and `output` are **no longer** placed in `config.json`. They are defined inside individual job documents.
+
+### Output entry schema (`outputs_rdbms` / embedded in jobs)
+
+Each output entry must include:
+
+| Field      | Required | Notes |
+|------------|----------|-------|
+| `mode`     | **yes**  | Output engine name: `"postgres"`, `"mysql"`, `"mssql"`, `"oracle"`, etc. Without this the pipeline defaults to `stdout`. |
+| `username` | preferred | Use `username` instead of `user`. An empty string falls through to engine defaults. |
+| all connection fields | — | Place `host`, `port`, `database`, `password`, etc. at the **top level** of the entry — not nested under `db` or engine-specific keys. |
+
+Example:
+
+```jsonc
+{
+  "mode": "postgres",
+  "host": "db.example.com",
+  "port": 5432,
+  "database": "analytics",
+  "username": "etl_user",
+  "password": "secret"
+}
+```
+
+### Input entry schema (`inputs_changes`)
+
+Each input entry must include **both** names for every field the pipeline reads:
+
+| Canonical field | Alias field   | The pipeline reads |
+|-----------------|---------------|--------------------|
+| `host`          | `url`         | `url`              |
+| `source_type`   | `src`         | `src`              |
+
+Both must be present because the admin UI writes one name while the pipeline reads the other. There is no automatic translation.
+
+### No field-name translation in the pipeline
+
+The pipeline's `_build_job_config()` passes `inputs[0]` and `outputs[0]` **directly** to the processing code without renaming any fields. Source documents must therefore use the **exact field names** the pipeline expects.

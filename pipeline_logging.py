@@ -173,6 +173,7 @@ class LogKeyLevelFilter(logging.Filter):
 # ---------------------------------------------------------------------------
 _EXTRA_FIELDS = (
     "log_key",
+    "job_id",  # Multi-job aware logging
     "operation",
     "doc_id",
     "seq",

@@ -33,6 +33,10 @@ class MockCBLStore:
     def get_job(self, job_id: str):
         return self.jobs_db.get(job_id)
 
+    def load_job(self, job_id: str):
+        doc_id = f"job::{job_id}"
+        return self.jobs_db.get(doc_id)
+
     def list_jobs(self):
         return list(self.jobs_db.values())
 
@@ -322,6 +326,8 @@ def test_pipeline_manager_load_enabled_jobs(logger, cbl_store, metrics):
     # Add both enabled and disabled jobs
     enabled_job = {
         "_id": "job::enabled",
+        "doc_id": "job::enabled",
+        "id": "enabled",
         "name": "Enabled Job",
         "enabled": True,
         "inputs": [{"source_type": "sync_gateway"}],
@@ -331,6 +337,8 @@ def test_pipeline_manager_load_enabled_jobs(logger, cbl_store, metrics):
 
     disabled_job = {
         "_id": "job::disabled",
+        "doc_id": "job::disabled",
+        "id": "disabled",
         "name": "Disabled Job",
         "enabled": False,
         "inputs": [{"source_type": "sync_gateway"}],

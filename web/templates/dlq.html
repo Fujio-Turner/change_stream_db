@@ -160,81 +160,176 @@
           </div>
         </div>
 
-        <!-- Filter + Table -->
+        <!-- Tabbed Interface: DLQ | Data Quality | Audit Log -->
          <div class="card bg-base-100 shadow rounded-2xl">
            <div class="card-body p-4">
-             <div class="flex items-center justify-between mb-3">
-               <h2 class="card-title text-sm">Entries</h2>
-               <div class="flex items-center gap-2">
-                 <select
-                   id="jobFilter"
-                   class="select select-bordered select-sm w-48"
-                   onchange="filterByJob(this.value)"
-                 >
-                   <option value="">All Jobs</option>
-                 </select>
-                 <select
-                   id="reasonFilter"
-                   class="select select-bordered select-sm w-48"
-                   onchange="filterByReason(this.value)"
-                 >
-                   <option value="">All Reasons</option>
-                   <option value="data_error">Data Error</option>
-                   <option value="client_error">Client Error</option>
-                   <option value="server_error">Server Error</option>
-                   <option value="connection">Connection Failure</option>
-                   <option value="shutdown">Shutdown In-flight</option>
-                   <option value="redirect">Redirect</option>
-                   <option value="unknown">Unknown</option>
-                 </select>
+             <div class="tabs tabs-bordered mb-4">
+               <input type="radio" name="dlq_tabs" class="tab text-sm" label="DLQ (Failed)" id="tab-dlq" checked onchange="switchTab('dlq')" />
+               <input type="radio" name="dlq_tabs" class="tab text-sm" label="Data Quality (Fixed)" id="tab-dq" onchange="switchTab('dq')" />
+               <input type="radio" name="dlq_tabs" class="tab text-sm" label="Audit Log (Beta)" id="tab-audit" onchange="switchTab('audit')" />
+             </div>
+
+             <!-- TAB: DLQ (Failed Documents) -->
+             <div id="content-dlq" class="tab-content">
+               <div class="flex items-center justify-between mb-3">
+                 <h2 class="card-title text-sm">Entries</h2>
+                 <div class="flex items-center gap-2">
+                   <select id="jobFilter" class="select select-bordered select-sm w-48" onchange="filterByJob(this.value)">
+                     <option value="">All Jobs</option>
+                   </select>
+                   <select id="reasonFilter" class="select select-bordered select-sm w-48" onchange="filterByReason(this.value)">
+                     <option value="">All Reasons</option>
+                     <option value="data_error">Data Error</option>
+                     <option value="client_error">Client Error</option>
+                     <option value="server_error">Server Error</option>
+                     <option value="connection">Connection Failure</option>
+                     <option value="shutdown">Shutdown In-flight</option>
+                     <option value="redirect">Redirect</option>
+                     <option value="unknown">Unknown</option>
+                   </select>
+                 </div>
+               </div>
+               <div class="overflow-x-auto">
+                 <table class="table table-sm w-full" id="dlqTable">
+                   <thead>
+                     <tr>
+                       <th class="sortable" onclick="sortTable('doc_id_original')">
+                         Doc ID
+                         <span class="sort-arrow" id="sort-doc_id_original"></span>
+                       </th>
+                       <th class="sortable" onclick="sortTable('reason')">
+                         Reason <span class="sort-arrow" id="sort-reason"></span>
+                       </th>
+                       <th class="sortable" onclick="sortTable('error')">
+                         Error <span class="sort-arrow" id="sort-error"></span>
+                       </th>
+                       <th class="sortable" onclick="sortTable('time')">
+                         Time <span class="sort-arrow" id="sort-time"></span>
+                       </th>
+                       <th class="sortable" onclick="sortTable('expires_at')">
+                         Expires
+                         <span class="sort-arrow" id="sort-expires_at"></span>
+                       </th>
+                       <th class="sortable" onclick="sortTable('replay_attempts')">
+                         Replays
+                         <span class="sort-arrow" id="sort-replay_attempts"></span>
+                       </th>
+                       <th class="sortable" onclick="sortTable('retried')">
+                         Status <span class="sort-arrow" id="sort-retried"></span>
+                       </th>
+                       <th class="w-10"></th>
+                     </tr>
+                   </thead>
+                   <tbody id="dlqTableBody">
+                     <tr>
+                       <td colspan="8" class="text-center opacity-50 py-8">
+                         Loading…
+                       </td>
+                     </tr>
+                   </tbody>
+                 </table>
+               </div>
+               <div class="flex items-center justify-between mt-3">
+                 <div class="text-xs opacity-50" id="pageInfo">—</div>
+                 <div class="join" id="pagination"></div>
                </div>
              </div>
-            <div class="overflow-x-auto">
-              <table class="table table-sm w-full" id="dlqTable">
-                <thead>
-                  <tr>
-                    <th class="sortable" onclick="sortTable('doc_id_original')">
-                      Doc ID
-                      <span class="sort-arrow" id="sort-doc_id_original"></span>
-                    </th>
-                    <th class="sortable" onclick="sortTable('reason')">
-                      Reason <span class="sort-arrow" id="sort-reason"></span>
-                    </th>
-                    <th class="sortable" onclick="sortTable('error')">
-                      Error <span class="sort-arrow" id="sort-error"></span>
-                    </th>
-                    <th class="sortable" onclick="sortTable('time')">
-                      Time <span class="sort-arrow" id="sort-time"></span>
-                    </th>
-                    <th class="sortable" onclick="sortTable('expires_at')">
-                      Expires
-                      <span class="sort-arrow" id="sort-expires_at"></span>
-                    </th>
-                    <th class="sortable" onclick="sortTable('replay_attempts')">
-                      Replays
-                      <span class="sort-arrow" id="sort-replay_attempts"></span>
-                    </th>
-                    <th class="sortable" onclick="sortTable('retried')">
-                      Status <span class="sort-arrow" id="sort-retried"></span>
-                    </th>
-                    <th class="w-10"></th>
-                  </tr>
-                </thead>
-                <tbody id="dlqTableBody">
-                  <tr>
-                    <td colspan="8" class="text-center opacity-50 py-8">
-                      Loading…
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="flex items-center justify-between mt-3">
-              <div class="text-xs opacity-50" id="pageInfo">—</div>
-              <div class="join" id="pagination"></div>
-            </div>
-          </div>
-        </div>
+
+             <!-- TAB: Data Quality (Fixed Documents) -->
+             <div id="content-dq" class="tab-content hidden">
+               <div class="flex items-center justify-between mb-3">
+                 <h2 class="card-title text-sm">Fixed Documents</h2>
+                 <div class="flex items-center gap-2">
+                   <select id="dqJobFilter" class="select select-bordered select-sm w-48" onchange="filterDQByJob(this.value)">
+                     <option value="">All Jobs</option>
+                   </select>
+                   <select id="dqTypeFilter" class="select select-bordered select-sm w-48" onchange="filterDQByType(this.value)">
+                     <option value="">All Types</option>
+                     <option value="type_coerce">Type Coerce</option>
+                     <option value="truncate">Truncate</option>
+                     <option value="overflow">Overflow</option>
+                     <option value="parse_error">Parse Error</option>
+                   </select>
+                 </div>
+               </div>
+               <div class="overflow-x-auto">
+                 <table class="table table-sm w-full" id="dqTable">
+                   <thead>
+                     <tr>
+                       <th>Doc ID</th>
+                       <th>Table</th>
+                       <th>Column</th>
+                       <th>Type</th>
+                       <th>Original</th>
+                       <th>Coerced</th>
+                       <th>Timestamp</th>
+                       <th class="w-10"></th>
+                     </tr>
+                   </thead>
+                   <tbody id="dqTableBody">
+                     <tr>
+                       <td colspan="8" class="text-center opacity-50 py-8">
+                         Loading…
+                       </td>
+                     </tr>
+                   </tbody>
+                 </table>
+               </div>
+               <div class="flex items-center justify-between mt-3">
+                 <div class="text-xs opacity-50" id="dqPageInfo">—</div>
+                 <div class="join" id="dqPagination"></div>
+               </div>
+             </div>
+
+             <!-- TAB: Audit Log (Beta) -->
+             <div id="content-audit" class="tab-content hidden">
+               <div class="flex items-center justify-between mb-3">
+                 <h2 class="card-title text-sm">Audit Log</h2>
+                 <div class="flex items-center gap-2">
+                   <select id="auditActionFilter" class="select select-bordered select-sm w-48" onchange="filterAuditByAction(this.value)">
+                     <option value="">All Actions</option>
+                     <option value="job_start">Job Start</option>
+                     <option value="job_stop">Job Stop</option>
+                     <option value="job_kill">Job Kill</option>
+                     <option value="job_restart">Job Restart</option>
+                     <option value="dlq_replay">DLQ Replay</option>
+                     <option value="dlq_clear">DLQ Clear</option>
+                     <option value="config_edit">Config Edit</option>
+                     <option value="job_delete">Job Delete</option>
+                   </select>
+                   <input type="date" id="auditDateFilter" class="input input-bordered input-sm w-40" onchange="filterAuditByDate(this.value)" />
+                 </div>
+               </div>
+               <div class="overflow-x-auto">
+                 <table class="table table-sm w-full" id="auditTable">
+                   <thead>
+                     <tr>
+                       <th>Timestamp</th>
+                       <th>Action</th>
+                       <th>User</th>
+                       <th>Resource Type</th>
+                       <th>Resource ID</th>
+                       <th>Status</th>
+                       <th>Details</th>
+                       <th class="w-10"></th>
+                     </tr>
+                   </thead>
+                   <tbody id="auditTableBody">
+                     <tr>
+                       <td colspan="8" class="text-center opacity-50 py-8">
+                         Loading…
+                       </td>
+                     </tr>
+                   </tbody>
+                 </table>
+               </div>
+               <div class="flex items-center justify-between mt-3">
+                 <div class="text-xs opacity-50" id="auditPageInfo">—</div>
+                 <div class="join" id="auditPagination"></div>
+               </div>
+             </div>
+           </div>
+         </div>
 
         <!-- Inspector panel (hidden by default) -->
         <div
@@ -1081,6 +1176,268 @@
         if (!text) return '';
         var map = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'};
         return String(text).replace(/[&<>"']/g, m => map[m]);
+      }
+
+      // ── Tab Switching ───────────────────────────────────────
+
+      function switchTab(tabName) {
+        // Hide all content
+        document.getElementById('content-dlq').classList.add('hidden');
+        document.getElementById('content-dq').classList.add('hidden');
+        document.getElementById('content-audit').classList.add('hidden');
+
+        // Show selected tab
+        var contentEl = document.getElementById('content-' + tabName);
+        if (contentEl) {
+          contentEl.classList.remove('hidden');
+          
+          // Load data for the selected tab
+          if (tabName === 'dq') {
+            loadDataQualityData();
+            populateJobSelectors();
+          } else if (tabName === 'audit') {
+            loadAuditLogData();
+          } else {
+            loadDlqData();
+            populateJobSelectors();
+          }
+        }
+      }
+
+      // ── Data Quality Tab ─────────────────────────────────────
+
+      var dqData = [];
+      var dqFiltered = [];
+      var dqCurrentPage = 0;
+      var dqPageSize = 25;
+      var dqSelectedJob = '';
+      var dqSelectedType = '';
+
+      function loadDataQualityData() {
+        fetch('/api/data_quality')
+          .then(r => r.json())
+          .then(data => {
+            dqData = Array.isArray(data) ? data : (data.items || []);
+            dqCurrentPage = 0;
+            applyDQFilters();
+            renderDQTable();
+          })
+          .catch(err => {
+            console.warn('Failed to load data quality entries:', err);
+            document.getElementById('dqTableBody').innerHTML = 
+              '<tr><td colspan="8" class="text-center opacity-50 py-8">Failed to load data quality entries</td></tr>';
+          });
+      }
+
+      function filterDQByJob(jobId) {
+        dqSelectedJob = jobId;
+        dqCurrentPage = 0;
+        applyDQFilters();
+        renderDQTable();
+      }
+
+      function filterDQByType(coerceType) {
+        dqSelectedType = coerceType;
+        dqCurrentPage = 0;
+        applyDQFilters();
+        renderDQTable();
+      }
+
+      function applyDQFilters() {
+        dqFiltered = dqData.filter(entry => {
+          var jobMatch = !dqSelectedJob || (entry.job_id === dqSelectedJob);
+          var typeMatch = !dqSelectedType || (entry.coerce_type === dqSelectedType);
+          return jobMatch && typeMatch;
+        });
+      }
+
+      function renderDQTable() {
+        var tbody = document.getElementById('dqTableBody');
+        var start = dqCurrentPage * dqPageSize;
+        var end = Math.min(start + dqPageSize, dqFiltered.length);
+        var html = '';
+
+        for (var i = start; i < end; i++) {
+          var entry = dqFiltered[i];
+          var origVal = entry.original_value !== null ? String(entry.original_value) : '—';
+          var coercedVal = entry.coerced_value !== null ? String(entry.coerced_value) : '—';
+          if (origVal.length > 30) origVal = origVal.substring(0, 27) + '...';
+          if (coercedVal.length > 30) coercedVal = coercedVal.substring(0, 27) + '...';
+
+          html += '<tr onclick="inspectDQEntry(\'' + escHtml(entry.id || entry._id) + '\')" class="dq-row cursor-pointer" data-id="' + escHtml(entry.id || entry._id) + '">';
+          html += '<td class="font-mono text-xs">' + escHtml(entry.doc_id) + '</td>';
+          html += '<td>' + escHtml(entry.table_name || '—') + '</td>';
+          html += '<td>' + escHtml(entry.column_name || '—') + '</td>';
+          html += '<td><span class="badge badge-sm">' + escHtml(entry.coerce_type) + '</span></td>';
+          html += '<td class="font-mono text-xs opacity-70">' + escHtml(origVal) + '</td>';
+          html += '<td class="font-mono text-xs">' + escHtml(coercedVal) + '</td>';
+          html += '<td class="text-xs opacity-60">' + (entry.timestamp ? formatTime(entry.timestamp) : '—') + '</td>';
+          html += '<td class="text-center"><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation(); deleteDQEntry(\'' + escHtml(entry.id || entry._id) + '\')">✕</button></td>';
+          html += '</tr>';
+        }
+
+        if (html === '') {
+          html = '<tr><td colspan="8" class="text-center opacity-50 py-8">No data quality entries found</td></tr>';
+        }
+        tbody.innerHTML = html;
+
+        document.getElementById('dqPageInfo').textContent = 
+          'Showing ' + (start + 1) + '–' + end + ' of ' + dqFiltered.length;
+        renderDQPagination();
+      }
+
+      function renderDQPagination() {
+        var container = document.getElementById('dqPagination');
+        var totalPages = Math.ceil(dqFiltered.length / dqPageSize) || 1;
+        if (totalPages <= 1) {
+          container.innerHTML = '';
+          return;
+        }
+        var html = '';
+        html += '<button class="join-item btn btn-sm' + (dqCurrentPage === 0 ? ' btn-disabled' : '') + '"' + 
+                (dqCurrentPage > 0 ? ' onclick="dqCurrentPage--; renderDQTable()"' : '') + '>«</button>';
+        for (var i = 0; i < totalPages && i < 7; i++) {
+          html += '<button class="join-item btn btn-sm' + (i === dqCurrentPage ? ' btn-active' : '') + '" onclick="dqCurrentPage=' + i + '; renderDQTable()">' + (i + 1) + '</button>';
+        }
+        html += '<button class="join-item btn btn-sm' + (dqCurrentPage >= totalPages - 1 ? ' btn-disabled' : '') + '"' + 
+                (dqCurrentPage < totalPages - 1 ? ' onclick="dqCurrentPage++; renderDQTable()"' : '') + '>»</button>';
+        container.innerHTML = html;
+      }
+
+      function inspectDQEntry(id) {
+        // Highlight row
+        var rows = document.querySelectorAll('.dq-row');
+        rows.forEach(r => r.classList.toggle('selected', r.getAttribute('data-id') === id));
+        
+        fetch('/api/data_quality/' + encodeURIComponent(id))
+          .then(r => r.json())
+          .then(entry => {
+            showToast('Data quality entry details: ' + entry.coerce_type + ' on ' + entry.column_name, 'info');
+          })
+          .catch(err => console.warn('Failed to load DQ entry:', err));
+      }
+
+      function deleteDQEntry(id) {
+        if (!confirm('Delete this data quality entry?')) return;
+        fetch('/api/data_quality/' + encodeURIComponent(id), { method: 'DELETE' })
+          .then(r => r.json())
+          .then(() => {
+            showToast('Data quality entry deleted', 'success');
+            loadDataQualityData();
+          })
+          .catch(err => {
+            console.error('Failed to delete DQ entry:', err);
+            showToast('Failed to delete entry', 'error');
+          });
+      }
+
+      // ── Audit Log Tab ────────────────────────────────────────
+
+      var auditData = [];
+      var auditFiltered = [];
+      var auditCurrentPage = 0;
+      var auditPageSize = 25;
+      var auditSelectedAction = '';
+      var auditSelectedDate = '';
+
+      function loadAuditLogData() {
+        fetch('/api/audit_log')
+          .then(r => r.json())
+          .then(data => {
+            auditData = Array.isArray(data) ? data : (data.items || []);
+            auditCurrentPage = 0;
+            applyAuditFilters();
+            renderAuditTable();
+          })
+          .catch(err => {
+            console.warn('Failed to load audit log:', err);
+            document.getElementById('auditTableBody').innerHTML = 
+              '<tr><td colspan="8" class="text-center opacity-50 py-8">Failed to load audit log</td></tr>';
+          });
+      }
+
+      function filterAuditByAction(action) {
+        auditSelectedAction = action;
+        auditCurrentPage = 0;
+        applyAuditFilters();
+        renderAuditTable();
+      }
+
+      function filterAuditByDate(dateStr) {
+        auditSelectedDate = dateStr;
+        auditCurrentPage = 0;
+        applyAuditFilters();
+        renderAuditTable();
+      }
+
+      function applyAuditFilters() {
+        auditFiltered = auditData.filter(entry => {
+          var actionMatch = !auditSelectedAction || (entry.action === auditSelectedAction);
+          var dateMatch = !auditSelectedDate || (entry.timestamp && entry.timestamp.startsWith(auditSelectedDate));
+          return actionMatch && dateMatch;
+        });
+        // Sort by timestamp descending
+        auditFiltered.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      }
+
+      function renderAuditTable() {
+        var tbody = document.getElementById('auditTableBody');
+        var start = auditCurrentPage * auditPageSize;
+        var end = Math.min(start + auditPageSize, auditFiltered.length);
+        var html = '';
+
+        for (var i = start; i < end; i++) {
+          var entry = auditFiltered[i];
+          var statusBadge = entry.status === 'success' ? 
+            '<span class="badge badge-success badge-sm">Success</span>' :
+            '<span class="badge badge-error badge-sm">Failed</span>';
+          var details = entry.details ? JSON.stringify(entry.details).substring(0, 40) + '...' : '—';
+
+          html += '<tr>';
+          html += '<td class="text-xs">' + (entry.timestamp ? formatTime(entry.timestamp) : '—') + '</td>';
+          html += '<td><span class="badge badge-sm">' + escHtml(entry.action) + '</span></td>';
+          html += '<td class="text-sm">' + escHtml(entry.user || 'system') + '</td>';
+          html += '<td>' + escHtml(entry.resource_type || '—') + '</td>';
+          html += '<td class="font-mono text-xs">' + escHtml(entry.resource_id || '—') + '</td>';
+          html += '<td>' + statusBadge + '</td>';
+          html += '<td class="text-xs opacity-70">' + escHtml(details) + '</td>';
+          html += '<td class="text-center"><button class="btn btn-ghost btn-xs" onclick="viewAuditDetail(\'' + escHtml(entry.id || entry._id) + '\')">→</button></td>';
+          html += '</tr>';
+        }
+
+        if (html === '') {
+          html = '<tr><td colspan="8" class="text-center opacity-50 py-8">No audit log entries found</td></tr>';
+        }
+        tbody.innerHTML = html;
+
+        document.getElementById('auditPageInfo').textContent = 
+          'Showing ' + (start + 1) + '–' + end + ' of ' + auditFiltered.length;
+        renderAuditPagination();
+      }
+
+      function renderAuditPagination() {
+        var container = document.getElementById('auditPagination');
+        var totalPages = Math.ceil(auditFiltered.length / auditPageSize) || 1;
+        if (totalPages <= 1) {
+          container.innerHTML = '';
+          return;
+        }
+        var html = '';
+        html += '<button class="join-item btn btn-sm' + (auditCurrentPage === 0 ? ' btn-disabled' : '') + '"' + 
+                (auditCurrentPage > 0 ? ' onclick="auditCurrentPage--; renderAuditTable()"' : '') + '>«</button>';
+        for (var i = 0; i < totalPages && i < 7; i++) {
+          html += '<button class="join-item btn btn-sm' + (i === auditCurrentPage ? ' btn-active' : '') + '" onclick="auditCurrentPage=' + i + '; renderAuditTable()">' + (i + 1) + '</button>';
+        }
+        html += '<button class="join-item btn btn-sm' + (auditCurrentPage >= totalPages - 1 ? ' btn-disabled' : '') + '"' + 
+                (auditCurrentPage < totalPages - 1 ? ' onclick="auditCurrentPage++; renderAuditTable()"' : '') + '>»</button>';
+        container.innerHTML = html;
+      }
+
+      function viewAuditDetail(id) {
+        var entry = auditFiltered.find(e => (e.id || e._id) === id);
+        if (!entry) return;
+        var details = entry.details ? JSON.stringify(entry.details, null, 2) : 'No details';
+        alert('Action: ' + entry.action + '\nUser: ' + (entry.user || 'system') + '\nStatus: ' + entry.status + '\nDetails:\n' + details);
       }
 
       // ── Init ────────────────────────────────────────────────

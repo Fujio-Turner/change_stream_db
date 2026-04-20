@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/jobs.schema.json",
+  "title": "Job Configuration",
+  "description": "Defines a job that connects input sources to output destinations with data transformations",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "job",
+      "description": "Document type identifier"
+    },
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique job identifier (UUID v4)"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable job name"
+    },
+    "description": {
+      "type": ["string", "null"],
+      "description": "Optional job description"
+    },
+    "inputs": {
+      "type": "array",
+      "description": "Array of input source definitions",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Reference to input source ID"
+          },
+          "source_type": {
+            "type": "string",
+            "enum": [
+              "sync_gateway",
+              "app_services",
+              "edge_server",
+              "couchdb"
+            ]
+          },
+          "host": {
+            "type": "string"
+          },
+          "database": {
+            "type": ["string", "null"]
+          },
+          "scope": {
+            "type": ["string", "null"]
+          },
+          "collection": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": ["id"],
+        "additionalProperties": true
+      },
+      "minItems": 1
+    },
+    "outputs": {
+      "type": "array",
+      "description": "Array of output destination definitions",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "minItems": 1
+    },
+    "output_type": {
+      "type": "string",
+      "enum": [
+        "rdbms",
+        "http",
+        "cloud",
+        "stdout"
+      ],
+      "description": "Type of output destination"
+    },
+    "system": {
+      "type": ["object", "null"],
+      "description": "System-level configuration",
+      "additionalProperties": true
+    },
+    "mapping": {
+      "type": ["object", "null"],
+      "description": "Schema mapping configuration for data transformation",
+      "properties": {
+        "rules": {
+          "type": ["array", "null"],
+          "description": "Transformation rules"
+        },
+        "filters": {
+          "type": ["object", "null"],
+          "description": "Data filtering rules"
+        }
+      },
+      "additionalProperties": true
+    },
+    "state": {
+      "type": "object",
+      "description": "Current job execution state",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "running",
+            "paused",
+            "stopped",
+            "error"
+          ],
+          "description": "Current job status"
+        },
+        "last_updated": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timestamp of last state change"
+        },
+        "error_message": {
+          "type": ["string", "null"],
+          "description": "Error details if status is error"
+        }
+      },
+      "required": ["status"]
+    },
+    "enabled": {
+      "type": ["boolean", "null"],
+      "default": true,
+      "description": "Whether this job is enabled"
+    },
+    "created_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Job creation timestamp"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Last update timestamp"
+    }
+  },
+  "required": [
+    "type",
+    "id",
+    "name",
+    "inputs",
+    "outputs",
+    "output_type",
+    "state"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "job",
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "Hotel Sync Job",
+      "description": "Syncs hotel data from Couchbase to PostgreSQL",
+      "inputs": [
+        {
+          "id": "source-1",
+          "source_type": "sync_gateway",
+          "host": "192.168.1.100",
+          "database": "travel-sample",
+          "scope": "inventory",
+          "collection": "hotels"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "postgres-prod",
+          "database_type": "postgres",
+          "host": "db.example.com",
+          "database": "production"
+        }
+      ],
+      "output_type": "rdbms",
+      "mapping": {
+        "rules": [
+          {
+            "source": "type",
+            "destination": "doc_type"
+          }
+        ]
+      },
+      "state": {
+        "status": "running",
+        "last_updated": "2024-01-15T10:30:00Z"
+      },
+      "enabled": true
+    }
+  ]
+}

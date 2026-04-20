@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/data_quality.schema.json",
+  "title": "Data Quality Metrics",
+  "description": "Tracks data quality metrics, anomalies, and validation results",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "data_quality",
+      "description": "Document type identifier"
+    },
+    "job_id": {
+      "type": "string",
+      "description": "Associated job ID"
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "Unix timestamp of measurement"
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Quality metrics",
+      "properties": {
+        "total_records_processed": {
+          "type": "integer",
+          "description": "Total records processed in this period"
+        },
+        "valid_records": {
+          "type": "integer",
+          "description": "Records that passed validation"
+        },
+        "invalid_records": {
+          "type": "integer",
+          "description": "Records that failed validation"
+        },
+        "null_field_count": {
+          "type": "integer",
+          "description": "Count of null/missing fields"
+        },
+        "duplicate_count": {
+          "type": "integer",
+          "description": "Count of duplicate records detected"
+        },
+        "transformation_errors": {
+          "type": "integer",
+          "description": "Count of transformation failures"
+        }
+      },
+      "additionalProperties": true
+    },
+    "anomalies": {
+      "type": ["array", "null"],
+      "description": "Detected data anomalies",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Anomaly type"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "validation_rules_applied": {
+      "type": ["array", "null"],
+      "description": "List of validation rules used"
+    }
+  },
+  "required": [
+    "type",
+    "job_id",
+    "timestamp",
+    "metrics"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "data_quality",
+      "job_id": "550e8400-e29b-41d4-a716-446655440000",
+      "timestamp": 1705324200,
+      "metrics": {
+        "total_records_processed": 1000,
+        "valid_records": 985,
+        "invalid_records": 15,
+        "null_field_count": 8,
+        "duplicate_count": 0,
+        "transformation_errors": 0
+      },
+      "anomalies": []
+    }
+  ]
+}

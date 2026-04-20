@@ -1,0 +1,185 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                    JSON SCHEMA QUICK REFERENCE                             ║
+║                     changes-worker Scope Collections                        ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+SCOPE: changes-worker
+DATABASE: changes_worker_db
+SCHEMA STANDARD: JSON Schema 2020-12
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CORE PIPELINE COLLECTIONS                                                   │
+├──────────────────────────────┬──────────────────────────────────────────────┤
+│ inputs_changes               │ Data source definitions                      │
+│ └─ type: "inputs_changes"    │ 1 document, singleton                       │
+│ └─ src: [InputSource]        │ Contains array of input configs             │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ outputs_rdbms                │ Relational database (MySQL, Postgres, MSSQL) │
+│ └─ type: "outputs_rdbms"     │ 1 document, singleton                       │
+│ └─ src: [RDBMSOutput]        │ Contains array of database configs          │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ outputs_http                 │ HTTP/REST endpoints                          │
+│ └─ type: "outputs_http"      │ 1 document, singleton                       │
+│ └─ src: [HTTPOutput]         │ Contains array of HTTP configs              │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ outputs_cloud                │ Cloud storage (S3, GCS, Azure, Oracle)      │
+│ └─ type: "outputs_cloud"     │ 1 document, singleton                       │
+│ └─ src: [CloudOutput]        │ Contains array of cloud configs             │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ outputs_stdout               │ Console/logging output                       │
+│ └─ type: "outputs_stdout"    │ 1 document, singleton                       │
+│ └─ src: [StdoutOutput]       │ Contains array of log configs               │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ jobs                         │ Data pipeline job definitions                │
+│ └─ type: "job"               │ Multiple documents (UUID IDs)               │
+│ └─ id: UUID                  │ Connects inputs → outputs with mapping      │
+│ └─ inputs: [InputSource]     │                                            │
+│ └─ outputs: [OutputDest]     │                                            │
+│ └─ output_type: string       │ Enum: rdbms|http|cloud|stdout              │
+│ └─ mapping: Object           │ Data transformation rules                   │
+│ └─ state: Object             │ Job execution state                         │
+└──────────────────────────────┴──────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RUNTIME COLLECTIONS                                                         │
+├──────────────────────────────┬──────────────────────────────────────────────┤
+│ checkpoints                  │ Change feed progress tracking               │
+│ └─ doc_id: "checkpoint:{jid}"│ One per job, tracks sequence numbers       │
+│ └─ type: "checkpoint"        │                                            │
+│ └─ client_id: string         │ Job ID                                      │
+│ └─ SGs_Seq: string           │ Last processed sequence number              │
+│ └─ time: int                 │ Unix timestamp                              │
+│ └─ remote: int               │ Remote counter                              │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ dlq (Dead Letter Queue)      │ Failed documents for retry/analysis         │
+│ └─ doc_id: "dlq:{id}:{ts}"   │ One per failure, TTL-expired (7d default)  │
+│ └─ type: "dlq"               │                                            │
+│ └─ doc_id_original: string   │ Original document ID                        │
+│ └─ seq: string               │ Sequence number                             │
+│ └─ status: int               │ HTTP status code                            │
+│ └─ error: string             │ Error message                               │
+│ └─ reason: string            │ Category (timeout|validation|4xx|5xx)      │
+│ └─ retried: bool             │ Retry attempt flag                          │
+│ └─ doc_data: string          │ JSON of original document                   │
+└──────────────────────────────┴──────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ INFRASTRUCTURE & QUALITY COLLECTIONS                                        │
+├──────────────────────────────┬──────────────────────────────────────────────┤
+│ config                       │ System configuration                         │
+│ └─ doc_id: "config"          │ 1 document, singleton                       │
+│ └─ type: "config"            │                                            │
+│ └─ logging: Object           │ Log level, format, output                   │
+│ └─ database: Object          │ Pool size, timeouts                         │
+│ └─ performance: Object       │ Batch size, workers, queue limits           │
+│ └─ security: Object          │ SSL, encryption keys                        │
+│ └─ monitoring: Object        │ Metrics, health checks                      │
+│ └─ dlq: Object               │ TTL, max retries                            │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ data_quality                 │ Quality metrics and anomalies               │
+│ └─ doc_id: "dq:{jid}:{ts}"   │ Per job, per time period                   │
+│ └─ type: "data_quality"      │                                            │
+│ └─ job_id: string            │ Associated job                              │
+│ └─ metrics: Object           │ Counts (valid, invalid, duplicates, etc)    │
+│ └─ anomalies: Array          │ Detected issues with severity               │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ enrichments                  │ Data transformation and lookup rules        │
+│ └─ doc_id: custom            │ Multiple enrichment definitions             │
+│ └─ type: "enrichment"        │                                            │
+│ └─ name: string              │ Human-readable name                         │
+│ └─ enrichment_type: string   │ Type (lookup|js|sql|api|groovy|semantic)   │
+│ └─ source_field: string      │ Input field                                 │
+│ └─ target_field: string      │ Output field                                │
+│ └─ rule_config: Object       │ Type-specific config                        │
+│ └─ lookup_table: Object      │ For lookup_table type                       │
+└──────────────────────────────┴──────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ FUTURE COLLECTIONS (Auth & Observability)                                   │
+├──────────────────────────────┬──────────────────────────────────────────────┤
+│ users                        │ User accounts & access control              │
+│ └─ doc_id: "{username}"      │ One per user                                │
+│ └─ username: string          │ Unique login name                           │
+│ └─ roles: Array              │ [admin|operator|viewer|analyst]             │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ sessions                     │ Session tokens & authentication state       │
+│ └─ doc_id: "session:{hash}"  │ One per active session                      │
+│ └─ token: string             │ JWT or opaque token                         │
+│ └─ expires_at: int           │ Unix timestamp                              │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ audit_log                    │ Compliance audit trail                      │
+│ └─ doc_id: "audit:{ts}:{uuid}"│ One per action                             │
+│ └─ action: string            │ [create|read|update|delete|start|stop]     │
+│ └─ user: string              │ Username of actor                           │
+│ └─ resource_type: string     │ Type affected                               │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ notifications                │ System alerts and events                    │
+│ └─ doc_id: "{notif_id}"      │ One per notification                        │
+│ └─ severity: string          │ [info|warning|error|critical]               │
+│ └─ category: string          │ [job_status|data_quality|etc]               │
+│ └─ recipients: Array         │ Usernames to notify                         │
+└──────────────────────────────┴──────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ DEPRECATED COLLECTIONS                                                      │
+├──────────────────────────────┬──────────────────────────────────────────────┤
+│ mappings                     │ Schema mappings (DEPRECATED in v2.0)        │
+│ └─ doc_id: "{mapping_name}"  │ Migrate to job.mapping field               │
+│ └─ type: "mapping"           │                                            │
+└──────────────────────────────┴──────────────────────────────────────────────┘
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║ COMMON OPERATIONS                                                          ║
+╠════════════════════════════════════════════════════════════════════════════╣
+║                                                                            ║
+║ CREATE JOB                        VALIDATE DOCUMENT                       ║
+║ ───────────────────────────────   ───────────────────────────────────── ║
+║ 1. Define input (inputs_changes)  jsonschema.validate(doc, schema)      ║
+║ 2. Define output (outputs_*)      Check: type, required fields, enums   ║
+║ 3. Create job (jobs)              Use: json_schema/{coll}/schema.json   ║
+║ 4. Create checkpoint (checkpoints)                                       ║
+║                                                                            ║
+║ QUERY EXAMPLES                    FIELD REFERENCE                        ║
+║ ───────────────────────────────   ───────────────────────────────────── ║
+║ List jobs:                        Common Fields:                         ║
+║  SELECT * FROM jobs               - type (required, const)              ║
+║   WHERE type = 'job'              - id (required, UUID)                 ║
+║                                   - created_at (ISO 8601)               ║
+║ List DLQ:                         - updated_at (ISO 8601)               ║
+║  SELECT * FROM dlq                                                       ║
+║   WHERE type = 'dlq'              Enums:                                 ║
+║   ORDER BY time DESC              - output_type: rdbms|http|cloud|      ║
+║                                     stdout                               ║
+║ Get checkpoint:                   - job.status: idle|running|paused|    ║
+║  SELECT * FROM checkpoints         stopped|error                        ║
+║   WHERE client_id = '{job_id}'    - severity: info|warning|error|       ║
+║                                     critical                             ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+DOCUMENTATION:
+  - Full docs:        json_schema/README.md
+  - Collections:      json_schema/COLLECTIONS_SUMMARY.md
+  - File index:       json_schema/INDEX.md
+  - This reference:   json_schema/QUICK_REFERENCE.txt
+
+SCHEMA FILES:
+  - All files in:     json_schema/changes-worker/{collection}/schema.json
+  - Standards:        JSON Schema 2020-12
+  - Validation:       All POST/PUT in REST API
+
+PYTHON INTEGRATION:
+  from cbl_store import CBLStore
+  store = CBLStore()
+  
+  # List operations
+  jobs = store.list_jobs()
+  dlq = store.list_dlq()
+  
+  # Load operations
+  job = store.load_job(job_id)
+  checkpoint = store.load_checkpoint(job_id)
+  
+  # Save operations
+  store.save_job(job_id, job_doc)
+  store.save_checkpoint(job_id, checkpoint_doc)
+

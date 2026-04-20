@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/inputs_changes.schema.json",
+  "title": "Inputs Changes Configuration",
+  "description": "Defines input sources feeding into the pipeline. Manages data sources like Couchbase, CouchDB, or other systems.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "inputs_changes",
+      "description": "Document type identifier"
+    },
+    "src": {
+      "type": "array",
+      "description": "Array of input source definitions",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this input source"
+          },
+          "source_type": {
+            "type": "string",
+            "enum": [
+              "sync_gateway",
+              "app_services",
+              "edge_server",
+              "couchdb"
+            ],
+            "description": "Type of data source"
+          },
+          "host": {
+            "type": "string",
+            "description": "Hostname or IP address of the source"
+          },
+          "port": {
+            "type": ["integer", "null"],
+            "description": "Port number (if applicable)"
+          },
+          "database": {
+            "type": ["string", "null"],
+            "description": "Database name on the source"
+          },
+          "scope": {
+            "type": ["string", "null"],
+            "description": "Scope name (for Couchbase)"
+          },
+          "collection": {
+            "type": ["string", "null"],
+            "description": "Collection name (for Couchbase)"
+          },
+          "username": {
+            "type": ["string", "null"],
+            "description": "Authentication username"
+          },
+          "password": {
+            "type": ["string", "null"],
+            "description": "Authentication password (should be encrypted)"
+          },
+          "ssl": {
+            "type": ["boolean", "null"],
+            "description": "Enable SSL/TLS connection"
+          },
+          "continuous": {
+            "type": ["boolean", "null"],
+            "default": true,
+            "description": "Enable continuous change feeds"
+          }
+        },
+        "required": ["id", "source_type", "host"],
+        "additionalProperties": true
+      },
+      "minItems": 1
+    },
+    "meta": {
+      "type": ["object", "null"],
+      "description": "Metadata for tracking and audit purposes"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update"
+    }
+  },
+  "required": ["type", "src"],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "inputs_changes",
+      "src": [
+        {
+          "id": "source-1",
+          "source_type": "sync_gateway",
+          "host": "192.168.1.100",
+          "port": 4984,
+          "database": "travel-sample",
+          "scope": "inventory",
+          "collection": "hotels",
+          "username": "admin",
+          "ssl": true,
+          "continuous": true
+        }
+      ],
+      "updated_at": "2024-01-15T10:30:00Z"
+    }
+  ]
+}
