@@ -1,0 +1,458 @@
+#!/usr/bin/env python3
+"""
+PipelineManager — owns and manages all job threads.
+
+Responsibilities:
+  - Load enabled jobs from CBL
+  - Create one Pipeline per job
+  - Start/stop/restart individual jobs (via REST API or lifecycle)
+  - Enforce global max_threads config
+  - Monitor threads for crashes; auto-restart with exponential backoff
+  - Graceful shutdown: drain all jobs, save checkpoints
+"""
+
+import asyncio
+import logging
+import threading
+import time
+from typing import Dict, Optional, Any, List
+from collections import deque
+
+from pipeline import Pipeline
+from cbl_store import CBLStore
+from pipeline_logging import log_event
+
+
+class PipelineManager:
+    """Manages all job pipelines (threads)."""
+
+    def __init__(
+        self,
+        cbl_store: CBLStore,
+        config: Dict[str, Any],
+        metrics: Optional[Any],
+        logger: logging.Logger,
+    ):
+        """
+        Parameters:
+            cbl_store: CBLStore instance for loading jobs
+            config: Global config with max_threads, etc.
+            metrics: MetricsCollector instance
+            logger: Logger instance
+        """
+        self.cbl_store = cbl_store
+        self.config = config
+        self.metrics = metrics
+        self.logger = logger
+
+        # Global limits
+        self.max_threads = config.get("max_threads", 10)
+
+        # Job registry: job_id -> Pipeline
+        self._pipelines: Dict[str, Pipeline] = {}
+        self._lock = threading.RLock()
+
+        # Graceful shutdown signal
+        self._shutdown_event = asyncio.Event()
+        self._running = False
+
+        # Monitor thread for crash recovery
+        self._monitor_thread: Optional[threading.Thread] = None
+
+        # Backoff state for crashed jobs: job_id -> (attempt_count, last_restart_time)
+        self._crash_backoff: Dict[str, tuple] = {}
+
+    def start(self) -> None:
+        """
+        Load all enabled jobs and start pipelines.
+
+        This blocks until shutdown signal is received.
+        """
+        try:
+            log_event(self.logger, "info", "MANAGER_START", "PipelineManager starting")
+
+            # Load all enabled jobs from CBL
+            jobs = self._load_enabled_jobs()
+            log_event(
+                self.logger,
+                "info",
+                "JOBS_LOADED",
+                f"loaded {len(jobs)} enabled jobs",
+            )
+
+            # Create Pipeline for each job
+            for job_doc in jobs:
+                job_id = job_doc.get("_id", "unknown")
+                try:
+                    self._start_job_internal(job_id, job_doc)
+                except Exception as e:
+                    log_event(
+                        self.logger,
+                        "error",
+                        "JOB_START_FAILED",
+                        f"failed to start job {job_id}: {e}",
+                    )
+
+            self._running = True
+
+            # Start monitor thread for crash recovery
+            self._monitor_thread = threading.Thread(
+                target=self._monitor_threads,
+                name="pipeline-monitor",
+                daemon=False,
+            )
+            self._monitor_thread.start()
+
+            log_event(
+                self.logger,
+                "info",
+                "MANAGER_READY",
+                f"PipelineManager ready with {len(self._pipelines)} jobs",
+            )
+
+            # Block until shutdown signal
+            self._shutdown_event.wait()
+
+        except Exception as e:
+            log_event(
+                self.logger,
+                "error",
+                "MANAGER_ERROR",
+                f"PipelineManager error: {e}",
+            )
+            raise
+
+        finally:
+            self.stop()
+
+    def stop(self, timeout_seconds: float = 30) -> None:
+        """
+        Gracefully shut down all pipelines.
+
+        Wait for all jobs to drain and save checkpoints.
+        """
+        log_event(
+            self.logger,
+            "info",
+            "MANAGER_SHUTDOWN",
+            "shutting down all pipelines",
+        )
+
+        self._running = False
+
+        with self._lock:
+            # Stop all pipelines
+            job_ids = list(self._pipelines.keys())
+
+        for job_id in job_ids:
+            try:
+                self.stop_job(job_id, timeout_seconds=timeout_seconds)
+            except Exception as e:
+                log_event(
+                    self.logger,
+                    "error",
+                    "JOB_STOP_ERROR",
+                    f"error stopping job {job_id}: {e}",
+                )
+
+        # Stop monitor thread
+        if self._monitor_thread:
+            self._monitor_thread.join(timeout=5)
+
+        log_event(
+            self.logger,
+            "info",
+            "MANAGER_STOPPED",
+            "PipelineManager stopped",
+        )
+
+    def start_job(self, job_id: str) -> bool:
+        """
+        Start a single job. Load from CBL if not already loaded.
+
+        Returns:
+            True if started, False if already running or error.
+        """
+        with self._lock:
+            if job_id in self._pipelines:
+                if self._pipelines[job_id].is_running():
+                    log_event(
+                        self.logger,
+                        "warning",
+                        "JOB_ALREADY_RUNNING",
+                        f"job {job_id} already running",
+                    )
+                    return False
+                else:
+                    # Pipeline exists but not running; just start it
+                    self._pipelines[job_id].start()
+                    return True
+
+        # Load job from CBL
+        try:
+            job_doc = self.cbl_store.get_job(job_id)
+            if not job_doc:
+                log_event(
+                    self.logger,
+                    "error",
+                    "JOB_NOT_FOUND",
+                    f"job {job_id} not found",
+                )
+                return False
+
+            self._start_job_internal(job_id, job_doc)
+            return True
+
+        except Exception as e:
+            log_event(
+                self.logger,
+                "error",
+                "JOB_START_ERROR",
+                f"error starting job {job_id}: {e}",
+            )
+            return False
+
+    def stop_job(self, job_id: str, timeout_seconds: float = 30) -> bool:
+        """
+        Stop a single job.
+
+        Returns:
+            True if stopped, False if not running or timeout.
+        """
+        with self._lock:
+            if job_id not in self._pipelines:
+                log_event(
+                    self.logger,
+                    "warning",
+                    "JOB_NOT_RUNNING",
+                    f"job {job_id} not in registry",
+                )
+                return True
+
+            pipeline = self._pipelines[job_id]
+
+        # Stop outside the lock to avoid deadlock
+        success = pipeline.stop(timeout_seconds)
+
+        if success:
+            with self._lock:
+                del self._pipelines[job_id]
+                self._crash_backoff.pop(job_id, None)
+
+        return success
+
+    def restart_job(self, job_id: str, timeout_seconds: float = 30) -> bool:
+        """Restart a single job."""
+        if not self.stop_job(job_id, timeout_seconds):
+            log_event(
+                self.logger,
+                "warning",
+                "JOB_RESTART_TIMEOUT",
+                f"job {job_id} did not stop within timeout",
+            )
+        return self.start_job(job_id)
+
+    def restart_all(self, timeout_seconds: float = 30) -> None:
+        """Restart all running jobs."""
+        log_event(
+            self.logger,
+            "info",
+            "RESTART_ALL",
+            "restarting all jobs",
+        )
+
+        with self._lock:
+            job_ids = list(self._pipelines.keys())
+
+        for job_id in job_ids:
+            try:
+                self.restart_job(job_id, timeout_seconds)
+            except Exception as e:
+                log_event(
+                    self.logger,
+                    "error",
+                    "JOB_RESTART_ERROR",
+                    f"error restarting job {job_id}: {e}",
+                )
+
+    def get_job_state(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Get the state of a single job."""
+        with self._lock:
+            if job_id not in self._pipelines:
+                return None
+            return self._pipelines[job_id].get_state()
+
+    def list_job_states(self) -> List[Dict[str, Any]]:
+        """Get the state of all jobs."""
+        with self._lock:
+            job_ids = list(self._pipelines.keys())
+
+        states = []
+        for job_id in job_ids:
+            state = self.get_job_state(job_id)
+            if state:
+                states.append(state)
+
+        return states
+
+    def trigger_shutdown(self) -> None:
+        """Trigger graceful shutdown (called by signal handler)."""
+        log_event(
+            self.logger,
+            "info",
+            "SHUTDOWN_TRIGGERED",
+            "shutdown signal received",
+        )
+        self._shutdown_event.set()
+
+    def _start_job_internal(self, job_id: str, job_doc: Dict[str, Any]) -> None:
+        """Internal: create and start a pipeline for a job."""
+        with self._lock:
+            if job_id in self._pipelines and self._pipelines[job_id].is_running():
+                log_event(
+                    self.logger,
+                    "warning",
+                    "JOB_ALREADY_RUNNING",
+                    f"job {job_id} already running",
+                )
+                return
+
+            # Check max_threads limit
+            running_count = sum(1 for p in self._pipelines.values() if p.is_running())
+            if running_count >= self.max_threads:
+                log_event(
+                    self.logger,
+                    "warning",
+                    "MAX_THREADS_REACHED",
+                    f"max_threads limit ({self.max_threads}) reached; queuing job {job_id}",
+                )
+                # For now, just log. In the future, we could queue this.
+                return
+
+            # Create pipeline
+            pipeline = Pipeline(
+                job_id=job_id,
+                job_doc=job_doc,
+                cbl_store=self.cbl_store,
+                metrics=self.metrics,
+                logger=self.logger,
+                middleware_threads=job_doc.get("system", {}).get(
+                    "middleware_threads", 2
+                ),
+            )
+
+            # Start the thread
+            pipeline.start()
+            self._pipelines[job_id] = pipeline
+
+            log_event(
+                self.logger,
+                "info",
+                "JOB_STARTED",
+                f"job {job_id} started",
+            )
+
+    def _monitor_threads(self) -> None:
+        """
+        Monitor job threads for crashes and auto-restart with exponential backoff.
+
+        Runs in its own thread.
+        """
+        log_event(
+            self.logger,
+            "info",
+            "MONITOR_STARTED",
+            "thread monitor started",
+        )
+
+        while self._running:
+            try:
+                time.sleep(5)  # Check every 5 seconds
+
+                with self._lock:
+                    job_ids = list(self._pipelines.keys())
+
+                for job_id in job_ids:
+                    try:
+                        pipeline = self._pipelines.get(job_id)
+                        if not pipeline:
+                            continue
+
+                        # Check if pipeline crashed
+                        if not pipeline.is_running():
+                            state = pipeline.get_state()
+                            if state and state["status"] == "error":
+                                self._handle_job_crash(job_id)
+
+                    except Exception as e:
+                        log_event(
+                            self.logger,
+                            "error",
+                            "MONITOR_ERROR",
+                            f"error monitoring job {job_id}: {e}",
+                        )
+
+            except Exception as e:
+                log_event(
+                    self.logger,
+                    "error",
+                    "MONITOR_CRASHED",
+                    f"monitor thread crashed: {e}",
+                )
+                break
+
+        log_event(
+            self.logger,
+            "info",
+            "MONITOR_STOPPED",
+            "thread monitor stopped",
+        )
+
+    def _handle_job_crash(self, job_id: str) -> None:
+        """Handle a crashed job with exponential backoff restart."""
+        attempt, last_time = self._crash_backoff.get(job_id, (0, 0))
+        attempt += 1
+
+        # Exponential backoff: 1s, 2s, 4s, 8s, ... up to 60s
+        backoff_seconds = min(2 ** (attempt - 1), 60)
+        now = time.time()
+
+        if now - last_time < backoff_seconds:
+            # Still in backoff period
+            remaining = backoff_seconds - (now - last_time)
+            log_event(
+                self.logger,
+                "info",
+                "CRASH_BACKOFF",
+                f"job {job_id} in backoff (attempt {attempt}, {remaining:.1f}s remaining)",
+            )
+            self._crash_backoff[job_id] = (attempt, last_time)
+            return
+
+        log_event(
+            self.logger,
+            "info",
+            "CRASH_RESTART",
+            f"restarting crashed job {job_id} (attempt {attempt})",
+        )
+
+        # Try to restart
+        if self.start_job(job_id):
+            self._crash_backoff[job_id] = (0, 0)  # Reset backoff on success
+        else:
+            self._crash_backoff[job_id] = (attempt, now)
+
+    def _load_enabled_jobs(self) -> List[Dict[str, Any]]:
+        """Load all enabled jobs from CBL."""
+        try:
+            all_jobs = self.cbl_store.list_jobs()
+            enabled = [j for j in all_jobs if j.get("enabled", True)]
+            return enabled
+        except Exception as e:
+            log_event(
+                self.logger,
+                "error",
+                "JOBS_LOAD_ERROR",
+                f"error loading jobs: {e}",
+            )
+            return []

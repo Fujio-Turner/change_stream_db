@@ -94,6 +94,7 @@ from pipeline_logging import (
     configure_logging,
     log_event,
 )
+from pipeline_manager import PipelineManager
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -2909,12 +2910,12 @@ def main() -> None:
                 )
             )
 
-        # ── Phase 6: Job-Based Startup ────────────────────────────────
-        # Load enabled jobs and start pipeline for each
+        # ── Phase 6: PipelineManager-Based Job Orchestration ────────────
         db = None
         if USE_CBL:
             db = CBLStore()
 
+        # Load enabled jobs for backward compatibility check
         enabled_jobs = []
         if db:
             enabled_jobs = load_enabled_jobs(db)
@@ -2932,103 +2933,33 @@ def main() -> None:
             # Keep running for UI management
             log_event(logger, "info", "CONTROL", "waiting for jobs via web UI")
 
-        # ── Restart loop: reload config & re-enter poll_changes ──────
-        while not shutdown_event.is_set():
-            restart_event.clear()
+        # Create PipelineManager
+        pipeline_manager = PipelineManager(
+            cbl_store=db,
+            config=cfg,
+            metrics=metrics,
+            logger=logger,
+        )
 
-            # Reload jobs on each restart
-            if db:
-                enabled_jobs = load_enabled_jobs(db)
+        # Wire signal handler to PipelineManager
+        def _pipeline_signal_handler() -> None:
+            logger.info("Shutdown signal received")
+            pipeline_manager.trigger_shutdown()
 
-            if not enabled_jobs:
-                logger.warning(
-                    "No enabled jobs – waiting for jobs to be created via UI"
-                )
-                loop.run_until_complete(asyncio.sleep(5))
-                continue
+        # Replace signal handler with PipelineManager-aware one
+        loop.remove_signal_handler(signal.SIGINT)
+        loop.remove_signal_handler(signal.SIGTERM)
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, _pipeline_signal_handler)
 
-            # Start pipeline for each enabled job
-            log_event(
-                logger,
-                "info",
-                "PROCESSING",
-                f"starting {len(enabled_jobs)} job(s) (feed_type={cfg.get('changes_feed', {}).get('feed_type', 'longpoll')})",
-            )
-
-            # Create tasks for each job
-            job_tasks = []
-            for job_doc in enabled_jobs:
-                try:
-                    job_config = build_pipeline_config_from_job(job_doc)
-                    job_id = job_doc.get("_id") or job_doc.get("id")
-                    log_event(
-                        logger,
-                        "info",
-                        "PROCESSING",
-                        f"starting job: {job_doc.get('name')} ({job_id})",
-                    )
-
-                    # Create task for this job
-                    task = asyncio.create_task(
-                        poll_changes(
-                            job_config,
-                            src,
-                            shutdown_event,
-                            metrics=metrics,
-                            restart_event=restart_event,
-                            job_id=job_id,  # Phase 6: pass job_id
-                        )
-                    )
-                    job_tasks.append(task)
-                except Exception as e:
-                    logger.error(f"Failed to start job {job_doc.get('name')}: {e}")
-
-            # Wait for all job pipelines to complete
-            if job_tasks:
-                loop.run_until_complete(
-                    asyncio.gather(*job_tasks, return_exceptions=True)
-                )
-            else:
-                # No jobs – wait a bit and restart
-                loop.run_until_complete(asyncio.sleep(5))
-
-            if shutdown_event.is_set():
-                break
-
-            # If offline, wait until online or shutdown
-            if offline_event.is_set():
-                log_event(
-                    logger,
-                    "info",
-                    "CONTROL",
-                    "worker is offline – waiting for /_online signal",
-                )
-                while offline_event.is_set() and not shutdown_event.is_set():
-                    loop.run_until_complete(asyncio.sleep(0.5))
-                if shutdown_event.is_set():
-                    break
-                restart_event.clear()
-                log_event(logger, "info", "CONTROL", "worker is back online")
-
-            # restart_event was set — reload config and restart
-            log_event(logger, "info", "CONTROL", "reloading config for restart")
-            cfg = load_config(args.config)
-            _ensure_full_logging_config(cfg)
-            configure_logging(cfg.get("logging", {}))
-            src, warnings, errors = validate_config(cfg)
-            if errors:
-                for e in errors:
-                    logger.error("CONFIG ERROR: %s", e)
-                logger.error(
-                    "Config has errors – keeping previous feed running would have stopped; shutting down"
-                )
-                break
-            for w in warnings:
-                logger.warning("CONFIG WARNING: %s", w)
-            log_event(logger, "info", "CONTROL", "config reloaded – restarting feed")
+        # Start PipelineManager (blocks until shutdown)
+        pipeline_manager.start()
 
     except KeyboardInterrupt:
         logger.info("Interrupted")
+    except Exception as e:
+        logger.error("Fatal error: %s", e)
+        logger.exception("Exception details:")
     finally:
         if cbl_scheduler is not None:
             cbl_scheduler.stop()

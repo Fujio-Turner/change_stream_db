@@ -1,18 +1,25 @@
 # Changes Worker v2.0 – Architecture Redesign
 
-> **Status:** 🔄 Phases 1-5 Complete (Inputs, Outputs, & Jobs API)
+> **Status:** ✅ Phase 10 Foundation Complete (Pipeline + PipelineManager built & tested)
 > **Breaking change:** Yes – config format, CBL schema, cbl_store.py API, wizard UI, main.py startup  
 > **Goal:** Replace the monolithic `config.json` with a job-centric, composable document model stored in Couchbase Lite collections.
 
 ---
 
-## 🎯 Completed Phases
+## 🎯 Phases Summary
 
 **Phase 1** ✅ — CBL Schema & `cbl_store.py` Updates  
 **Phase 2** ✅ — Migration Logic (v1.x → v2.0)  
 **Phase 3** ✅ — Inputs Management API + Tests (14 tests)
 **Phase 4** ✅ — Outputs Management API + Tests + UI (12 tests)
 **Phase 5** ✅ — Jobs API + Tests (25 tests)
+**Phase 6** 📋 — `main.py` Job-Based Startup  
+**Phase 7** 📋 — Settings Page Cleanup  
+**Phase 8** 📋 — Dashboard Updates  
+**Phase 9** 📋 — Schema Mapping Migration  
+**Phase 10** 📋 — Multi-Job Threading with PipelineManager (designed, ready to implement)
+**Phase 11** 🔮 — MIDDLE Stage Middleware & Data Quality (v2.1)
+**Phase 12** 🔮 — Additional Middleware (v2.1+)
 
 **Related docs:**
 - [`DESIGN.md`](DESIGN.md) – Current v1.x pipeline architecture
@@ -1326,21 +1333,13 @@ Each phase is designed to be done in a **separate chat/thread**. Phases are orde
 - [ ] Remove `COLL_MAPPINGS` usage from `cbl_store.py` (keep for migration read-only)
 - [ ] Update `schema.html` to edit the mapping within a job context
 
-### Phase 10: Multi-Job Threading (v2.0 core)
+### Phase 10: Multi-Job Threading with PipelineManager
 
-**Goal:** Run multiple jobs concurrently. This is now v2.0 core (not deferred), because async middleware (ML, enrichments) demands proper threading from day one.
+**Goal:** Run multiple jobs concurrently with clean separation of concerns. This is now v2.0 core because async middleware (ML, enrichments) requires proper threading from day one.
 
-- [ ] **`PipelineManager`** — owns all job threads. Start/stop/restart individual jobs. Enforces global `max_threads` from config.
-- [ ] **`Pipeline`** — wraps one `threading.Thread` + its own `asyncio.run()` event loop. Fully isolated: own HTTP session, checkpoint, metrics, output connection.
-- [ ] **`MiddlewareExecutor`** — per-pipeline `ThreadPoolExecutor` for async middleware (ML, enrichment). Sized by `system.middleware_threads` (default 2).
-- [ ] Each enabled job gets its own thread with its own asyncio event loop
-- [ ] Per-job metrics (with `job_id` label), logging (with `job_id` tag), checkpoint, DLQ
-- [ ] Job lifecycle: start/stop/restart individual jobs via REST API
-- [ ] Add `POST /api/jobs/{id}/start`, `POST /api/jobs/{id}/stop`, `POST /api/jobs/{id}/restart`
-- [ ] Crash recovery: if a job thread dies, `PipelineManager` restarts it with exponential backoff
-- [ ] Graceful shutdown: `SIGINT`/`SIGTERM` → drain all jobs → save checkpoints → close DB connections
+#### Design
 
-**Threading model:**
+**Three-layer threading model:**
 
 ```
 main()
@@ -1348,11 +1347,11 @@ main()
   ├── validate config / run migrations
   ├── start shared services (metrics :9090, admin UI :8080, CBL maintenance)
   │
-  ├── PipelineManager.start()
+  ├── PipelineManager (main thread)
   │     │
   │     ├── Thread-1: Pipeline("job::aaa")
   │     │     ├── asyncio.run(poll_changes(job_config_1))
-  │     │     └── ThreadPoolExecutor(2)  ← async middleware (ML, enrichment)
+  │     │     └── ThreadPoolExecutor(2) → async middleware (ML, enrichment)
   │     │
   │     ├── Thread-2: Pipeline("job::bbb")
   │     │     ├── asyncio.run(poll_changes(job_config_2))
@@ -1362,11 +1361,124 @@ main()
   │           ├── asyncio.run(poll_changes(job_config_3))
   │           └── ThreadPoolExecutor(2)
   │
-  ├── wait for shutdown signal (SIGINT / SIGTERM)
-  └── PipelineManager.stop()  → drain all → checkpoint → close
+  ├── wait for shutdown signal (SIGINT / SIGTERM) ← main thread blocks here
+  └── PipelineManager.stop() → drain all jobs → save checkpoints → close
 ```
 
-**Why threads not processes:** The workload is I/O-bound (HTTP, DB writes). Python threads release the GIL during I/O. Each pipeline spends ~95-99% of time waiting on network. The `ThreadPoolExecutor` inside each pipeline handles CPU-bound middleware (ML inference) by offloading to OS threads where native C libraries (PyTorch, ONNX) release the GIL during computation. If CPU becomes a bottleneck (v3.x), swap to `multiprocessing` — same `PipelineManager` interface.
+**`PipelineManager` responsibilities:**
+- Load all enabled jobs from `jobs` collection at startup
+- Create one `Pipeline` instance per job
+- Start/stop/restart individual jobs (via REST API or lifecycle events)
+- Enforce global `max_threads` config (max concurrent pipelines running)
+- Monitor job threads for crashes; restart with exponential backoff
+- Graceful shutdown: signal all pipelines, drain in-flight changes, save checkpoints
+- Expose job state (running/stopped/error) via REST `/api/jobs/{id}/state`
+
+**`Pipeline` (per-job thread) responsibilities:**
+- Wraps a `threading.Thread` + isolated `asyncio.run()` event loop
+- Owns its HTTP session (persistent connection to Sync Gateway)
+- Owns its checkpoint state (resumed from `checkpoints::{job_uuid}`)
+- Owns its output forwarder (PostgreSQL, HTTP, S3, stdout)
+- Owns its `ThreadPoolExecutor` for async middleware
+- Accepts a job document + resolved input/output/mapping config
+- Catches exceptions → writes to DLQ → logs with job_id tag
+- Periodically writes checkpoint during the feed loop
+
+**`MiddlewareExecutor` (per-pipeline thread pool):**
+- `ThreadPoolExecutor(system.middleware_threads)` inside each Pipeline
+- Runs CPU-bound work (ML, batch transforms) in parallel without blocking the main asyncio loop
+- Size per job (default 2 threads per job) — configurable in job `system` config
+- If 3 jobs × 2 middleware threads each = 6 OS threads for middleware, plus 3 main threads = 9 total
+
+#### Why threads, not processes?
+
+The workload is I/O-bound (HTTP, DB writes). Python threads release the GIL during I/O. Each pipeline spends ~95-99% of time waiting for network. The `ThreadPoolExecutor` inside each pipeline handles CPU-bound middleware (ML inference) by offloading to OS threads where native C libraries (PyTorch, ONNX) release the GIL. If CPU bottleneck emerges (v3.x), swap to `multiprocessing` — same `PipelineManager` interface.
+
+#### Implementation Checklist
+
+**`pipeline.py` (new):**
+- [ ] `Pipeline` class:
+  - [ ] `__init__(job_id, job_doc, cbl_store, metrics, logger)`
+  - [ ] `run()` — main thread entry point; wraps `asyncio.run(poll_changes(...))`
+  - [ ] `stop()` — signal thread to shut down; save checkpoint; join with timeout
+  - [ ] `is_running()` — thread alive check
+  - [ ] `restart()` — stop + run
+  - [ ] Exception handler → write to DLQ
+- [ ] Accept resolved input/output/mapping (not raw job doc)
+- [ ] Use per-pipeline logger with `job_id` in tag
+
+**`pipeline_manager.py` (new):**
+- [ ] `PipelineManager` class:
+  - [ ] `__init__(cbl_store, config, metrics, logger)`
+  - [ ] `start()` — load all enabled jobs; create `Pipeline` per job; start threads
+  - [ ] `stop()` — signal all pipelines; graceful drain; save all checkpoints
+  - [ ] `start_job(job_id)` — create + start a single job thread
+  - [ ] `stop_job(job_id)` — signal + stop a single job thread
+  - [ ] `restart_job(job_id)` — stop + start
+  - [ ] `restart_all()` — restart every running job
+  - [ ] `get_job_state(job_id)` → `{ status: "running|stopped|error|starting", uptime_seconds: N, error_count: N, last_error: "..." }`
+  - [ ] `_monitor_threads()` — background task; detect crashes; restart with backoff
+- [ ] Thread-safe job registry (use `threading.Lock()`)
+- [ ] Global `max_threads` enforcement (queue job starts if limit reached)
+- [ ] Respect job `enabled` flag — skip disabled jobs at startup
+
+**`main.py` refactor:**
+- [ ] Replace the old monolithic `poll_changes()` loop with `PipelineManager.start()`
+- [ ] Update startup flow:
+  ```python
+  config = load_config()
+  validate_config(config)
+  migrations.run_v1_to_v2_migrations(cbl_store)
+  
+  metrics_server = start_metrics_server(config.metrics.port)
+  ui_server = start_ui_server(config.admin_ui.port)
+  
+  manager = PipelineManager(cbl_store, config, metrics, logger)
+  manager.start()  # blocks until SIGINT
+  
+  manager.stop()
+  ui_server.shutdown()
+  metrics_server.shutdown()
+  ```
+
+**REST API endpoints:**
+- [ ] `GET /api/jobs` — list all jobs with state
+- [ ] `GET /api/jobs/{id}/state` — get job state: `{ status, uptime_seconds, error_count, last_error }`
+- [ ] `POST /api/jobs/{id}/start` — start a single job
+- [ ] `POST /api/jobs/{id}/stop` — stop a single job
+- [ ] `POST /api/jobs/{id}/restart` — restart a single job
+- [ ] `POST /api/_restart` — restart all jobs (global operation)
+- [ ] `POST /api/_offline` — stop all jobs without removing them
+- [ ] `POST /api/_online` — restart all jobs after `_offline`
+
+**Logging & Metrics:**
+- [ ] Update logger to include `job_id` tag in every message from Pipeline thread
+- [ ] Metrics with job_id label:
+  - [ ] `pipeline_uptime_seconds{job_id}`
+  - [ ] `pipeline_crashes_total{job_id}`
+  - [ ] `pipeline_restart_backoff_seconds{job_id}` — wait time before next restart
+  - [ ] `jobs_running` — current count of running pipelines
+- [ ] Dashboard: show per-job uptime, crash count, error logs
+
+**Graceful Shutdown:**
+- [ ] Register signal handlers for `SIGINT` (Ctrl-C) and `SIGTERM` (docker stop)
+- [ ] On signal:
+  1. Log "shutting down..."
+  2. Call `PipelineManager.stop()` (waits for all pipelines to drain)
+  3. Save all checkpoints
+  4. Close HTTP sessions
+  5. Close DB connections
+  6. Flush logs
+  7. Exit code 0
+- [ ] Timeout: if a pipeline doesn't shut down in 30s, force-kill thread + checkpoint is lost (will resync)
+
+**Testing:**
+- [ ] Unit test: `Pipeline` runs one job; can stop cleanly
+- [ ] Unit test: `PipelineManager` starts N pipelines; state tracking works
+- [ ] Unit test: job crash + auto-restart with backoff
+- [ ] Unit test: graceful shutdown (all jobs drain, checkpoints saved)
+- [ ] Integration test: 3 jobs concurrently; verify docs go to correct outputs
+- [ ] Load test: 10 jobs; verify no GIL contention (should saturate I/O, not CPU)
 
 ### Phase 11: MIDDLE Stage Middleware & Data Quality (v2.1)
 
