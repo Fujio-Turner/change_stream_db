@@ -883,6 +883,16 @@ class TestCatchUpNormalInitialSync(unittest.TestCase):
             http = MagicMock()
 
             async def _mock_request(method, url, **kwargs):
+                # Handle GET {base_url}/ for update_seq fetch
+                if method == "GET":
+                    resp = AsyncMock()
+                    resp.read = AsyncMock(
+                        return_value=json.dumps(
+                            {"db_name": "db", "update_seq": 200}
+                        ).encode()
+                    )
+                    resp.release = MagicMock()
+                    return resp
                 captured_bodies.append(kwargs.get("json", {}))
                 resp = AsyncMock()
                 resp.read = AsyncMock(
@@ -977,6 +987,187 @@ class TestCatchUpNormalInitialSync(unittest.TestCase):
         _, cp = self._run_catch_up(initial_sync=False, optimize=False)
         # cp._initial_sync_done should still be False (default from mock)
         self.assertFalse(cp._initial_sync_done)
+
+    def test_initial_sync_optimize_completes_at_target_seq(self):
+        """Optimized initial sync completes when last_seq reaches update_seq target."""
+        call_count = 0
+
+        async def _run():
+            nonlocal call_count
+
+            async def _mock_request(method, url, **kwargs):
+                nonlocal call_count
+                # GET for update_seq
+                if method == "GET":
+                    resp = AsyncMock()
+                    resp.read = AsyncMock(
+                        return_value=json.dumps(
+                            {"db_name": "db", "update_seq": 100}
+                        ).encode()
+                    )
+                    resp.release = MagicMock()
+                    return resp
+                call_count += 1
+                # Single batch with last_seq=100 matching update_seq
+                body = {
+                    "results": [
+                        {
+                            "id": "d1",
+                            "seq": "100",
+                            "changes": [{"rev": "1-a"}],
+                            "doc": {"_id": "d1"},
+                        },
+                    ],
+                    "last_seq": "100",
+                }
+                resp = AsyncMock()
+                resp.read = AsyncMock(return_value=json.dumps(body).encode())
+                resp.release = MagicMock()
+                return resp
+
+            http = MagicMock()
+            http.request = AsyncMock(side_effect=_mock_request)
+            cp = _make_checkpoint()
+
+            result = await cw._catch_up_normal(
+                since="0",
+                changes_url="http://localhost:4984/db/_changes",
+                feed_cfg={
+                    "include_docs": True,
+                    "active_only": True,
+                    "continuous_catchup_limit": 5000,
+                    "optimize_initial_sync": True,
+                    "heartbeat_ms": 30000,
+                },
+                proc_cfg={},
+                retry_cfg={"backoff_base_seconds": 0, "backoff_max_seconds": 0},
+                src="sync_gateway",
+                http=http,
+                basic_auth=None,
+                auth_headers={},
+                base_url="http://localhost:4984/db",
+                output=_make_output(),
+                dlq=_make_dlq(),
+                checkpoint=cp,
+                semaphore=asyncio.Semaphore(5),
+                shutdown_event=asyncio.Event(),
+                metrics=cw.MetricsCollector("sync_gateway", "db"),
+                every_n_docs=0,
+                max_concurrent=5,
+                timeout_ms=60000,
+                changes_http_timeout=aiohttp.ClientTimeout(total=300),
+                initial_sync=True,
+            )
+            return result, cp
+
+        result, cp = asyncio.run(_run())
+        # Should complete after just 1 _changes request (last_seq=100 >= target=100)
+        self.assertEqual(call_count, 1)
+        self.assertEqual(result, "100")
+        self.assertTrue(cp._initial_sync_done)
+
+    def test_initial_sync_optimize_paginates_to_target_seq(self):
+        """Optimized initial sync paginates until last_seq reaches update_seq."""
+        call_count = 0
+
+        async def _run():
+            nonlocal call_count
+
+            async def _mock_request(method, url, **kwargs):
+                nonlocal call_count
+                if method == "GET":
+                    resp = AsyncMock()
+                    resp.read = AsyncMock(
+                        return_value=json.dumps(
+                            {"db_name": "db", "update_seq": 150}
+                        ).encode()
+                    )
+                    resp.release = MagicMock()
+                    return resp
+                call_count += 1
+                if call_count == 1:
+                    body = {
+                        "results": [
+                            {
+                                "id": "d1",
+                                "seq": "50",
+                                "changes": [{"rev": "1-a"}],
+                                "doc": {"_id": "d1"},
+                            },
+                            {
+                                "id": "d2",
+                                "seq": "82",
+                                "changes": [{"rev": "1-b"}],
+                                "doc": {"_id": "d2"},
+                            },
+                        ],
+                        "last_seq": "82",
+                    }
+                elif call_count == 2:
+                    body = {
+                        "results": [
+                            {
+                                "id": "d3",
+                                "seq": "120",
+                                "changes": [{"rev": "1-c"}],
+                                "doc": {"_id": "d3"},
+                            },
+                            {
+                                "id": "d4",
+                                "seq": "150",
+                                "changes": [{"rev": "1-d"}],
+                                "doc": {"_id": "d4"},
+                            },
+                        ],
+                        "last_seq": "150",
+                    }
+                else:
+                    body = {"results": [], "last_seq": "150"}
+                resp = AsyncMock()
+                resp.read = AsyncMock(return_value=json.dumps(body).encode())
+                resp.release = MagicMock()
+                return resp
+
+            http = MagicMock()
+            http.request = AsyncMock(side_effect=_mock_request)
+            cp = _make_checkpoint()
+
+            result = await cw._catch_up_normal(
+                since="0",
+                changes_url="http://localhost:4984/db/_changes",
+                feed_cfg={
+                    "include_docs": True,
+                    "active_only": True,
+                    "continuous_catchup_limit": 5000,
+                    "optimize_initial_sync": True,
+                    "heartbeat_ms": 30000,
+                },
+                proc_cfg={},
+                retry_cfg={"backoff_base_seconds": 0, "backoff_max_seconds": 0},
+                src="sync_gateway",
+                http=http,
+                basic_auth=None,
+                auth_headers={},
+                base_url="http://localhost:4984/db",
+                output=_make_output(),
+                dlq=_make_dlq(),
+                checkpoint=cp,
+                semaphore=asyncio.Semaphore(5),
+                shutdown_event=asyncio.Event(),
+                metrics=cw.MetricsCollector("sync_gateway", "db"),
+                every_n_docs=0,
+                max_concurrent=5,
+                timeout_ms=60000,
+                changes_http_timeout=aiohttp.ClientTimeout(total=300),
+                initial_sync=True,
+            )
+            return result, cp
+
+        result, cp = asyncio.run(_run())
+        # 2 paginated requests, completes when last_seq=150 == target_seq=150
+        self.assertEqual(call_count, 2)
+        self.assertEqual(result, "150")
+        self.assertTrue(cp._initial_sync_done)
 
 
 class TestCatchUpNormalMultipleBatches(unittest.TestCase):

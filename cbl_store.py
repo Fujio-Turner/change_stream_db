@@ -19,7 +19,7 @@ try:
     from CouchbaseLite.Document import MutableDocument
     from CouchbaseLite._PyCBL import ffi, lib
     from CouchbaseLite.common import stringParam, gError as _cbl_gError
-    from CouchbaseLite.Query import N1QLQuery
+    from CouchbaseLite.Query import N1QLQuery, Query
 
     USE_CBL = True
 except ImportError:
@@ -809,7 +809,224 @@ class CBLStore:
             doc_type="mapping",
         )
 
-    # ── Dead Letter Queue ─────────────────────────────────────
+    # ── RDBMS Schema ──────────────────────────────────────────
+
+    def load_schema(self) -> dict | None:
+        """Load RDBMS schema definitions from 'rdbms_schema' document."""
+        doc_id = "rdbms_schema"
+        ic("load_schema: entry", doc_id)
+        doc = _coll_get_doc(self.db, COLL_MAPPINGS, doc_id)
+        if not doc:
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "rdbms schema not found",
+                operation="SELECT",
+                doc_id=doc_id,
+                doc_type="schema",
+            )
+            return None
+        schema = {
+            "type": doc.get("type", "rdbms"),
+            "dialect": doc.get("dialect", "sql"),
+            "data": doc.get("data", {}),
+        }
+        if "_meta" in doc:
+            schema["_meta"] = dict(doc["_meta"])
+        return schema
+
+    def save_schema(self, schema: dict) -> None:
+        """Save RDBMS schema definitions to 'rdbms_schema' document."""
+        doc_id = "rdbms_schema"
+        ic("save_schema: entry", doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_mutable_doc(self.db, COLL_MAPPINGS, doc_id)
+        is_new = doc is None
+        if not doc:
+            doc = MutableDocument(doc_id)
+        doc["type"] = schema.get("type", "rdbms")
+        doc["dialect"] = schema.get("dialect", "sql")
+        doc["data"] = schema.get("data", {})
+        if "_meta" in schema:
+            doc["_meta"] = schema["_meta"]
+        _coll_save_doc(self.db, COLL_MAPPINGS, doc)
+        elapsed = (time.monotonic() - t0) * 1000
+
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "rdbms schema saved",
+            operation="INSERT" if is_new else "UPDATE",
+            doc_id=doc_id,
+            doc_type="schema",
+            duration_ms=round(elapsed, 1),
+        )
+
+    def delete_schema(self) -> None:
+        """Delete saved RDBMS schema definitions."""
+        doc_id = "rdbms_schema"
+        ic("delete_schema: entry", doc_id)
+        doc = _coll_get_doc(self.db, COLL_MAPPINGS, doc_id)
+        if not doc:
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "rdbms schema not found for delete",
+                operation="DELETE",
+                doc_id=doc_id,
+                doc_type="schema",
+            )
+            return
+        _coll_purge_doc(self.db, COLL_MAPPINGS, doc_id)
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "rdbms schema deleted",
+            operation="DELETE",
+            doc_id=doc_id,
+            doc_type="schema",
+        )
+
+    # ── Source Configuration ───────────────────────────────────
+
+    def load_sources(self) -> dict:
+        """Load all saved data source configurations."""
+        ic("load_sources: entry")
+        try:
+            # Read the index document that tracks all source names
+            index_doc = _coll_get_doc(self.db, COLL_MAPPINGS, "_source_index")
+            if not index_doc:
+                return {}
+            names = index_doc.get("names") or []
+            sources = {}
+            for name in names:
+                doc = _coll_get_doc(self.db, COLL_MAPPINGS, name)
+                if doc:
+                    sources[name] = {
+                        "type": doc.get("type", "source"),
+                        "system": doc.get("system"),
+                        "config": doc.get("config", {}),
+                        "_meta": dict(doc.get("_meta", {})) if doc.get("_meta") else {},
+                    }
+            return sources
+        except Exception as e:
+            log_event(
+                logger,
+                "warning",
+                "CBL",
+                f"Failed to load sources: {e}",
+                operation="SELECT",
+                doc_type="source",
+            )
+            return {}
+
+    def save_source(self, source_name: str, source_doc: dict) -> None:
+        """Save a data source configuration."""
+        ic("save_source: entry", source_name)
+        t0 = time.monotonic()
+        doc = _coll_get_mutable_doc(self.db, COLL_MAPPINGS, source_name)
+        is_new = doc is None
+        if not doc:
+            doc = MutableDocument(source_name)
+        doc["type"] = "source"
+        doc["system"] = source_doc.get("system")
+        doc["config"] = source_doc.get("config", {})
+        if "_meta" in source_doc:
+            doc["_meta"] = source_doc["_meta"]
+        _coll_save_doc(self.db, COLL_MAPPINGS, doc)
+
+        # Update the source index document
+        index_doc = _coll_get_mutable_doc(self.db, COLL_MAPPINGS, "_source_index")
+        if not index_doc:
+            index_doc = MutableDocument("_source_index")
+            index_doc["names"] = []
+        names = list(index_doc.get("names") or [])
+        if source_name not in names:
+            names.append(source_name)
+            index_doc["names"] = names
+            _coll_save_doc(self.db, COLL_MAPPINGS, index_doc)
+
+        elapsed = (time.monotonic() - t0) * 1000
+
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "source configuration saved",
+            operation="INSERT" if is_new else "UPDATE",
+            doc_id=source_name,
+            doc_type="source",
+            system=source_doc.get("system"),
+            duration_ms=round(elapsed, 1),
+        )
+
+    def delete_source(self, source_name: str) -> None:
+        """Delete a saved source configuration."""
+        ic("delete_source: entry", source_name)
+        doc = _coll_get_doc(self.db, COLL_MAPPINGS, source_name)
+        if not doc:
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "source not found for delete",
+                operation="DELETE",
+                doc_id=source_name,
+                doc_type="source",
+            )
+            return
+        _coll_purge_doc(self.db, COLL_MAPPINGS, source_name)
+
+        # Remove from the source index document
+        index_doc = _coll_get_mutable_doc(self.db, COLL_MAPPINGS, "_source_index")
+        if index_doc:
+            names = list(index_doc.get("names") or [])
+            if source_name in names:
+                names.remove(source_name)
+                index_doc["names"] = names
+                _coll_save_doc(self.db, COLL_MAPPINGS, index_doc)
+
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "source configuration deleted",
+            operation="DELETE",
+            doc_id=source_name,
+            doc_type="source",
+        )
+
+    def clear_all_sources(self) -> None:
+        """Delete all saved source configurations."""
+        ic("clear_all_sources: entry")
+        try:
+            sources = self.load_sources()
+            for source_name in sources.keys():
+                self.delete_source(source_name)
+            log_event(
+                logger,
+                "info",
+                "CBL",
+                f"cleared all sources ({len(sources)} deleted)",
+                operation="DELETE",
+                doc_type="source",
+                count=len(sources),
+            )
+        except Exception as e:
+            log_event(
+                logger,
+                "error",
+                "CBL",
+                f"Failed to clear all sources: {e}",
+                operation="DELETE",
+                doc_type="source",
+            )
+
+        # ── Dead Letter Queue ─────────────────────────────────────
 
     def add_dlq_entry(
         self,

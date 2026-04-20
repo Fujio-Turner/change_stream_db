@@ -198,7 +198,7 @@
     },
     "post_process": {
       "action": "none",
-      "update_field": "_attachments_external",
+      "update_field": "attachments_external",
       "remove_attachments_after_upload": false,
       "ttl_seconds": 86400,
       "on_doc_missing": "skip",

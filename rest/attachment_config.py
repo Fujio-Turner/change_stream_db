@@ -105,7 +105,7 @@ class AttachmentAdminAuthConfig:
 @dataclass
 class AttachmentPostProcessConfig:
     action: str = "none"
-    update_field: str = "_attachments_external"
+    update_field: str = "attachments_external"
     remove_attachments_after_upload: bool = False
     ttl_seconds: int = 86_400
     admin_url: str = ""

@@ -1,0 +1,93 @@
+/*! SQL Viewer Theme – SSMS-inspired with vivid colors.
+    Uses .sql-viewer-pre scope + !important to override DaisyUI/Tailwind theme colors. */
+
+.sql-viewer-pre {
+  background: #ffffff !important;
+  color: #000000 !important;
+  display: block;
+  overflow-x: auto;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  font-family: 'Courier New', 'Courier', monospace;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  border: 1px solid #ddd;
+}
+
+/* SQL keywords: blue bold (SELECT, FROM, WHERE, JOIN, CREATE, etc.) */
+.sql-viewer-pre .hljs-keyword {
+  color: #0000ff !important;
+  font-weight: bold;
+}
+
+.sql-viewer-pre .hljs-literal {
+  color: #0000ff !important;
+  font-weight: bold;
+}
+
+/* Data types: blue (VARCHAR, INT, DATE, NUMERIC, etc.) */
+.sql-viewer-pre .hljs-type {
+  color: #0000ff !important;
+  font-weight: bold;
+}
+
+/* Built-in functions: magenta */
+.sql-viewer-pre .hljs-built_in {
+  color: #ff00ff !important;
+  font-weight: bold;
+}
+
+/* Strings: red */
+.sql-viewer-pre .hljs-string {
+  color: #ff0000 !important;
+}
+
+/* Numbers: red */
+.sql-viewer-pre .hljs-number {
+  color: #ff0000 !important;
+}
+
+/* Comments: green italic */
+.sql-viewer-pre .hljs-comment {
+  color: #008000 !important;
+  font-style: italic;
+}
+
+/* Table/column names */
+.sql-viewer-pre .hljs-title {
+  color: #000000 !important;
+  font-weight: bold;
+}
+
+.sql-viewer-pre .hljs-title.class_ {
+  color: #000000 !important;
+  font-weight: bold;
+}
+
+.sql-viewer-pre .hljs-title.function_ {
+  color: #ff00ff !important;
+  font-weight: bold;
+}
+
+/* Operators and punctuation */
+.sql-viewer-pre .hljs-punctuation,
+.sql-viewer-pre .hljs-operator {
+  color: #808080 !important;
+}
+
+/* Variables */
+.sql-viewer-pre .hljs-variable {
+  color: #000000 !important;
+}
+
+.sql-viewer-pre .hljs-attr {
+  color: #ff00ff !important;
+}
+
+.sql-viewer-pre .hljs-meta {
+  color: #808080 !important;
+}
+
+.sql-viewer-pre .hljs-meta .hljs-keyword {
+  color: #0000ff !important;
+}

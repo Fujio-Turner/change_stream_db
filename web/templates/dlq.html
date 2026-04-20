@@ -94,30 +94,21 @@
     <div class="sidebar-main">
       <main class="w-full mx-auto p-6 space-y-4">
         <!-- Header row -->
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <h1 class="text-xl font-bold">DLQ Explorer</h1>
-            <div
-              class="tooltip tooltip-right"
-              data-tip="Dead Letter Queue — entries that failed to send to the output endpoint. Inspect, replay, or clear them here."
-            >
-              <button
-                class="btn btn-ghost btn-xs btn-circle text-base-content/50"
-              >
-                ?
-              </button>
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-6">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <h1 class="text-xl font-bold">DLQ Explorer</h1>
+                <div class="tooltip tooltip-right" data-tip="Dead Letter Queue — entries that failed to send to the output endpoint. Inspect, replay, or clear them here.">
+                  <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <button class="btn btn-sm btn-ghost" onclick="loadDlqData()">⟳ Refresh</button>
+                <button class="btn btn-sm btn-error btn-outline" onclick="clearAll()">Clear All</button>
+              </div>
             </div>
-          </div>
-          <div class="flex items-center gap-2">
-            <button class="btn btn-sm btn-ghost" onclick="loadDlqData()">
-              ⟳ Refresh
-            </button>
-            <button
-              class="btn btn-sm btn-error btn-outline"
-              onclick="clearAll()"
-            >
-              Clear All
-            </button>
+            <p class="opacity-70">Inspect, replay, or clear failed documents from the Dead Letter Queue.</p>
           </div>
         </div>
 

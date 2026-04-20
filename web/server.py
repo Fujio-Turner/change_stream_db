@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
 CONFIG_PATH = ROOT / "config.json"
 MAPPINGS_DIR = ROOT / "mappings"
+SOURCES_DIR = ROOT / "sources"
 
 
 def cors_headers():
@@ -1399,8 +1400,11 @@ async def wizard_test_source(request):
     if not url or not db:
         return error_response("URL and database are required")
 
-    if src == "sync_gateway":
+    # All Couchbase sources use keyspace format: db.scope.collection
+    if scope and scope != "_default" and collection and collection != "_default":
         changes_url = f"{url}/{db}.{scope}.{collection}/_changes"
+    elif collection and collection != "_default":
+        changes_url = f"{url}/{db}.{collection}/_changes"
     else:
         changes_url = f"{url}/{db}/_changes"
 
@@ -1627,6 +1631,191 @@ async def _explain_ops(ops: list[dict]) -> list[dict]:
     return results
 
 
+# --- Sources API ---
+
+
+async def list_sources(request):
+    """List all saved data source configurations."""
+    if USE_CBL:
+        sources = CBLStore().load_sources()
+        # Return with doc_id included
+        result = []
+        for doc_id, doc in sources.items():
+            result.append({**doc, "doc_id": doc_id})
+        return json_response({"sources": result})
+    SOURCES_DIR.mkdir(exist_ok=True)
+    files = sorted(
+        p for p in SOURCES_DIR.iterdir() if p.is_file() and p.suffix == ".json"
+    )
+    sources = []
+
+    for p in files:
+        try:
+            data = json.loads(p.read_text())
+            sources.append(data)
+        except json.JSONDecodeError:
+            pass
+    return json_response({"sources": sources})
+
+
+async def save_source(request):
+    """Save a data source configuration."""
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return error_response("Invalid JSON")
+
+    # Validate required fields
+    if body.get("type") != "source":
+        return error_response("type must be 'source'")
+    if not body.get("system"):
+        return error_response("system is required")
+    if not body.get("config", {}).get("src_name"):
+        return error_response("config.src_name is required")
+
+    source_name = body["config"]["src_name"]
+    source_doc = {
+        "type": "source",
+        "system": body["system"],
+        "config": body["config"],
+        "_meta": {
+            **body.get("_meta", {}),
+            "saved_at": datetime.datetime.utcnow().isoformat(),
+        },
+    }
+
+    if USE_CBL:
+        try:
+            CBLStore().save_source(source_name, source_doc)
+            return json_response({"ok": True, "name": source_name})
+        except Exception as e:
+            return error_response(str(e), 500)
+    else:
+        try:
+            SOURCES_DIR.mkdir(exist_ok=True)
+            file_path = SOURCES_DIR / f"{source_name}.json"
+            file_path.write_text(json.dumps(source_doc, indent=2) + "\n")
+            return json_response({"ok": True, "name": source_name})
+        except Exception as e:
+            return error_response(str(e), 500)
+
+
+async def delete_source(request):
+    """Delete a saved source configuration."""
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return error_response("Invalid JSON")
+
+    name = body.get("name")
+    if not name:
+        return error_response("name is required")
+
+    if USE_CBL:
+        try:
+            CBLStore().delete_source(name)
+            return json_response({"ok": True})
+        except Exception as e:
+            return error_response(str(e), 500)
+    else:
+        try:
+            file_path = SOURCES_DIR / f"{name}.json"
+            if file_path.exists():
+                file_path.unlink()
+            return json_response({"ok": True})
+        except Exception as e:
+            return error_response(str(e), 500)
+
+
+async def clear_all_sources(request):
+    """Delete all saved source configurations."""
+    if USE_CBL:
+        try:
+            CBLStore().clear_all_sources()
+            return json_response({"ok": True})
+        except Exception as e:
+            return error_response(str(e), 500)
+    else:
+        try:
+            SOURCES_DIR.mkdir(exist_ok=True)
+            count = 0
+            for p in SOURCES_DIR.iterdir():
+                if p.is_file() and p.suffix == ".json":
+                    p.unlink()
+                    count += 1
+            return json_response({"ok": True, "deleted": count})
+        except Exception as e:
+            return error_response(str(e), 500)
+
+
+async def test_source(request):
+    """Test connection to a Couchbase Sync Gateway."""
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return error_response("Invalid JSON")
+
+    url = body.get("url", "").strip()
+    database = body.get("database", "").strip()
+    scope = body.get("scope", "_default").strip()
+    collection = body.get("collection", "_default").strip()
+    auth_method = body.get("auth_method", "none").strip()
+
+    if not url or not database:
+        return error_response("url and database are required")
+
+    try:
+        # Try a simple GET to the database endpoint
+        headers = {}
+        auth = None
+
+        if auth_method == "basic":
+            username = body.get("username", "").strip()
+            password = body.get("password", "").strip()
+            if username and password:
+                import base64
+
+                credentials = base64.b64encode(
+                    f"{username}:{password}".encode()
+                ).decode()
+                headers["Authorization"] = f"Basic {credentials}"
+        elif auth_method == "session":
+            session_cookie = body.get("session_cookie", "").strip()
+            if session_cookie:
+                headers["Cookie"] = f"SyncGatewaySession={session_cookie}"
+        elif auth_method == "bearer":
+            bearer_token = body.get("bearer_token", "").strip()
+            if bearer_token:
+                headers["Authorization"] = f"Bearer {bearer_token}"
+
+        # Construct the changes endpoint URL
+        # Sync Gateway uses keyspace format: db.scope.collection
+        if scope and scope != "_default" and collection and collection != "_default":
+            test_url = f"{url}/{database}.{scope}.{collection}/_changes"
+        elif collection and collection != "_default":
+            test_url = f"{url}/{database}.{collection}/_changes"
+        else:
+            test_url = f"{url}/{database}/_changes"
+
+        # Make a request to test connection
+        async with _aiohttp.ClientSession() as session:
+            async with session.get(
+                test_url,
+                headers=headers,
+                timeout=_aiohttp.ClientTimeout(total=10),
+                ssl=False,
+            ) as resp:
+                if resp.status in [200, 400, 401, 403]:
+                    # Got a response, connection works
+                    return json_response({"ok": True, "status": resp.status})
+                else:
+                    return json_response(
+                        {"ok": False, "error": f"HTTP {resp.status}"}, status=200
+                    )
+    except Exception as exc:
+        return json_response({"ok": False, "error": str(exc)}, status=200)
+
+
 # --- App factory ---
 
 
@@ -1700,6 +1889,13 @@ def create_app():
     # Wizard API
     app.router.add_post("/api/wizard/test-source", wizard_test_source)
     app.router.add_post("/api/wizard/test-output", wizard_test_output)
+
+    # Sources API
+    app.router.add_get("/api/source/list", list_sources)
+    app.router.add_post("/api/source/save", save_source)
+    app.router.add_post("/api/source/delete", delete_source)
+    app.router.add_post("/api/source/clear", clear_all_sources)
+    app.router.add_post("/api/source/test", test_source)
 
     # Static files
     app.router.add_static("/static/", WEB / "static", show_index=False)

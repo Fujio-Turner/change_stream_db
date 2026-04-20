@@ -1,6 +1,6 @@
 # Setup Wizard
 
-A 3-step guided wizard for configuring the entire Changes Worker pipeline — from connecting a Sync Gateway / Capella App Services / Edge Server / CouchDB `_changes` feed, through choosing an output destination, to mapping source document fields onto the target format.
+The `/wizard` page is a four-mode guided setup experience for the Changes Worker pipeline.
 
 **URL:** `/wizard`
 
@@ -12,6 +12,88 @@ A 3-step guided wizard for configuring the entire Changes Worker pipeline — fr
 ---
 
 ## Overview
+
+The wizard landing page presents four options in a 2×2 grid layout:
+
+```
+┌─────────────────────────┬─────────────────────────┐
+│  ⚙️ Settings Wizard      │  🗄️ RDBMS Schema Import │
+│                         │                         │
+│  Optimize pipeline      │  Import SQL CREATE      │
+│  settings with guided   │  TABLE definitions &    │
+│  questions              │  auto-detect RDBMS type │
+├─────────────────────────┼─────────────────────────┤
+│  🗂️ Schema Mapping       │  ☁️ Cloud Storage        │
+│                         │                         │
+│  Connect source,        │  Configure attachment   │
+│  configure output,      │  extraction & JSON      │
+│  and map fields         │  archival strategies    │
+└─────────────────────────┴─────────────────────────┘
+```
+
+### Order & Recommended Flow
+
+1. **⚙️ Settings Wizard** (top-left) — Start here for pipeline optimization
+2. **🗄️ RDBMS Schema** (top-right) — Optional, for RDBMS target introspection
+3. **🗂️ Schema Mapping** (bottom-left) — Define source-to-output mappings
+4. **☁️ Cloud Storage** (bottom-right) — Optional, for attachment/archive strategies
+
+---
+
+## Settings Wizard
+
+An 8-question guided Q&A that generates optimized `config.json` settings based on your use case. Answers are merged into the existing config (read via `GET /api/config`, deep-merged, then saved via `PUT /api/config`).
+
+The wizard features a wider layout (40% increase) for improved text readability and prevents option descriptions from wrapping awkwardly.
+
+### Q1: Branch Point
+
+| Question | Answers |
+|---|---|
+| **Data (JSON) only or Data + Attachments?** | Branches into **Data Only** path or **Attachments** path |
+
+### Data Only Path (Q2–Q8)
+
+| # | Question | Answers → Config Effect |
+|---|---|---|
+| 2 | **Large initial sync (100Ks–millions)?** | Yes → `changes_feed.optimize_initial_sync = true` |
+| 3 | **Average doc size under 1KB?** | Yes → `changes_feed.include_docs = true` (inline in feed) |
+| 4 | **Track deletes/tombstones?** | No → `changes_feed.active_only = true`, `processing.ignore_delete = true` |
+| 5 | **Continuous or batch feed?** | Continuous → `changes_feed.feed_type = "continuous"`, Batches → `"longpoll"` |
+| 6 | **Accuracy or speed?** | Accuracy → `processing.sequential = true` |
+| 7 | **Large docs (100KB+)?** | Yes → `changes_feed.throttle_feed = 1000` (smaller batches) |
+| 8 | **Save failed data (DLQ) or skip?** | DLQ → `output.data_error_action = "dlq"`, Skip → `"skip"` |
+
+### Attachments Path (Q2–Q8)
+
+When attachments are selected, the wizard forces `include_docs = false` and `active_only = true` (attachments imply large data; you don't process attachments for deleted docs).
+
+| # | Question | Answers → Config Effect |
+|---|---|---|
+| 2 | **Large initial sync (100Ks–millions)?** | Yes → `changes_feed.optimize_initial_sync = true` |
+| 3 | **How many attachments per document?** | 1–3 → `attachments.mode = "individual"`, Many → `"multipart"` |
+| 4 | **How large are your attachments?** (Couchbase max 20MB) | Small (≤50KB) → `fetch.request_timeout_seconds = 30`, Medium (50KB–1MB) → `120` + `throttle_feed = 1000`, Large (1MB+) → `300` + `stream_to_disk` + `sequential = true` + `throttle_feed = 500` |
+| 5 | **Attachment destination?** | S3 → `destination.type = "s3"`, HTTP → `"http"`, Filesystem → `"filesystem"` |
+| 6 | **Post-process action?** | Update doc → `post_process.action = "update_doc"` + `update_field = "attachments_external"` (shows JSON preview example before advancing), Set TTL → `"set_ttl"` + number input for `ttl_seconds` (default 86400), Delete attachments, Delete doc, Purge (marked as **Irreversible** in red), or Nothing |
+| 7 | **Missing attachment handling?** | Skip → `on_missing_attachment = "skip"` + `partial_success = "continue"`, Fail → `"fail"` + `"fail_doc"` |
+| 8 | **Error handling?** | DLQ → `output.data_error_action = "dlq"` + `halt_on_failure = true` + number input for `dlq.retention_seconds` (default 86400), Skip → `"skip"` + `halt_on_failure = false` |
+
+### Summary Page
+
+After all questions are answered, users see:
+
+1. **Your Choices** — A recap of all Q&A selections as key-value pairs
+2. **Your Configuration Story** — A human-readable narrative describing what will happen based on the answers. For example:
+   - *Attachment workflow:* Describes attachment size, fetch strategy, destination, error handling, post-processing action, and failure handling
+   - *Data-only workflow:* Describes feed mode, document fetching, delete tracking, processing strategy, and error handling
+3. **Generated Config Preview** — The complete `config.json` that will be saved
+4. **Save & Apply Settings** — Merges the generated config into the existing config and saves it via `PUT /api/config`
+
+---
+
+## Schema Mapping Wizard
+
+A 3-step guided wizard for configuring the entire Changes Worker pipeline — from connecting a `_changes` feed, through choosing an output destination, to mapping source document fields onto the target format.
 
 The wizard produces two artifacts:
 
@@ -263,10 +345,119 @@ The **Generated config.json** collapsible section at the bottom shows a live pre
 
 ---
 
+## Cloud Storage Wizard
+
+A 6-question guided Q&A that helps users understand and configure cloud storage for attachments and/or JSON archival.
+
+### Questions
+
+| # | Question | Answers → Config Effect |
+|---|---|---|
+| 1 | **What do you want to store?** | Attachments only → `use_case = "attachments"`, Archived JSON → `"archive"`, Both → `"both"` |
+| 2 | **Which cloud provider?** | S3 → `provider = "s3"`, GCS → `"gcs"`, Azure → `"azure"`, Local → `"local"` |
+| 3 | **What is your throughput?** | Low → `max_concurrent = 1`, Medium → `5`, High → `20` |
+| 4 | **File retention strategy?** | Forever → no expiry, TTL → `ttl_days = 90`, Manual → organize by folder structure |
+| 5 | **Archive compression?** | None → `compression = "none"`, GZIP → `"gzip"`, ZSTD → `"zstd"` |
+| 6 | **File organization?** | Flat → `partitioning = "flat"`, By date → `"date_daily"`, By date+type → `"date_type"`, By doc ID → `"doc_id"` |
+
+### Summary Page
+
+After all questions are answered, users see:
+
+1. **Your Choices** — A recap of all selections
+2. **Your Cloud Storage Story** — A human-readable narrative explaining:
+   - What will be stored and where
+   - Performance characteristics
+   - Retention strategy
+   - File organization approach
+3. **Generated Config Preview** — The cloud storage configuration section that will be saved
+4. **Save & Apply Config** — Merges the config and saves it
+
+---
+
+## RDBMS Schema Import Wizard
+
+A simple drag-and-drop interface to upload SQL `CREATE TABLE` definitions for schema discovery and validation.
+
+### Features
+
+- **Drag & Drop**: Drop `.sql` or `.txt` files directly onto the upload zone
+- **Copy & Paste**: Manually paste SQL CREATE TABLE statements into a textarea
+- **SQL Formatting**: Uses local sql-formatter library to beautify SQL
+  - Supports all major SQL dialects (PostgreSQL, MySQL, Oracle, SQL Server, etc.)
+  - UPPERCASE keywords, standard indentation, 2-space tabs
+  - Works fully offline (no CDN dependencies)
+- **Dialect Detection**: Automatically detects SQL dialect from keywords
+  - PostgreSQL: SERIAL, BYTEA, UUID, JSONB, ARRAY, etc.
+  - MySQL: AUTO_INCREMENT, CHARSET, UNSIGNED, FULLTEXT, etc.
+  - SQL Server: IDENTITY, NVARCHAR, DATETIME2, UNIQUEIDENTIFIER, etc.
+  - Oracle: NUMBER, VARCHAR2, SEQUENCE, NEXTVAL, etc.
+- **Table Extraction**: Automatically detects and lists all `CREATE TABLE` statements
+- **Database Naming**: User provides a database/schema name
+- **Schema Document Storage**: Saves to Couchbase with document key `rdbms_schema` and includes detected dialect
+
+### Document Structure
+
+Saved schema is stored as:
+
+```json
+{
+  "type": "rdbms",
+  "dialect": "postgresql",
+  "data": {
+    "my_database": {
+      "users": {
+        "sql": "CREATE TABLE users (id SERIAL PRIMARY KEY, name VARCHAR(255), created_at TIMESTAMP, ...)",
+        "dateTime": "2026-04-19T12:34:56.789Z"
+      },
+      "orders": {
+        "sql": "CREATE TABLE orders (id SERIAL, user_id INT REFERENCES users(id), total DECIMAL(10, 2), ...)",
+        "dateTime": "2026-04-19T12:34:57.123Z"
+      }
+    }
+  }
+}
+```
+
+The `dialect` field is auto-detected from SQL keywords and helps the system understand:
+- Data type mapping (e.g., PostgreSQL `SERIAL` → auto-increment)
+- Constraint syntax variations
+- Index creation patterns
+- Function availability
+
+This allows the system to understand RDBMS table structures for:
+- Schema mapping validation
+- Table introspection during Step 2 of Schema Mapping Wizard
+- Data type inference for transforms
+- Foreign key relationship discovery
+
+---
+
 ## Typical Workflow
 
-1. Navigate to `/wizard`
-2. **Step 1:** Enter your SG/App Services/Edge Server URL and credentials → click **Test Connection** → verify sample doc appears
-3. **Step 2:** Choose output mode → for HTTP: enter target URL and test → for RDBMS: enter DB credentials, test connection, fetch tables
-4. **Step 3:** Define source match rule → drag source fields onto mapping inputs → add transforms as needed → click **Save & Apply Config** and **Save Mapping**
-5. Restart the worker to pick up the new configuration
+### Recommended Order (Based on Grid Layout)
+
+1. **Navigate to `/wizard`** — Land on 2×2 grid with 4 wizard options
+
+2. **⚙️ Settings Wizard (top-left)** ⭐ START HERE
+   - Answer 8 questions about your pipeline settings
+   - Review your configuration story
+   - Save optimized settings
+
+3. **🗄️ RDBMS Schema Import (top-right)** ⭐ OPTIONAL (if using RDBMS targets)
+   - Upload `.sql` files or paste CREATE TABLE statements
+   - Auto-detects RDBMS dialect (PostgreSQL, MySQL, Oracle, SQL Server)
+   - Stores schema definitions for introspection in Step 2 of Schema Mapping
+
+4. **🗂️ Schema Mapping Wizard (bottom-left)** ⭐ CORE WORKFLOW
+   - Step 1: Connect to source (_changes feed)
+   - Step 2: Configure output destination (Stdout, HTTP, RDBMS, S3, etc.)
+   - Step 3: Map source fields to output schema with transforms
+   - Save mapping and config
+
+5. **☁️ Cloud Storage Wizard (bottom-right)** ⭐ OPTIONAL (if using cloud storage)
+   - Configure attachment extraction strategies
+   - Configure JSON archival for cold storage
+   - Auto-generate optimized storage config
+
+6. **Restart the worker** to pick up the new configuration
