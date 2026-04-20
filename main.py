@@ -2838,6 +2838,13 @@ def main() -> None:
     _ensure_full_logging_config(cfg)
     configure_logging(cfg.get("logging", {}))
 
+    # Disable icecream unless TRACE level is configured — ic() does expensive
+    # AST parsing and stack inspection on every call even when silent.
+    log_cfg = cfg.get("logging", {})
+    console_level = log_cfg.get("console", {}).get("log_level", "info").lower()
+    if console_level != "trace":
+        ic.disable()
+
     log_event(
         logger,
         "info",
