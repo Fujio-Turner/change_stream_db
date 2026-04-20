@@ -1,6 +1,8 @@
 services:
   changes-worker:
     build: .
+    cap_add:
+      - SYS_PTRACE
     ports:
       - "9090:9090"
     extra_hosts:

@@ -4,6 +4,21 @@ This document describes the embedded Couchbase Lite Community Edition database u
 
 ---
 
+## 📋 JSON Schema Standards
+
+**All documents stored in CBL must follow the [JSON Schema Standards Guide](../guides/JSON_SCHEMA.md).**
+
+When designing new collections or modifying document schemas, ensure:
+- Field names are `snake_case` (no camelCase)
+- No top-level `_` prefixes except `meta` container
+- DateTime fields use ISO-8601 or Unix epoch consistently
+- Enum values are lowercase with underscores
+- All documents have consistent field ordering
+
+**All collection schemas should have corresponding JSON Schema definitions in [`json_schema/changes-worker/`](../json_schema/changes-worker/) for validation.**
+
+---
+
 ## Overview
 
 Changes Worker uses **Couchbase Lite CE 3.2.1** as an embedded, in-process key-value store. It replaces all file-based storage (`config.json`, `checkpoint.json`, `mappings/*.yaml`, `failed_docs.jsonl`) with a single CBL database. CBL is chip-set agnostic (x86_64 / arm64), requires no external server, and persists data to a single directory on disk.

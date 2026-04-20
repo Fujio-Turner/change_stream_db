@@ -11,12 +11,14 @@ provides:
   - Operation tagging (INSERT, UPDATE, DELETE, SELECT)
 """
 
+import atexit
 import glob as _glob
 import logging
 import os
+import queue
 import re
 import time
-from logging.handlers import RotatingFileHandler
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 
 # ---------------------------------------------------------------------------
 # Custom TRACE level (below DEBUG)
@@ -31,6 +33,9 @@ def _trace(self, message, *args, **kwargs):
 
 
 logging.Logger.trace = _trace  # type: ignore[attr-defined]
+
+# Background queue listener — started by configure_logging(), stopped at exit.
+_queue_listener: QueueListener | None = None
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -364,12 +369,22 @@ def configure_logging(cfg: dict) -> None:
     Supports both the legacy {"level": "DEBUG"} format and the full
     SG-inspired config with console/file/rotation/redaction.
     """
-    global _redactor
+    global _redactor, _queue_listener
+
+    # Stop any previous background listener before reconfiguring.
+    if _queue_listener is not None:
+        if getattr(_queue_listener, "_thread", None) is not None:
+            _queue_listener.stop()
+        _queue_listener = None
 
     root = logging.getLogger()
     # Clear existing handlers
     root.handlers.clear()
     root.setLevel(TRACE)
+
+    # Collect real handlers; we'll attach them to a background QueueListener
+    # instead of the root logger so emit()/flush() never block the event loop.
+    real_handlers: list[logging.Handler] = []
 
     # Legacy mode: simple level string
     if "console" not in cfg and "file" not in cfg:
@@ -384,7 +399,7 @@ def configure_logging(cfg: dict) -> None:
             fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         )
         handler.setFormatter(fmt)
-        root.addHandler(handler)
+        real_handlers.append(handler)
 
         # Route icecream to TRACE
         try:
@@ -398,6 +413,8 @@ def configure_logging(cfg: dict) -> None:
             )
         except ImportError:
             pass
+
+        _queue_listener = _start_queue_logging(root, real_handlers)
         return
 
     # Full SG-style config
@@ -424,7 +441,7 @@ def configure_logging(cfg: dict) -> None:
             fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         )
         handler.setFormatter(fmt)
-        root.addHandler(handler)
+        real_handlers.append(handler)
 
     # File handler
     file_cfg = cfg.get("file", {})
@@ -457,7 +474,7 @@ def configure_logging(cfg: dict) -> None:
             fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         )
         handler.setFormatter(fmt)
-        root.addHandler(handler)
+        real_handlers.append(handler)
 
     # Route icecream to TRACE
     try:
@@ -469,3 +486,22 @@ def configure_logging(cfg: dict) -> None:
         )
     except ImportError:
         pass
+
+    _queue_listener = _start_queue_logging(root, real_handlers)
+
+
+def _start_queue_logging(
+    root: logging.Logger, handlers: list[logging.Handler]
+) -> QueueListener:
+    """Attach a QueueHandler to root and drain to *handlers* on a background thread."""
+    log_queue: queue.Queue = queue.Queue(-1)  # unbounded
+    root.addHandler(QueueHandler(log_queue))
+    listener = QueueListener(log_queue, *handlers, respect_handler_level=True)
+    listener.start()
+
+    def _safe_stop(ref=listener):
+        if getattr(ref, "_thread", None) is not None:
+            ref.stop()
+
+    atexit.register(_safe_stop)
+    return listener

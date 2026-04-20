@@ -1628,6 +1628,17 @@ class CBLStore:
             or 0
         )
 
+    def pending_dlq_count(self) -> int:
+        """Return count of pending (retried=false) DLQ entries."""
+        return (
+            _run_n1ql_scalar(
+                self.db,
+                f"SELECT COUNT(*) FROM {_DLQ_FROM} AS d"
+                f" WHERE d.type = 'dlq' AND d.retried = false",
+            )
+            or 0
+        )
+
     def purge_expired_dlq(self, max_age_seconds: int) -> int:
         """Purge DLQ entries older than max_age_seconds. Returns count purged."""
         if max_age_seconds <= 0:

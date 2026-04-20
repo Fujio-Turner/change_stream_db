@@ -403,9 +403,10 @@ class TestConfigureLogging(unittest.TestCase):
 
     def test_legacy_mode_configures_console_handler(self):
         pl.configure_logging({"level": "WARNING"})
-        root = logging.getLogger()
-        self.assertEqual(len(root.handlers), 1)
-        handler = root.handlers[0]
+        listener = pl._queue_listener
+        self.assertIsNotNone(listener)
+        self.assertEqual(len(listener.handlers), 1)
+        handler = listener.handlers[0]
         self.assertIsInstance(handler, logging.StreamHandler)
         self.assertEqual(handler.level, logging.WARNING)
 
@@ -423,8 +424,9 @@ class TestConfigureLogging(unittest.TestCase):
             },
         }
         pl.configure_logging(cfg)
-        root = logging.getLogger()
-        self.assertTrue(len(root.handlers) >= 1)
+        listener = pl._queue_listener
+        self.assertIsNotNone(listener)
+        self.assertTrue(len(listener.handlers) >= 1)
         self.assertEqual(pl.get_redactor().level, "partial")
 
     def test_full_mode_file_handler(self):
@@ -446,15 +448,18 @@ class TestConfigureLogging(unittest.TestCase):
                 },
             }
             pl.configure_logging(cfg)
-            root = logging.getLogger()
+            # Real handlers are behind the QueueListener.
+            listener = pl._queue_listener
+            self.assertIsNotNone(listener)
             file_handlers = [
-                h for h in root.handlers if isinstance(h, pl.ManagedRotatingFileHandler)
+                h
+                for h in listener.handlers
+                if isinstance(h, pl.ManagedRotatingFileHandler)
             ]
             self.assertEqual(len(file_handlers), 1)
-            # Clean up handler to release file
-            for h in root.handlers[:]:
+            for h in listener.handlers:
                 h.close()
-                root.removeHandler(h)
+            listener.stop()
 
     def test_full_mode_both_handlers(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -474,11 +479,13 @@ class TestConfigureLogging(unittest.TestCase):
                 },
             }
             pl.configure_logging(cfg)
-            root = logging.getLogger()
-            self.assertEqual(len(root.handlers), 2)
-            for h in root.handlers[:]:
+            # Real handlers are behind the QueueListener; root has 1 QueueHandler.
+            listener = pl._queue_listener
+            self.assertIsNotNone(listener)
+            self.assertEqual(len(listener.handlers), 2)
+            for h in listener.handlers:
                 h.close()
-                root.removeHandler(h)
+            listener.stop()
 
     def test_legacy_mode_default_redaction_is_none(self):
         pl.configure_logging({"level": "DEBUG"})
@@ -494,8 +501,10 @@ class TestConfigureLogging(unittest.TestCase):
             },
         }
         pl.configure_logging(cfg)
-        root = logging.getLogger()
-        handler = root.handlers[0]
+        # Real handlers are behind the QueueListener; root has a QueueHandler.
+        listener = pl._queue_listener
+        self.assertIsNotNone(listener)
+        handler = listener.handlers[0]
         filters = handler.filters
         self.assertEqual(len(filters), 1)
         self.assertIsInstance(filters[0], pl.LogKeyLevelFilter)

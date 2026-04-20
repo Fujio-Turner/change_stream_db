@@ -96,6 +96,20 @@
               <input type="checkbox" id="gateway_accept_self_signed_certs" class="toggle toggle-success" />
             </label>
           </div>
+          <div class="form-control">
+            <label class="label cursor-pointer justify-start gap-4">
+              <span class="label-text">Compress</span>
+              <input type="checkbox" id="gateway_compress" class="toggle toggle-success" />
+              <div class="tooltip" data-tip="Enable gzip compression for Sync Gateway requests. Reduces bandwidth over WAN links but adds CPU overhead. Leave off for local/Docker deployments.">
+                <button type="button" class="btn btn-ghost btn-circle btn-xs">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current w-4 h-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </button>
+              </div>
+            </label>
+          </div>
           <div class="flex items-center gap-3 mt-2">
             <button class="btn btn-primary btn-sm" id="btnTestGateway" onclick="testGatewayConnection()">Test Connection</button>
             <span id="gatewayTestStatus" class="text-sm"></span>
@@ -1982,6 +1996,7 @@
     document.getElementById('gateway_scope').value = cfg.gateway?.scope || '';
     document.getElementById('gateway_collection').value = cfg.gateway?.collection || '';
     document.getElementById('gateway_accept_self_signed_certs').checked = cfg.gateway?.accept_self_signed_certs || false;
+    document.getElementById('gateway_compress').checked = cfg.gateway?.compress || false;
 
     document.getElementById('auth_method').value = cfg.auth?.method || 'none';
     document.getElementById('auth_username').value = cfg.auth?.username || '';
@@ -2271,7 +2286,8 @@
         database: document.getElementById('gateway_database').value,
         scope: document.getElementById('gateway_scope').value,
         collection: document.getElementById('gateway_collection').value,
-        accept_self_signed_certs: document.getElementById('gateway_accept_self_signed_certs').checked
+        accept_self_signed_certs: document.getElementById('gateway_accept_self_signed_certs').checked,
+        compress: document.getElementById('gateway_compress').checked
       },
       auth: {
         method: document.getElementById('auth_method').value,
@@ -2701,7 +2717,8 @@
             database: document.getElementById('gateway_database').value,
             scope: document.getElementById('gateway_scope').value || '_default',
             collection: document.getElementById('gateway_collection').value || '_default',
-            accept_self_signed_certs: document.getElementById('gateway_accept_self_signed_certs').checked
+            accept_self_signed_certs: document.getElementById('gateway_accept_self_signed_certs').checked,
+            compress: document.getElementById('gateway_compress').checked
           },
           auth: {
             method: document.getElementById('auth_method').value,

@@ -17,6 +17,21 @@ This document describes the internal architecture of the changes_worker, how dat
 
 ---
 
+## 📋 JSON Schema Standards
+
+**All JSON documents in this system must follow the [JSON Schema Standards Guide](../guides/JSON_SCHEMA.md).**
+
+This includes:
+- **Field naming:** `snake_case` for all field names (no camelCase, no PascalCase)
+- **Reserved fields:** Top-level fields starting with `_` are forbidden except `meta` (application metadata container)
+- **DateTime formats:** Unix epoch (seconds/ms) for performance-critical fields, ISO-8601 for readability
+- **Enum values:** Lowercase with underscores (e.g., `feed_type: "continuous"`, not `"Continuous"`)
+- **Field ordering:** Logical grouping (type/id → config → timestamps → meta)
+
+**Before writing config, mapping, or schema documents, review the [Author Checklist](../guides/JSON_SCHEMA.md#author-checklist) in the standards guide.**
+
+---
+
 ## Three-Stage Pipeline
 
 ![Pipeline Overview](../img/pipeline-overview.png)

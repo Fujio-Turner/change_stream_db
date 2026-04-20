@@ -231,6 +231,11 @@ class MetricsCollector:
         self.flood_batches_total: int = 0  # batches exceeding flood threshold
         self.flood_threshold: int = 10000  # configurable via set()
 
+        # Output backpressure
+        self.backpressure_delays_total: int = 0
+        self.backpressure_delay_seconds_total: float = 0.0
+        self.backpressure_active: int = 0  # 1 when currently throttling
+
         # Gauges (can go up and down)
         self.changes_pending: int = 0  # received - processed (backpressure)
         self.last_batch_size: int = 0
@@ -252,6 +257,27 @@ class MetricsCollector:
         self._inbound_auth_times: deque[float] = deque(maxlen=10000)
         self._outbound_auth_times: deque[float] = deque(maxlen=10000)
 
+        # Timing summary cache: avoid re-sorting unchanged deques on every scrape
+        self._timing_versions: dict[str, int] = {
+            "output": 0,
+            "changes": 0,
+            "batch": 0,
+            "fetch": 0,
+            "health": 0,
+            "inbound_auth": 0,
+            "outbound_auth": 0,
+        }
+        self._timing_stats_cache: dict[str, tuple[int, int, float, list[float]]] = {}
+
+        # System metrics cache (TTL=15s for psutil, 60s for directory walks)
+        self._system_metrics_cache: dict | None = None
+        self._system_metrics_cache_time: float = 0
+        self._dir_walk_cache: dict | None = None
+        self._dir_walk_cache_time: float = 0
+        # Process-level psutil cache (TTL=15s — same as system metrics)
+        self._process_metrics_cache: dict | None = None
+        self._process_metrics_cache_time: float = 0
+
     def inc(self, name: str, value: int = 1) -> None:
         with self._lock:
             setattr(self, name, getattr(self, name) + value)
@@ -263,30 +289,44 @@ class MetricsCollector:
     def record_output_response_time(self, seconds: float) -> None:
         with self._lock:
             self._output_resp_times.append(seconds)
+            self._timing_versions["output"] += 1
 
     def record_changes_request_time(self, seconds: float) -> None:
         with self._lock:
             self._changes_request_times.append(seconds)
+            self._timing_versions["changes"] += 1
 
     def record_batch_processing_time(self, seconds: float) -> None:
         with self._lock:
             self._batch_processing_times.append(seconds)
+            self._timing_versions["batch"] += 1
 
     def record_doc_fetch_time(self, seconds: float) -> None:
         with self._lock:
             self._doc_fetch_times.append(seconds)
+            self._timing_versions["fetch"] += 1
 
     def record_health_probe_time(self, seconds: float) -> None:
         with self._lock:
             self._health_probe_times.append(seconds)
+            self._timing_versions["health"] += 1
 
     def record_inbound_auth_time(self, seconds: float) -> None:
         with self._lock:
             self._inbound_auth_times.append(seconds)
+            self._timing_versions["inbound_auth"] += 1
 
     def record_outbound_auth_time(self, seconds: float) -> None:
         with self._lock:
             self._outbound_auth_times.append(seconds)
+            self._timing_versions["outbound_auth"] += 1
+
+    def get_output_latency_avg(self) -> float:
+        """Return rolling average output response time in seconds (0 if none)."""
+        with self._lock:
+            if not self._output_resp_times:
+                return 0.0
+            return sum(self._output_resp_times) / len(self._output_resp_times)
 
     def record_batch_received(self, batch_size: int) -> None:
         with self._lock:
@@ -298,27 +338,156 @@ class MetricsCollector:
                 self.changes_received_total - self.changes_processed_total
             )
 
+    def _get_cached_system_metrics(self) -> dict:
+        """Cache psutil calls with 15s TTL to avoid syscalls on every scrape."""
+        now = time.monotonic()
+        if (
+            self._system_metrics_cache is not None
+            and now - self._system_metrics_cache_time < 15
+        ):
+            return self._system_metrics_cache
+
+        cache = {}
+        try:
+            cache["gc_counts"] = gc.get_count()
+            cache["gc_stats"] = gc.get_stats()
+            cache["cpu_count"] = psutil.cpu_count(logical=True)
+            cache["cpu_percent"] = psutil.cpu_percent(interval=0)
+            cache["virtual_memory"] = psutil.virtual_memory()
+            cache["swap_memory"] = psutil.swap_memory()
+            try:
+                cache["disk_usage"] = psutil.disk_usage("/")
+            except OSError:
+                cache["disk_usage"] = None
+            cache["net_io_counters"] = psutil.net_io_counters()
+        except Exception:
+            pass  # system metrics are best-effort
+        self._system_metrics_cache = cache
+        self._system_metrics_cache_time = now
+        return cache
+
+    def _get_cached_process_metrics(self) -> dict:
+        """Cache process-level psutil calls with 15s TTL."""
+        now = time.monotonic()
+        if (
+            self._process_metrics_cache is not None
+            and now - self._process_metrics_cache_time < 15
+        ):
+            return self._process_metrics_cache
+
+        cache = {}
+        try:
+            proc = self._process
+            cache["cpu_times"] = proc.cpu_times()
+            cache["cpu_percent"] = proc.cpu_percent(interval=0)
+            cache["memory_info"] = proc.memory_info()
+            cache["memory_percent"] = proc.memory_percent()
+            cache["num_threads"] = proc.num_threads()
+            try:
+                cache["num_fds"] = proc.num_fds()
+            except AttributeError:
+                pass  # num_fds() not available on Windows
+        except Exception:
+            pass  # process metrics are best-effort
+        self._process_metrics_cache = cache
+        self._process_metrics_cache_time = now
+        return cache
+
+    def _get_cached_dir_walk_sizes(self) -> dict:
+        """Cache directory walk results with 60s TTL to avoid filesystem hits."""
+        now = time.monotonic()
+        if self._dir_walk_cache is not None and now - self._dir_walk_cache_time < 60:
+            return self._dir_walk_cache
+
+        cache = {"log_bytes": 0, "cbl_bytes": 0}
+        try:
+            log_dir = self._log_dir
+            if log_dir and os.path.isdir(log_dir):
+                total_log_bytes = 0
+                for dirpath, _, filenames in os.walk(log_dir):
+                    for fname in filenames:
+                        try:
+                            total_log_bytes += os.path.getsize(
+                                os.path.join(dirpath, fname)
+                            )
+                        except OSError:
+                            pass
+                cache["log_bytes"] = total_log_bytes
+
+            cbl_dir = self._cbl_db_dir
+            if cbl_dir and os.path.exists(cbl_dir):
+                total_cbl_bytes = 0
+                if os.path.isdir(cbl_dir):
+                    for dirpath, _, filenames in os.walk(cbl_dir):
+                        for fname in filenames:
+                            try:
+                                total_cbl_bytes += os.path.getsize(
+                                    os.path.join(dirpath, fname)
+                                )
+                            except OSError:
+                                pass
+                else:
+                    try:
+                        total_cbl_bytes = os.path.getsize(cbl_dir)
+                    except OSError:
+                        pass
+                cache["cbl_bytes"] = total_cbl_bytes
+        except Exception:
+            pass  # directory walks are best-effort
+        self._dir_walk_cache = cache
+        self._dir_walk_cache_time = now
+        return cache
+
+    def _get_cached_timing_stats(self) -> dict[str, tuple[int, float, list[float]]]:
+        """Return timing stats, recomputing only for deques that changed."""
+        with self._lock:
+            series = {
+                "output": self._output_resp_times,
+                "changes": self._changes_request_times,
+                "batch": self._batch_processing_times,
+                "fetch": self._doc_fetch_times,
+                "health": self._health_probe_times,
+                "inbound_auth": self._inbound_auth_times,
+                "outbound_auth": self._outbound_auth_times,
+            }
+            versions = dict(self._timing_versions)
+
+            cached_stats: dict[str, tuple[int, float, list[float]]] = {}
+            pending: dict[str, tuple[int, list[float]]] = {}
+
+            for key, data in series.items():
+                version = versions[key]
+                entry = self._timing_stats_cache.get(key)
+                if entry is not None and entry[0] == version:
+                    cached_stats[key] = (entry[1], entry[2], entry[3])
+                else:
+                    pending[key] = (version, list(data))
+
+        computed_cache_entries: dict[str, tuple[int, int, float, list[float]]] = {}
+        for key, (version, data) in pending.items():
+            sorted_data = sorted(data) if data else []
+            count = len(data)
+            total = sum(data) if data else 0.0
+            computed_cache_entries[key] = (version, count, total, sorted_data)
+            cached_stats[key] = (count, total, sorted_data)
+
+        if computed_cache_entries:
+            with self._lock:
+                for key, entry in computed_cache_entries.items():
+                    # Only publish if no newer samples arrived while computing.
+                    if self._timing_versions.get(key) == entry[0]:
+                        self._timing_stats_cache[key] = entry
+
+        return cached_stats
+
     def render(self) -> str:
         """Render all metrics in Prometheus text exposition format."""
         with self._lock:
             uptime = time.monotonic() - self._start_time
             labels = self._labels
 
-            # Snapshot all timing deques under the lock
-            ort = list(self._output_resp_times)
-            crt = list(self._changes_request_times)
-            bpt = list(self._batch_processing_times)
-            dft = list(self._doc_fetch_times)
-            hpt = list(self._health_probe_times)
-            iat = list(self._inbound_auth_times)
-            oat = list(self._outbound_auth_times)
-
-        # Pre-compute sorted arrays and stats for each timing deque
-        def _stats(data: list[float]) -> tuple[int, float, list[float]]:
-            count = len(data)
-            total = sum(data) if data else 0.0
-            sorted_data = sorted(data) if data else []
-            return count, total, sorted_data
+        # Pre-compute sorted arrays/stats once per data change (not per scrape)
+        timing_stats = self._get_cached_timing_stats()
 
         def _quantile(sorted_data: list[float], q: float) -> float:
             if not sorted_data:
@@ -326,13 +495,13 @@ class MetricsCollector:
             idx = int(q * (len(sorted_data) - 1))
             return sorted_data[idx]
 
-        ort_count, ort_sum, ort_sorted = _stats(ort)
-        crt_count, crt_sum, crt_sorted = _stats(crt)
-        bpt_count, bpt_sum, bpt_sorted = _stats(bpt)
-        dft_count, dft_sum, dft_sorted = _stats(dft)
-        hpt_count, hpt_sum, hpt_sorted = _stats(hpt)
-        iat_count, iat_sum, iat_sorted = _stats(iat)
-        oat_count, oat_sum, oat_sorted = _stats(oat)
+        ort_count, ort_sum, ort_sorted = timing_stats["output"]
+        crt_count, crt_sum, crt_sorted = timing_stats["changes"]
+        bpt_count, bpt_sum, bpt_sorted = timing_stats["batch"]
+        dft_count, dft_sum, dft_sorted = timing_stats["fetch"]
+        hpt_count, hpt_sum, hpt_sorted = timing_stats["health"]
+        iat_count, iat_sum, iat_sorted = timing_stats["inbound_auth"]
+        oat_count, oat_sum, oat_sorted = timing_stats["outbound_auth"]
 
         lines: list[str] = []
 
@@ -744,6 +913,23 @@ class MetricsCollector:
             self.flood_batches_total,
         )
 
+        # -- Output backpressure --
+        _counter(
+            "changes_worker_backpressure_delays_total",
+            "Number of times backpressure throttling was applied.",
+            self.backpressure_delays_total,
+        )
+        _counter(
+            "changes_worker_backpressure_delay_seconds_total",
+            "Total seconds spent in backpressure delays.",
+            self.backpressure_delay_seconds_total,
+        )
+        _gauge(
+            "changes_worker_backpressure_active",
+            "Whether backpressure throttling is currently active (1=yes, 0=no).",
+            self.backpressure_active,
+        )
+
         # -- Timing summaries --
         _summary(
             "changes_worker_changes_request_time_seconds",
@@ -841,53 +1027,54 @@ class MetricsCollector:
 
         # ── SYSTEM metrics (psutil / gc / threading) ────────────────────
         try:
-            proc = self._process
-            cpu_times = proc.cpu_times()
-            mem_info = proc.memory_info()
+            # Process-level metrics (cached with 15s TTL)
+            proc_metrics = self._get_cached_process_metrics()
+            cpu_times = proc_metrics.get("cpu_times")
+            mem_info = proc_metrics.get("memory_info")
 
             _gauge(
                 "changes_worker_process_cpu_percent",
                 "Process CPU usage as a percentage of one core.",
-                proc.cpu_percent(interval=0),
+                proc_metrics.get("cpu_percent", 0),
             )
-            _counter(
-                "changes_worker_process_cpu_user_seconds_total",
-                "User-space CPU seconds consumed by the worker process.",
-                f"{cpu_times.user:.3f}",
-            )
-            _counter(
-                "changes_worker_process_cpu_system_seconds_total",
-                "Kernel-space CPU seconds consumed by the worker process.",
-                f"{cpu_times.system:.3f}",
-            )
-            _gauge(
-                "changes_worker_process_memory_rss_bytes",
-                "Resident Set Size of the worker process in bytes.",
-                mem_info.rss,
-            )
-            _gauge(
-                "changes_worker_process_memory_vms_bytes",
-                "Virtual Memory Size of the worker process in bytes.",
-                mem_info.vms,
-            )
+            if cpu_times:
+                _counter(
+                    "changes_worker_process_cpu_user_seconds_total",
+                    "User-space CPU seconds consumed by the worker process.",
+                    f"{cpu_times.user:.3f}",
+                )
+                _counter(
+                    "changes_worker_process_cpu_system_seconds_total",
+                    "Kernel-space CPU seconds consumed by the worker process.",
+                    f"{cpu_times.system:.3f}",
+                )
+            if mem_info:
+                _gauge(
+                    "changes_worker_process_memory_rss_bytes",
+                    "Resident Set Size of the worker process in bytes.",
+                    mem_info.rss,
+                )
+                _gauge(
+                    "changes_worker_process_memory_vms_bytes",
+                    "Virtual Memory Size of the worker process in bytes.",
+                    mem_info.vms,
+                )
             _gauge(
                 "changes_worker_process_memory_percent",
                 "Percentage of system RAM used by the worker process.",
-                f"{proc.memory_percent():.2f}",
+                f"{proc_metrics.get('memory_percent', 0):.2f}",
             )
             _gauge(
                 "changes_worker_process_threads",
                 "Number of OS threads used by the worker process.",
-                proc.num_threads(),
+                proc_metrics.get("num_threads", 0),
             )
-            try:
+            if "num_fds" in proc_metrics:
                 _gauge(
                     "changes_worker_process_open_fds",
                     "Number of open file descriptors.",
-                    proc.num_fds(),
+                    proc_metrics["num_fds"],
                 )
-            except AttributeError:
-                pass  # num_fds() not available on Windows
 
             _gauge(
                 "changes_worker_python_threads_active",
@@ -895,9 +1082,10 @@ class MetricsCollector:
                 threading.active_count(),
             )
 
-            # GC stats per generation
-            gc_counts = gc.get_count()
-            gc_stats = gc.get_stats()
+            # GC stats per generation (cached with 15s TTL)
+            sys_metrics = self._get_cached_system_metrics()
+            gc_counts = sys_metrics.get("gc_counts", gc.get_count())
+            gc_stats = sys_metrics.get("gc_stats", gc.get_stats())
             for gen in range(3):
                 _gauge(
                     f"changes_worker_python_gc_gen{gen}_count",
@@ -910,54 +1098,56 @@ class MetricsCollector:
                     gc_stats[gen]["collections"],
                 )
 
-            # System-wide metrics
+            # System-wide metrics (cached with 15s TTL to avoid syscalls)
             _gauge(
                 "changes_worker_system_cpu_count",
                 "Number of logical CPU cores on the host.",
-                psutil.cpu_count(logical=True),
+                sys_metrics.get("cpu_count", 0),
             )
             _gauge(
                 "changes_worker_system_cpu_percent",
                 "Host-wide CPU usage percentage.",
-                psutil.cpu_percent(interval=0),
+                sys_metrics.get("cpu_percent", 0),
             )
 
-            vmem = psutil.virtual_memory()
-            _gauge(
-                "changes_worker_system_memory_total_bytes",
-                "Total physical memory on the host.",
-                vmem.total,
-            )
-            _gauge(
-                "changes_worker_system_memory_available_bytes",
-                "Available physical memory on the host.",
-                vmem.available,
-            )
-            _gauge(
-                "changes_worker_system_memory_used_bytes",
-                "Used physical memory on the host.",
-                vmem.used,
-            )
-            _gauge(
-                "changes_worker_system_memory_percent",
-                "Host memory usage percentage.",
-                vmem.percent,
-            )
+            vmem = sys_metrics.get("virtual_memory")
+            if vmem:
+                _gauge(
+                    "changes_worker_system_memory_total_bytes",
+                    "Total physical memory on the host.",
+                    vmem.total,
+                )
+                _gauge(
+                    "changes_worker_system_memory_available_bytes",
+                    "Available physical memory on the host.",
+                    vmem.available,
+                )
+                _gauge(
+                    "changes_worker_system_memory_used_bytes",
+                    "Used physical memory on the host.",
+                    vmem.used,
+                )
+                _gauge(
+                    "changes_worker_system_memory_percent",
+                    "Host memory usage percentage.",
+                    vmem.percent,
+                )
 
-            swap = psutil.swap_memory()
-            _gauge(
-                "changes_worker_system_swap_total_bytes",
-                "Total swap space on the host.",
-                swap.total,
-            )
-            _gauge(
-                "changes_worker_system_swap_used_bytes",
-                "Used swap space on the host.",
-                swap.used,
-            )
+            swap = sys_metrics.get("swap_memory")
+            if swap:
+                _gauge(
+                    "changes_worker_system_swap_total_bytes",
+                    "Total swap space on the host.",
+                    swap.total,
+                )
+                _gauge(
+                    "changes_worker_system_swap_used_bytes",
+                    "Used swap space on the host.",
+                    swap.used,
+                )
 
-            try:
-                disk = psutil.disk_usage("/")
+            disk = sys_metrics.get("disk_usage")
+            if disk:
                 _gauge(
                     "changes_worker_system_disk_total_bytes",
                     "Total disk space.",
@@ -978,10 +1168,8 @@ class MetricsCollector:
                     "Disk usage percentage.",
                     disk.percent,
                 )
-            except OSError:
-                pass
 
-            net = psutil.net_io_counters()
+            net = sys_metrics.get("net_io_counters")
             if net:
                 _counter(
                     "changes_worker_system_network_bytes_sent_total",
@@ -1014,47 +1202,18 @@ class MetricsCollector:
                     net.errout,
                 )
 
-            # Log directory size
-            log_dir = self._log_dir
-            if log_dir and os.path.isdir(log_dir):
-                total_log_bytes = 0
-                for dirpath, _, filenames in os.walk(log_dir):
-                    for fname in filenames:
-                        try:
-                            total_log_bytes += os.path.getsize(
-                                os.path.join(dirpath, fname)
-                            )
-                        except OSError:
-                            pass
-                _gauge(
-                    "changes_worker_log_dir_size_bytes",
-                    "Total size of the log directory in bytes.",
-                    total_log_bytes,
-                )
-
-            # CBL database size
-            cbl_dir = self._cbl_db_dir
-            if cbl_dir and os.path.exists(cbl_dir):
-                total_cbl_bytes = 0
-                if os.path.isdir(cbl_dir):
-                    for dirpath, _, filenames in os.walk(cbl_dir):
-                        for fname in filenames:
-                            try:
-                                total_cbl_bytes += os.path.getsize(
-                                    os.path.join(dirpath, fname)
-                                )
-                            except OSError:
-                                pass
-                else:
-                    try:
-                        total_cbl_bytes = os.path.getsize(cbl_dir)
-                    except OSError:
-                        pass
-                _gauge(
-                    "changes_worker_cbl_db_size_bytes",
-                    "Total size of the Couchbase Lite database in bytes.",
-                    total_cbl_bytes,
-                )
+            # Directory sizes (cached with 60s TTL to avoid filesystem hits)
+            dir_sizes = self._get_cached_dir_walk_sizes()
+            _gauge(
+                "changes_worker_log_dir_size_bytes",
+                "Total size of the log directory in bytes.",
+                dir_sizes["log_bytes"],
+            )
+            _gauge(
+                "changes_worker_cbl_db_size_bytes",
+                "Total size of the Couchbase Lite database in bytes.",
+                dir_sizes["cbl_bytes"],
+            )
         except Exception:
             pass  # system metrics are best-effort
 
@@ -1730,9 +1889,13 @@ def build_ssl_context(gw: dict) -> ssl.SSLContext | None:
     return ctx
 
 
-def build_auth_headers(auth_cfg: dict, src: str = "sync_gateway") -> dict:
+def build_auth_headers(
+    auth_cfg: dict, src: str = "sync_gateway", compress: bool = False
+) -> dict:
     method = auth_cfg.get("method", "basic")
     headers: dict[str, str] = {}
+    if compress:
+        headers["Accept-Encoding"] = "gzip"
     if method == "bearer":
         if src == "edge_server":
             logger.warning(
@@ -1939,6 +2102,7 @@ class Checkpoint:
             path = Path(fallback_file)
             fallback_file = str(path.parent / f"{path.stem}_{job_id}{path.suffix}")
         self._fallback_path = Path(fallback_file)
+        self._fallback_store: CBLStore | None = None
 
         ic(self._uuid, self._local_doc_id, raw)
 
@@ -2117,9 +2281,15 @@ class Checkpoint:
 
     # -- Local file fallback ---------------------------------------------------
 
+    def _get_fallback_store(self) -> CBLStore:
+        """Lazily create and reuse a CBLStore for fallback checkpoint operations."""
+        if self._fallback_store is None:
+            self._fallback_store = CBLStore()
+        return self._fallback_store
+
     def _load_fallback(self) -> str:
         if USE_CBL:
-            data = CBLStore().load_checkpoint(self._uuid)
+            data = self._get_fallback_store().load_checkpoint(self._uuid)
             if data:
                 seq = data.get("SGs_Seq", "0")
                 raw_isd = data.get("initial_sync_done", None)
@@ -2145,7 +2315,9 @@ class Checkpoint:
 
     def _save_fallback(self, seq: str) -> None:
         if USE_CBL:
-            CBLStore().save_checkpoint(self._uuid, seq, self._client_id, self._internal)
+            self._get_fallback_store().save_checkpoint(
+                self._uuid, seq, self._client_id, self._internal
+            )
             ic("checkpoint saved to CBL", seq)
             return
         # Original file fallback
@@ -2217,7 +2389,7 @@ async def poll_changes(
         ) from e
     ssl_ctx = build_ssl_context(gw)
     basic_auth = build_basic_auth(auth_cfg)
-    auth_headers = build_auth_headers(auth_cfg, src)
+    auth_headers = build_auth_headers(auth_cfg, src, compress=gw.get("compress", False))
 
     channels = feed_cfg.get("channels", [])
     checkpoint = Checkpoint(
@@ -2350,8 +2522,11 @@ async def poll_changes(
                 log_event(logger, "info", "DLQ", "DLQ replay summary: %s" % dlq_summary)
             # Update DLQ pending count gauge after replay
             if metrics:
-                pending = dlq.list_pending()
-                metrics.set("dlq_pending_count", len(pending))
+                # Use dlq_count() instead of list_pending() to avoid loading all docs into memory
+                count = (
+                    dlq._store.dlq_count() if dlq._store else len(dlq.list_pending())
+                )
+                metrics.set("dlq_pending_count", count)
 
         throttle = feed_cfg.get("throttle_feed", 0)
 
@@ -2705,7 +2880,7 @@ async def test_connection(cfg: dict, src: str) -> bool:
     root_url = gw["url"].rstrip("/")
     ssl_ctx = build_ssl_context(gw)
     basic_auth = build_basic_auth(auth_cfg)
-    auth_headers = build_auth_headers(auth_cfg, src)
+    auth_headers = build_auth_headers(auth_cfg, src, compress=gw.get("compress", False))
 
     connector = aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else aiohttp.TCPConnector()
     timeout = aiohttp.ClientTimeout(total=15)
@@ -2833,6 +3008,13 @@ def main() -> None:
     cfg = load_config(args.config)
     _ensure_full_logging_config(cfg)
     configure_logging(cfg.get("logging", {}))
+
+    # Disable icecream unless TRACE level is configured — ic() does expensive
+    # AST parsing and stack inspection on every call even when silent.
+    log_cfg = cfg.get("logging", {})
+    console_level = log_cfg.get("console", {}).get("log_level", "info").lower()
+    if console_level != "trace":
+        ic.disable()
 
     log_event(
         logger,

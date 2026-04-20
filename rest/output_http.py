@@ -1154,6 +1154,15 @@ class DeadLetterQueue:
             return entries
         return []
 
+    def pending_count(self) -> int:
+        """Return count of pending DLQ entries without loading all documents."""
+        if self._use_cbl and self._store:
+            # Use server-side COUNT query when available.
+            if hasattr(self._store, "pending_dlq_count"):
+                return self._store.pending_dlq_count()
+            return self._store.dlq_count()
+        return len(self.list_pending())
+
     def get_entry_doc(self, dlq_id: str) -> dict | None:
         """Return the full DLQ entry including doc_data for reprocessing."""
         if self._use_cbl and self._store:

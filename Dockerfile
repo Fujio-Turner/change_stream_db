@@ -30,7 +30,8 @@ RUN pip install --no-cache-dir cffi setuptools && \
 ENV PYTHONPATH="/opt/cbl-python:${PYTHONPATH}"
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir py-spy
 
 COPY . .
 RUN mkdir -p /app/data

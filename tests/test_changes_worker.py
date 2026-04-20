@@ -2660,8 +2660,8 @@ class TestFetchDocsBulkGetJsonError(unittest.TestCase):
             http = MagicMock()
             resp = AsyncMock()
             resp.content_type = "multipart/mixed"
-            resp.text = AsyncMock(
-                return_value='{"_id":"d1","_rev":"1-x"}\n--boundary--\n'
+            resp.read = AsyncMock(
+                return_value=b'{"_id":"d1","_rev":"1-x"}\n--boundary--\n'
             )
             resp.release = MagicMock()
             http.request = AsyncMock(return_value=resp)
@@ -2972,7 +2972,7 @@ class TestBulkGetRespRelease(unittest.TestCase):
             http = MagicMock()
             resp = AsyncMock()
             resp.content_type = "multipart/mixed"
-            resp.text = AsyncMock(return_value="")
+            resp.read = AsyncMock(return_value=b"")
             resp.release = MagicMock()
             http.request = AsyncMock(return_value=resp)
 
