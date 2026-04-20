@@ -1,6 +1,6 @@
 # Changes Worker v2.0 – Architecture Redesign
 
-> **Status:** 🔄 Phases 1-3 Complete (Inputs Wizard UI)
+> **Status:** 🔄 Phases 1-4 Complete (Inputs & Outputs Wizard UI)
 > **Breaking change:** Yes – config format, CBL schema, cbl_store.py API, wizard UI, main.py startup  
 > **Goal:** Replace the monolithic `config.json` with a job-centric, composable document model stored in Couchbase Lite collections.
 
@@ -11,6 +11,7 @@
 **Phase 1** ✅ — CBL Schema & `cbl_store.py` Updates  
 **Phase 2** ✅ — Migration Logic (v1.x → v2.0)  
 **Phase 3** ✅ — Wizard UI for Inputs Management
+**Phase 4** ✅ — Wizard UI for Outputs Management (4 types: RDBMS, HTTP, Cloud, Stdout)
 
 **Related docs:**
 - [`DESIGN.md`](DESIGN.md) – Current v1.x pipeline architecture

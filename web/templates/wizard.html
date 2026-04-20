@@ -260,6 +260,375 @@
       </div>
 
       <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- OUTPUTS WIZARD (v2.0)                                  -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <div id="outputsWizard" class="hidden max-w-5xl mx-auto">
+       <div class="flex items-center justify-between mb-4">
+         <button class="btn btn-ghost btn-sm" onclick="showWizardLanding()">← Back to Wizards</button>
+         <span class="text-sm opacity-60">Outputs Manager</span>
+       </div>
+
+       <!-- Output Type Tabs -->
+       <div class="tabs tabs-boxed mb-6">
+         <a class="tab tab-active" id="outTabRdbms" onclick="switchOutputTab('rdbms')">🗄️ RDBMS</a>
+         <a class="tab" id="outTabHttp" onclick="switchOutputTab('http')">📡 HTTP</a>
+         <a class="tab" id="outTabCloud" onclick="switchOutputTab('cloud')">☁️ Cloud</a>
+         <a class="tab" id="outTabStdout" onclick="switchOutputTab('stdout')">📺 Stdout</a>
+       </div>
+
+       <!-- RDBMS Outputs -->
+       <div id="outPanelRdbms" class="space-y-6">
+         <!-- Existing RDBMS Outputs -->
+         <div class="card bg-base-100 shadow-sm rounded-2xl border-l-4 border-info">
+           <div class="card-body">
+             <div class="flex items-center justify-between mb-3">
+               <h3 class="text-lg font-bold">🗄️ Saved RDBMS Outputs</h3>
+               <span id="outRdbmsCount" class="badge badge-info text-xs">0</span>
+             </div>
+             <div class="overflow-x-auto">
+               <table class="table table-xs table-zebra w-full">
+                 <thead>
+                   <tr class="bg-base-200">
+                     <th class="text-xs font-semibold">ID</th>
+                     <th class="text-xs font-semibold">Name</th>
+                     <th class="text-xs font-semibold">Engine</th>
+                     <th class="text-xs font-semibold">Host:Port</th>
+                     <th class="text-xs font-semibold text-right">Actions</th>
+                   </tr>
+                 </thead>
+                 <tbody id="outRdbmsTableBody"></tbody>
+               </table>
+             </div>
+             <div class="mt-3 flex gap-2">
+               <button class="btn btn-primary btn-xs" onclick="outputsRdbmsAddNew()">+ New RDBMS</button>
+               <button class="btn btn-warning btn-xs" onclick="outputsClearAll('rdbms')">Clear All</button>
+             </div>
+           </div>
+         </div>
+
+         <!-- RDBMS Form -->
+         <div id="outRdbmsFormCard" class="hidden card bg-base-100 shadow-sm rounded-2xl">
+           <div class="card-body">
+             <h2 class="text-xl font-bold mb-4">RDBMS Output Configuration</h2>
+             <div class="space-y-4">
+               <div class="grid grid-cols-2 gap-4">
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Output ID</span></label>
+                   <input id="outRdbmsId" type="text" class="input input-bordered w-full" placeholder="e.g. pg-prod" />
+                 </div>
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Name</span></label>
+                   <input id="outRdbmsName" type="text" class="input input-bordered w-full" placeholder="Display name" />
+                 </div>
+               </div>
+
+               <div class="grid grid-cols-3 gap-4">
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Engine</span></label>
+                   <select id="outRdbmsEngine" class="select select-bordered w-full">
+                     <option value="">Choose engine...</option>
+                     <option value="postgres">PostgreSQL</option>
+                     <option value="mysql">MySQL</option>
+                     <option value="mssql">MSSQL</option>
+                     <option value="oracle">Oracle</option>
+                   </select>
+                 </div>
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Host</span></label>
+                   <input id="outRdbmsHost" type="text" class="input input-bordered w-full" placeholder="localhost" />
+                 </div>
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Port</span></label>
+                   <input id="outRdbmsPort" type="number" class="input input-bordered w-full" placeholder="5432" />
+                 </div>
+               </div>
+
+               <div class="grid grid-cols-3 gap-4">
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Database</span></label>
+                   <input id="outRdbmsDatabase" type="text" class="input input-bordered w-full" placeholder="dbname" />
+                 </div>
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Username</span></label>
+                   <input id="outRdbmsUser" type="text" class="input input-bordered w-full" />
+                 </div>
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Password</span></label>
+                   <input id="outRdbmsPass" type="password" class="input input-bordered w-full" />
+                 </div>
+               </div>
+
+               <div class="grid grid-cols-2 gap-4">
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Pool Max</span></label>
+                   <input id="outRdbmsPoolMax" type="number" class="input input-bordered w-full" placeholder="10" value="10" />
+                 </div>
+                 <div>
+                   <label class="label">
+                     <span class="label-text font-semibold">Enabled</span>
+                     <input id="outRdbmsEnabled" type="checkbox" class="checkbox checkbox-sm" checked />
+                   </label>
+                 </div>
+               </div>
+
+               <div class="flex gap-2 mt-6">
+                 <button class="btn btn-success" onclick="outputsRdbmsSave()">Save Output</button>
+                 <button class="btn btn-ghost" onclick="outputsCancel('rdbms')">Cancel</button>
+               </div>
+             </div>
+           </div>
+         </div>
+       </div>
+
+       <!-- HTTP Outputs -->
+       <div id="outPanelHttp" class="hidden space-y-6">
+         <!-- Existing HTTP Outputs -->
+         <div class="card bg-base-100 shadow-sm rounded-2xl border-l-4 border-success">
+           <div class="card-body">
+             <div class="flex items-center justify-between mb-3">
+               <h3 class="text-lg font-bold">📡 Saved HTTP Outputs</h3>
+               <span id="outHttpCount" class="badge badge-success text-xs">0</span>
+             </div>
+             <div class="overflow-x-auto">
+               <table class="table table-xs table-zebra w-full">
+                 <thead>
+                   <tr class="bg-base-200">
+                     <th class="text-xs font-semibold">ID</th>
+                     <th class="text-xs font-semibold">Name</th>
+                     <th class="text-xs font-semibold">Target URL</th>
+                     <th class="text-xs font-semibold">Method</th>
+                     <th class="text-xs font-semibold text-right">Actions</th>
+                   </tr>
+                 </thead>
+                 <tbody id="outHttpTableBody"></tbody>
+               </table>
+             </div>
+             <div class="mt-3 flex gap-2">
+               <button class="btn btn-primary btn-xs" onclick="outputsHttpAddNew()">+ New HTTP</button>
+               <button class="btn btn-warning btn-xs" onclick="outputsClearAll('http')">Clear All</button>
+             </div>
+           </div>
+         </div>
+
+         <!-- HTTP Form -->
+         <div id="outHttpFormCard" class="hidden card bg-base-100 shadow-sm rounded-2xl">
+           <div class="card-body">
+             <h2 class="text-xl font-bold mb-4">HTTP Output Configuration</h2>
+             <div class="space-y-4">
+               <div class="grid grid-cols-2 gap-4">
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Output ID</span></label>
+                   <input id="outHttpId" type="text" class="input input-bordered w-full" placeholder="e.g. webhook-prod" />
+                 </div>
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Name</span></label>
+                   <input id="outHttpName" type="text" class="input input-bordered w-full" placeholder="Display name" />
+                 </div>
+               </div>
+
+               <div>
+                 <label class="label"><span class="label-text font-semibold">Target URL</span></label>
+                 <input id="outHttpUrl" type="text" class="input input-bordered w-full" placeholder="https://api.example.com/webhook" />
+               </div>
+
+               <div class="grid grid-cols-2 gap-4">
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">HTTP Method</span></label>
+                   <select id="outHttpMethod" class="select select-bordered w-full">
+                     <option value="POST">POST</option>
+                     <option value="PUT">PUT</option>
+                     <option value="PATCH">PATCH</option>
+                   </select>
+                 </div>
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Timeout (sec)</span></label>
+                   <input id="outHttpTimeout" type="number" class="input input-bordered w-full" placeholder="30" value="30" />
+                 </div>
+               </div>
+
+               <div class="grid grid-cols-2 gap-4">
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Retry Count</span></label>
+                   <input id="outHttpRetry" type="number" class="input input-bordered w-full" placeholder="3" value="3" />
+                 </div>
+                 <div>
+                   <label class="label">
+                     <span class="label-text font-semibold">Enabled</span>
+                     <input id="outHttpEnabled" type="checkbox" class="checkbox checkbox-sm" checked />
+                   </label>
+                 </div>
+               </div>
+
+               <div class="flex gap-2 mt-6">
+                 <button class="btn btn-success" onclick="outputsHttpSave()">Save Output</button>
+                 <button class="btn btn-ghost" onclick="outputsCancel('http')">Cancel</button>
+               </div>
+             </div>
+           </div>
+         </div>
+       </div>
+
+       <!-- Cloud Outputs -->
+       <div id="outPanelCloud" class="hidden space-y-6">
+         <!-- Existing Cloud Outputs -->
+         <div class="card bg-base-100 shadow-sm rounded-2xl border-l-4 border-warning">
+           <div class="card-body">
+             <div class="flex items-center justify-between mb-3">
+               <h3 class="text-lg font-bold">☁️ Saved Cloud Outputs</h3>
+               <span id="outCloudCount" class="badge badge-warning text-xs">0</span>
+             </div>
+             <div class="overflow-x-auto">
+               <table class="table table-xs table-zebra w-full">
+                 <thead>
+                   <tr class="bg-base-200">
+                     <th class="text-xs font-semibold">ID</th>
+                     <th class="text-xs font-semibold">Name</th>
+                     <th class="text-xs font-semibold">Provider</th>
+                     <th class="text-xs font-semibold">Bucket</th>
+                     <th class="text-xs font-semibold text-right">Actions</th>
+                   </tr>
+                 </thead>
+                 <tbody id="outCloudTableBody"></tbody>
+               </table>
+             </div>
+             <div class="mt-3 flex gap-2">
+               <button class="btn btn-primary btn-xs" onclick="outputsCloudAddNew()">+ New Cloud</button>
+               <button class="btn btn-warning btn-xs" onclick="outputsClearAll('cloud')">Clear All</button>
+             </div>
+           </div>
+         </div>
+
+         <!-- Cloud Form -->
+         <div id="outCloudFormCard" class="hidden card bg-base-100 shadow-sm rounded-2xl">
+           <div class="card-body">
+             <h2 class="text-xl font-bold mb-4">Cloud Output Configuration</h2>
+             <div class="space-y-4">
+               <div class="grid grid-cols-2 gap-4">
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Output ID</span></label>
+                   <input id="outCloudId" type="text" class="input input-bordered w-full" placeholder="e.g. s3-prod" />
+                 </div>
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Name</span></label>
+                   <input id="outCloudName" type="text" class="input input-bordered w-full" placeholder="Display name" />
+                 </div>
+               </div>
+
+               <div class="grid grid-cols-2 gap-4">
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Provider</span></label>
+                   <select id="outCloudProvider" class="select select-bordered w-full">
+                     <option value="s3">Amazon S3</option>
+                     <option value="gcs">Google Cloud Storage</option>
+                     <option value="azure">Azure Blob</option>
+                   </select>
+                 </div>
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Region</span></label>
+                   <input id="outCloudRegion" type="text" class="input input-bordered w-full" placeholder="us-east-1" />
+                 </div>
+               </div>
+
+               <div class="grid grid-cols-2 gap-4">
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Bucket</span></label>
+                   <input id="outCloudBucket" type="text" class="input input-bordered w-full" placeholder="my-bucket" />
+                 </div>
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Prefix</span></label>
+                   <input id="outCloudPrefix" type="text" class="input input-bordered w-full" placeholder="changes/" />
+                 </div>
+               </div>
+
+               <div>
+                 <label class="label">
+                   <span class="label-text font-semibold">Enabled</span>
+                   <input id="outCloudEnabled" type="checkbox" class="checkbox checkbox-sm" checked />
+                 </label>
+               </div>
+
+               <div class="flex gap-2 mt-6">
+                 <button class="btn btn-success" onclick="outputsCloudSave()">Save Output</button>
+                 <button class="btn btn-ghost" onclick="outputsCancel('cloud')">Cancel</button>
+               </div>
+             </div>
+           </div>
+         </div>
+       </div>
+
+       <!-- Stdout Outputs -->
+       <div id="outPanelStdout" class="hidden space-y-6">
+         <!-- Existing Stdout Outputs -->
+         <div class="card bg-base-100 shadow-sm rounded-2xl border-l-4 border-secondary">
+           <div class="card-body">
+             <div class="flex items-center justify-between mb-3">
+               <h3 class="text-lg font-bold">📺 Saved Stdout Outputs</h3>
+               <span id="outStdoutCount" class="badge badge-secondary text-xs">0</span>
+             </div>
+             <div class="overflow-x-auto">
+               <table class="table table-xs table-zebra w-full">
+                 <thead>
+                   <tr class="bg-base-200">
+                     <th class="text-xs font-semibold">ID</th>
+                     <th class="text-xs font-semibold">Name</th>
+                     <th class="text-xs font-semibold">Format</th>
+                     <th class="text-xs font-semibold text-right">Actions</th>
+                   </tr>
+                 </thead>
+                 <tbody id="outStdoutTableBody"></tbody>
+               </table>
+             </div>
+             <div class="mt-3 flex gap-2">
+               <button class="btn btn-primary btn-xs" onclick="outputsStdoutAddNew()">+ New Stdout</button>
+               <button class="btn btn-warning btn-xs" onclick="outputsClearAll('stdout')">Clear All</button>
+             </div>
+           </div>
+         </div>
+
+         <!-- Stdout Form -->
+         <div id="outStdoutFormCard" class="hidden card bg-base-100 shadow-sm rounded-2xl">
+           <div class="card-body">
+             <h2 class="text-xl font-bold mb-4">Stdout Output Configuration</h2>
+             <div class="space-y-4">
+               <div class="grid grid-cols-2 gap-4">
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Output ID</span></label>
+                   <input id="outStdoutId" type="text" class="input input-bordered w-full" placeholder="e.g. stdout-dev" />
+                 </div>
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Name</span></label>
+                   <input id="outStdoutName" type="text" class="input input-bordered w-full" placeholder="Display name" />
+                 </div>
+               </div>
+
+               <div class="grid grid-cols-2 gap-4">
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Format</span></label>
+                   <select id="outStdoutFormat" class="select select-bordered w-full">
+                     <option value="json">JSON (pretty)</option>
+                     <option value="json-compact">JSON (compact)</option>
+                     <option value="text">Text</option>
+                   </select>
+                 </div>
+                 <div>
+                   <label class="label">
+                     <span class="label-text font-semibold">Enabled</span>
+                     <input id="outStdoutEnabled" type="checkbox" class="checkbox checkbox-sm" checked />
+                   </label>
+                 </div>
+               </div>
+
+               <div class="flex gap-2 mt-6">
+                 <button class="btn btn-success" onclick="outputsStdoutSave()">Save Output</button>
+                 <button class="btn btn-ghost" onclick="outputsCancel('stdout')">Cancel</button>
+               </div>
+             </div>
+           </div>
+         </div>
+       </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
       <!-- CLOUD STORAGE WIZARD                                   -->
       <!-- ═══════════════════════════════════════════════════════ -->
       <div id="cloudStorageWizard" class="hidden max-w-4xl mx-auto">
@@ -4390,7 +4759,328 @@ function inputsClearAll() {
 }
 
 function startOutputsWizard() {
-  alert('Outputs Wizard — coming in Phase 4');
+  wizardMode = 'outputs';
+  document.getElementById('wizardLanding').classList.add('hidden');
+  document.getElementById('outputsWizard').classList.remove('hidden');
+  switchOutputTab('rdbms');
+}
+
+function switchOutputTab(type) {
+  var tabs = ['rdbms', 'http', 'cloud', 'stdout'];
+  tabs.forEach(function(t) {
+    var tab = document.getElementById('outTab' + t.charAt(0).toUpperCase() + t.slice(1));
+    var panel = document.getElementById('outPanel' + t.charAt(0).toUpperCase() + t.slice(1));
+    if (t === type) {
+      if (tab) tab.classList.add('tab-active');
+      if (panel) panel.classList.remove('hidden');
+      outputsLoadExisting(type);
+    } else {
+      if (tab) tab.classList.remove('tab-active');
+      if (panel) panel.classList.add('hidden');
+    }
+  });
+}
+
+function outputsLoadExisting(type) {
+  var endpoint = '/api/outputs_' + type;
+  fetch(endpoint)
+    .then(r => r.json())
+    .then(doc => {
+      var src = doc.src || [];
+      var countId = 'out' + type.charAt(0).toUpperCase() + type.slice(1) + 'Count';
+      var tableId = 'out' + type.charAt(0).toUpperCase() + type.slice(1) + 'TableBody';
+      
+      document.getElementById(countId).textContent = src.length;
+      var tbody = document.getElementById(tableId);
+      
+      if (type === 'rdbms') {
+        tbody.innerHTML = src.map(function(out) {
+          return '<tr><td>' + esc(out.id) + '</td><td>' + esc(out.name || '–') + '</td><td>' + 
+                 esc(out.engine || '–') + '</td><td>' + esc(out.host + ':' + out.port || '–') + '</td>' +
+                 '<td class="text-right"><button class="btn btn-xs btn-ghost" onclick="outputsEdit(\'' + 
+                 esc(out.id) + '\', \'rdbms\')">Edit</button> ' +
+                 '<button class="btn btn-xs btn-ghost text-error" onclick="outputsDelete(\'' + 
+                 esc(out.id) + '\', \'rdbms\')">Delete</button></td></tr>';
+        }).join('');
+      } else if (type === 'http') {
+        tbody.innerHTML = src.map(function(out) {
+          return '<tr><td>' + esc(out.id) + '</td><td>' + esc(out.name || '–') + '</td><td>' + 
+                 esc(out.target_url || '–') + '</td><td>' + esc(out.write_method || 'POST') + '</td>' +
+                 '<td class="text-right"><button class="btn btn-xs btn-ghost" onclick="outputsEdit(\'' + 
+                 esc(out.id) + '\', \'http\')">Edit</button> ' +
+                 '<button class="btn btn-xs btn-ghost text-error" onclick="outputsDelete(\'' + 
+                 esc(out.id) + '\', \'http\')">Delete</button></td></tr>';
+        }).join('');
+      } else if (type === 'cloud') {
+        tbody.innerHTML = src.map(function(out) {
+          return '<tr><td>' + esc(out.id) + '</td><td>' + esc(out.name || '–') + '</td><td>' + 
+                 esc(out.provider || '–') + '</td><td>' + esc(out.bucket || '–') + '</td>' +
+                 '<td class="text-right"><button class="btn btn-xs btn-ghost" onclick="outputsEdit(\'' + 
+                 esc(out.id) + '\', \'cloud\')">Edit</button> ' +
+                 '<button class="btn btn-xs btn-ghost text-error" onclick="outputsDelete(\'' + 
+                 esc(out.id) + '\', \'cloud\')">Delete</button></td></tr>';
+        }).join('');
+      } else if (type === 'stdout') {
+        tbody.innerHTML = src.map(function(out) {
+          return '<tr><td>' + esc(out.id) + '</td><td>' + esc(out.name || '–') + '</td><td>' + 
+                 esc(out.pretty_print ? 'json' : 'text') + '</td>' +
+                 '<td class="text-right"><button class="btn btn-xs btn-ghost" onclick="outputsEdit(\'' + 
+                 esc(out.id) + '\', \'stdout\')">Edit</button> ' +
+                 '<button class="btn btn-xs btn-ghost text-error" onclick="outputsDelete(\'' + 
+                 esc(out.id) + '\', \'stdout\')">Delete</button></td></tr>';
+        }).join('');
+      }
+    })
+    .catch(e => console.error('Error loading outputs', e));
+}
+
+function outputsRdbmsAddNew() {
+  document.getElementById('outRdbmsId').value = '';
+  document.getElementById('outRdbmsName').value = '';
+  document.getElementById('outRdbmsEngine').value = '';
+  document.getElementById('outRdbmsHost').value = '';
+  document.getElementById('outRdbmsPort').value = '5432';
+  document.getElementById('outRdbmsDatabase').value = '';
+  document.getElementById('outRdbmsUser').value = '';
+  document.getElementById('outRdbmsPass').value = '';
+  document.getElementById('outRdbmsPoolMax').value = '10';
+  document.getElementById('outRdbmsEnabled').checked = true;
+  document.getElementById('outRdbmsFormCard').classList.remove('hidden');
+}
+
+function outputsHttpAddNew() {
+  document.getElementById('outHttpId').value = '';
+  document.getElementById('outHttpName').value = '';
+  document.getElementById('outHttpUrl').value = '';
+  document.getElementById('outHttpMethod').value = 'POST';
+  document.getElementById('outHttpTimeout').value = '30';
+  document.getElementById('outHttpRetry').value = '3';
+  document.getElementById('outHttpEnabled').checked = true;
+  document.getElementById('outHttpFormCard').classList.remove('hidden');
+}
+
+function outputsCloudAddNew() {
+  document.getElementById('outCloudId').value = '';
+  document.getElementById('outCloudName').value = '';
+  document.getElementById('outCloudProvider').value = 's3';
+  document.getElementById('outCloudRegion').value = '';
+  document.getElementById('outCloudBucket').value = '';
+  document.getElementById('outCloudPrefix').value = '';
+  document.getElementById('outCloudEnabled').checked = true;
+  document.getElementById('outCloudFormCard').classList.remove('hidden');
+}
+
+function outputsStdoutAddNew() {
+  document.getElementById('outStdoutId').value = '';
+  document.getElementById('outStdoutName').value = '';
+  document.getElementById('outStdoutFormat').value = 'json';
+  document.getElementById('outStdoutEnabled').checked = true;
+  document.getElementById('outStdoutFormCard').classList.remove('hidden');
+}
+
+function outputsCancel(type) {
+  document.getElementById('out' + type.charAt(0).toUpperCase() + type.slice(1) + 'FormCard').classList.add('hidden');
+}
+
+function outputsEdit(outId, type) {
+  var endpoint = '/api/outputs_' + type;
+  fetch(endpoint)
+    .then(r => r.json())
+    .then(doc => {
+      var src = (doc.src || []).find(s => s.id === outId);
+      if (!src) return;
+      
+      if (type === 'rdbms') {
+        document.getElementById('outRdbmsId').value = src.id || '';
+        document.getElementById('outRdbmsName').value = src.name || '';
+        document.getElementById('outRdbmsEngine').value = src.engine || '';
+        document.getElementById('outRdbmsHost').value = src.host || '';
+        document.getElementById('outRdbmsPort').value = src.port || '5432';
+        document.getElementById('outRdbmsDatabase').value = src.database || '';
+        document.getElementById('outRdbmsUser').value = src.username || '';
+        document.getElementById('outRdbmsPass').value = src.password || '';
+        document.getElementById('outRdbmsPoolMax').value = src.pool_max || '10';
+        document.getElementById('outRdbmsEnabled').checked = src.enabled !== false;
+        document.getElementById('outRdbmsFormCard').classList.remove('hidden');
+      } else if (type === 'http') {
+        document.getElementById('outHttpId').value = src.id || '';
+        document.getElementById('outHttpName').value = src.name || '';
+        document.getElementById('outHttpUrl').value = src.target_url || '';
+        document.getElementById('outHttpMethod').value = src.write_method || 'POST';
+        document.getElementById('outHttpTimeout').value = src.timeout_seconds || '30';
+        document.getElementById('outHttpRetry').value = src.retry_count || '3';
+        document.getElementById('outHttpEnabled').checked = src.enabled !== false;
+        document.getElementById('outHttpFormCard').classList.remove('hidden');
+      } else if (type === 'cloud') {
+        document.getElementById('outCloudId').value = src.id || '';
+        document.getElementById('outCloudName').value = src.name || '';
+        document.getElementById('outCloudProvider').value = src.provider || 's3';
+        document.getElementById('outCloudRegion').value = src.region || '';
+        document.getElementById('outCloudBucket').value = src.bucket || '';
+        document.getElementById('outCloudPrefix').value = src.prefix || '';
+        document.getElementById('outCloudEnabled').checked = src.enabled !== false;
+        document.getElementById('outCloudFormCard').classList.remove('hidden');
+      } else if (type === 'stdout') {
+        document.getElementById('outStdoutId').value = src.id || '';
+        document.getElementById('outStdoutName').value = src.name || '';
+        document.getElementById('outStdoutFormat').value = src.pretty_print ? 'json' : 'text';
+        document.getElementById('outStdoutEnabled').checked = src.enabled !== false;
+        document.getElementById('outStdoutFormCard').classList.remove('hidden');
+      }
+    });
+}
+
+function outputsRdbmsSave() {
+  var id = document.getElementById('outRdbmsId').value.trim();
+  var name = document.getElementById('outRdbmsName').value.trim();
+  var engine = document.getElementById('outRdbmsEngine').value;
+  var host = document.getElementById('outRdbmsHost').value.trim();
+  var port = parseInt(document.getElementById('outRdbmsPort').value) || 5432;
+  var database = document.getElementById('outRdbmsDatabase').value.trim();
+  var username = document.getElementById('outRdbmsUser').value.trim();
+  var password = document.getElementById('outRdbmsPass').value;
+  var pool_max = parseInt(document.getElementById('outRdbmsPoolMax').value) || 10;
+  var enabled = document.getElementById('outRdbmsEnabled').checked;
+  
+  if (!id || !engine || !host) {
+    alert('ID, Engine, and Host are required');
+    return;
+  }
+  
+  outputsSaveEntry('rdbms', {
+    id: id, name: name, enabled: enabled, engine: engine, host: host, port: port,
+    database: database, username: username, password: password, pool_max: pool_max
+  });
+}
+
+function outputsHttpSave() {
+  var id = document.getElementById('outHttpId').value.trim();
+  var name = document.getElementById('outHttpName').value.trim();
+  var target_url = document.getElementById('outHttpUrl').value.trim();
+  var write_method = document.getElementById('outHttpMethod').value;
+  var timeout_seconds = parseInt(document.getElementById('outHttpTimeout').value) || 30;
+  var retry_count = parseInt(document.getElementById('outHttpRetry').value) || 3;
+  var enabled = document.getElementById('outHttpEnabled').checked;
+  
+  if (!id || !target_url) {
+    alert('ID and Target URL are required');
+    return;
+  }
+  
+  outputsSaveEntry('http', {
+    id: id, name: name, enabled: enabled, target_url: target_url,
+    write_method: write_method, timeout_seconds: timeout_seconds, retry_count: retry_count
+  });
+}
+
+function outputsCloudSave() {
+  var id = document.getElementById('outCloudId').value.trim();
+  var name = document.getElementById('outCloudName').value.trim();
+  var provider = document.getElementById('outCloudProvider').value;
+  var region = document.getElementById('outCloudRegion').value.trim();
+  var bucket = document.getElementById('outCloudBucket').value.trim();
+  var prefix = document.getElementById('outCloudPrefix').value.trim();
+  var enabled = document.getElementById('outCloudEnabled').checked;
+  
+  if (!id || !bucket) {
+    alert('ID and Bucket are required');
+    return;
+  }
+  
+  outputsSaveEntry('cloud', {
+    id: id, name: name, enabled: enabled, provider: provider,
+    region: region, bucket: bucket, prefix: prefix
+  });
+}
+
+function outputsStdoutSave() {
+  var id = document.getElementById('outStdoutId').value.trim();
+  var name = document.getElementById('outStdoutName').value.trim();
+  var format = document.getElementById('outStdoutFormat').value;
+  var enabled = document.getElementById('outStdoutEnabled').checked;
+  
+  if (!id) {
+    alert('ID is required');
+    return;
+  }
+  
+  outputsSaveEntry('stdout', {
+    id: id, name: name, enabled: enabled, pretty_print: (format === 'json')
+  });
+}
+
+function outputsSaveEntry(type, entry) {
+  var endpoint = '/api/outputs_' + type;
+  fetch(endpoint)
+    .then(r => r.json())
+    .then(doc => {
+      var src = doc.src || [];
+      var idx = src.findIndex(s => s.id === entry.id);
+      
+      if (idx >= 0) {
+        src[idx] = entry;
+      } else {
+        src.push(entry);
+      }
+      
+      return fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'outputs_' + type, src: src })
+      });
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        alert('Error: ' + data.error);
+      } else {
+        alert('Output saved!');
+        outputsCancel(type);
+        outputsLoadExisting(type);
+      }
+    })
+    .catch(e => {
+      console.error('Error saving output', e);
+      alert('Error saving output: ' + e.message);
+    });
+}
+
+function outputsDelete(outId, type) {
+  if (!confirm('Delete output "' + outId + '"?')) return;
+  
+  var endpoint = '/api/outputs_' + type;
+  fetch(endpoint)
+    .then(r => r.json())
+    .then(doc => {
+      var src = (doc.src || []).filter(s => s.id !== outId);
+      return fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'outputs_' + type, src: src })
+      });
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        alert('Error: ' + data.error);
+      } else {
+        outputsLoadExisting(type);
+      }
+    })
+    .catch(e => console.error('Error deleting output', e));
+}
+
+function outputsClearAll(type) {
+  if (!confirm('Delete all ' + type + ' outputs?')) return;
+  var endpoint = '/api/outputs_' + type;
+  fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'outputs_' + type, src: [] })
+  })
+    .then(r => r.json())
+    .then(() => outputsLoadExisting(type))
+    .catch(e => console.error('Error clearing outputs', e));
 }
 
 // ── Init ─────────────────────────────────────────────────────
