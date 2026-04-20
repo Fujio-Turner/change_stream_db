@@ -53,7 +53,7 @@ class PipelineManager:
         self._lock = threading.RLock()
 
         # Graceful shutdown signal
-        self._shutdown_event = asyncio.Event()
+        self._shutdown_event = threading.Event()
         self._running = False
 
         # Monitor thread for crash recovery

@@ -80,6 +80,7 @@
 </head>
 <body class="min-h-screen bg-base-200">
   <div id="sidebar-root"></div>
+  <div id="toastContainer" style="position: fixed; bottom: 20px; right: 20px; z-index: 9999;"></div>
 
   <div class="sidebar-main">
   <main class="w-full mx-auto p-6 space-y-6">
@@ -114,12 +115,12 @@
       <div class="card-body p-4">
         <div class="flex flex-col lg:flex-row items-start lg:items-center gap-4 mb-4">
           <div class="flex items-center gap-2">
-            <label for="jobSelector" class="text-sm font-semibold">Filter by Job:</label>
-            <select id="jobSelector" class="select select-bordered select-sm w-48" onchange="handleJobChange(event)">
+            <label for="jobSelector" class="text-sm font-semibold">Active Job:</label>
+            <select id="jobSelector" class="select select-bordered select-sm w-64" onchange="handleJobChange(event)">
               <option value="">All Jobs (Aggregate)</option>
             </select>
+            <button class="btn btn-xs btn-ghost" onclick="openJobManager()">⚙ Manage</button>
           </div>
-          <div class="ml-auto text-xs opacity-60" id="jobSelectorHint">Loading job list...</div>
         </div>
         
         <!-- Per-Job Status Table -->
@@ -127,16 +128,18 @@
           <table class="table table-sm table-zebra">
             <thead>
               <tr class="bg-base-200">
-                <th class="text-xs font-bold">Job Name</th>
-                <th class="text-xs font-bold">Enabled</th>
+                <th class="text-xs font-bold">Job</th>
                 <th class="text-xs font-bold">Status</th>
-                <th class="text-xs font-bold">Last Sync</th>
-                <th class="text-xs font-bold">Docs Processed</th>
+                <th class="text-xs font-bold">Uptime</th>
+                <th class="text-xs font-bold">Docs In</th>
+                <th class="text-xs font-bold">Docs Out</th>
                 <th class="text-xs font-bold">Errors</th>
+                <th class="text-xs font-bold">Last Seq</th>
+                <th class="text-xs font-bold">Actions</th>
               </tr>
             </thead>
             <tbody id="jobStatusTable">
-              <tr><td colspan="6" class="text-center opacity-50 py-4">Loading job status...</td></tr>
+              <tr><td colspan="8" class="text-center opacity-50 py-4">Loading jobs...</td></tr>
             </tbody>
           </table>
         </div>
@@ -1792,27 +1795,38 @@ function loadJobStatus() {
       document.getElementById('jobSelectorHint').textContent = data.count + ' job' + (data.count !== 1 ? 's' : '');
       
       // Populate status table
-      var rows = [];
-      for (var i = 0; i < data.jobs.length; i++) {
-        var job = data.jobs[i];
-        var lastSync = job.last_sync_time ? new Date(job.last_sync_time).toLocaleString() : 'Never';
-        var statusBadge = '<span class="badge ' + 
-          (job.status === 'error' ? 'badge-error' : job.status === 'running' ? 'badge-success' : 'badge-warning') + 
-          '">' + job.status + '</span>';
-        var enabledBadge = job.enabled ? '<span class="badge badge-success">✓</span>' : '<span class="badge badge-outline">✗</span>';
-        
-        rows.push(
-          '<tr>' +
-          '<td class="font-medium">' + (job.name || job.job_id) + '</td>' +
-          '<td>' + enabledBadge + '</td>' +
-          '<td>' + statusBadge + '</td>' +
-          '<td class="text-xs opacity-75">' + lastSync + '</td>' +
-          '<td class="text-right font-mono">' + fmt(job.docs_processed) + '</td>' +
-          '<td class="text-right font-mono">' + job.errors + '</td>' +
-          '</tr>'
-        );
-      }
-      tableBody.innerHTML = rows.join('');
+       var rows = [];
+       for (var i = 0; i < data.jobs.length; i++) {
+         var job = data.jobs[i];
+         var uptime = job.uptime_seconds ? fmtUptime(job.uptime_seconds) : '--';
+         var statusDot = job.status === 'running' ? '<span class="dot dot-green"></span>' :
+                         job.status === 'error' ? '<span class="dot dot-red"></span>' :
+                         job.status === 'starting' || job.status === 'restarting' ? '<span class="dot dot-yellow" style="animation: spin 1s linear infinite;"></span>' :
+                         '<span class="dot" style="background: #6b7280;"></span>';
+         var statusText = '<span class="text-xs font-mono">' + job.status + '</span>';
+         
+         var actions = '<div class="join join-horizontal join-xs">' +
+           '<button class="btn btn-xs join-item" onclick="startJob(\'' + escapeJs(job.job_id) + '\')" title="Start">▶</button>' +
+           '<button class="btn btn-xs join-item" onclick="stopJob(\'' + escapeJs(job.job_id) + '\')" title="Stop (graceful)">⏸</button>' +
+           '<button class="btn btn-xs join-item" onclick="restartJob(\'' + escapeJs(job.job_id) + '\')" title="Restart">⟳</button>' +
+           '<button class="btn btn-xs join-item btn-error" onclick="killJob(\'' + escapeJs(job.job_id) + '\')" title="Kill (non-graceful)">⏹</button>' +
+           '<button class="btn btn-xs join-item" onclick="editJob(\'' + escapeJs(job.job_id) + '\')" title="Edit">✎</button>' +
+           '</div>';
+         
+         rows.push(
+           '<tr>' +
+           '<td class="font-medium">' + (job.name || job.job_id) + '</td>' +
+           '<td><div class="flex items-center gap-2">' + statusDot + statusText + '</div></td>' +
+           '<td class="text-xs opacity-75">' + uptime + '</td>' +
+           '<td class="text-right font-mono">' + fmt(job.docs_processed || 0) + '</td>' +
+           '<td class="text-right font-mono">' + fmt(job.docs_output_ok || 0) + '</td>' +
+           '<td class="text-right font-mono">' + (job.error_count || 0) + '</td>' +
+           '<td class="text-xs opacity-75 font-mono">' + (job.checkpoint_seq ? job.checkpoint_seq.substring(0, 16) + '...' : '--') + '</td>' +
+           '<td>' + actions + '</td>' +
+           '</tr>'
+         );
+       }
+       tableBody.innerHTML = rows.join('');
     })
     .catch(function(e) {
       dbg('loadJobStatus: ERROR', e);
@@ -1825,6 +1839,65 @@ function handleJobChange(event) {
   dbg('Job selected:', selectedJob);
   // When a job is selected, reload metrics
   loadMetrics();
+}
+
+function openJobManager() {
+  // TODO: Open job manager modal or page in v2.1+
+  showToast('Job Manager coming in v2.1+', 'info');
+}
+
+// Job control functions
+function startJob(jobId) {
+  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/start', { method: 'POST' })
+    .then(r => r.json())
+    .then(() => {
+      showToast('Job started', 'success');
+      loadJobStatus();
+    })
+    .catch(err => showToast('Failed to start job: ' + err.message, 'error'));
+}
+
+function stopJob(jobId) {
+  if (!confirm('Stop this job gracefully?')) return;
+  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/stop', { method: 'POST' })
+    .then(r => r.json())
+    .then(() => {
+      showToast('Job stopping...', 'success');
+      loadJobStatus();
+    })
+    .catch(err => showToast('Failed to stop job', 'error'));
+}
+
+function killJob(jobId) {
+  if (!confirm('KILL this job (non-graceful)? This may lose checkpoint.')) return;
+  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/kill', { method: 'POST' })
+    .then(r => r.json())
+    .then(() => {
+      showToast('Job killed', 'warning');
+      loadJobStatus();
+    })
+    .catch(err => showToast('Failed to kill job', 'error'));
+}
+
+function restartJob(jobId) {
+  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/restart', { method: 'POST' })
+    .then(r => r.json())
+    .then(() => {
+      showToast('Job restarting...', 'success');
+      loadJobStatus();
+    })
+    .catch(err => showToast('Failed to restart job', 'error'));
+}
+
+function editJob(jobId) {
+  // TODO: Open job edit modal in v2.1+
+  showToast('Job editor coming in v2.1+', 'info');
+}
+
+// ── Helper Functions ─────────────────────────────────────────
+function escapeJs(str) {
+  if (!str) return '';
+  return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
 }
 
 // ── DLQ Meta (last_inserted_at / last_drained_at) ────────────
@@ -1873,6 +1946,24 @@ function setUnknown() {
     if (chartHistory[avgKeys[j]].length > MAX_POINTS) chartHistory[avgKeys[j]].shift();
   }
   renderCharts();
+}
+
+// ── Toast Notification ──────────────────────────────────────
+function showToast(message, type) {
+  var container = document.getElementById("toastContainer");
+  var alertClass =
+    type === "success"
+      ? "alert-success"
+      : type === "error"
+        ? "alert-error"
+        : "alert-info";
+  var toast = document.createElement("div");
+  toast.className = "alert " + alertClass;
+  toast.innerHTML = "<span>" + message + "</span>";
+  container.appendChild(toast);
+  setTimeout(function () {
+    toast.remove();
+  }, 3000);
 }
 
 // ── Init ─────────────────────────────────────────────────────

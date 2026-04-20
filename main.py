@@ -1251,6 +1251,7 @@ async def start_metrics_server(
     offline_event: asyncio.Event | None = None,
     cbl_scheduler: CBLMaintenanceScheduler | None = None,
     shutdown_cfg: dict | None = None,
+    extra_routes_cb=None,
 ) -> aiohttp.web.AppRunner:
     """Start a lightweight HTTP server that serves /_metrics in Prometheus format."""
     from aiohttp import web
@@ -1292,6 +1293,9 @@ async def start_metrics_server(
     app.router.add_delete("/api/jobs/{id}", api_delete_job)
     app.router.add_post("/api/jobs/{id}/refresh-input", api_refresh_job_input)
     app.router.add_post("/api/jobs/{id}/refresh-output", api_refresh_job_output)
+
+    if extra_routes_cb is not None:
+        extra_routes_cb(app)
 
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
@@ -1386,6 +1390,11 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
     warnings: list[str] = []
     errors: list[str] = []
 
+    # v2.0 schema stores gateway/auth/changes_feed inside job docs, not in the
+    # top-level config.  Skip connection-level validation when those keys are
+    # absent (i.e. after migration).
+    is_v2 = cfg.get("schema_version") == "2.0"
+
     gw = cfg.get("gateway", {})
     auth_cfg = cfg.get("auth", {})
     feed_cfg = cfg.get("changes_feed", {})
@@ -1393,14 +1402,18 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
     # -- gateway.src -----------------------------------------------------------
     src = gw.get("src", "sync_gateway")
     if src not in VALID_SOURCES:
+        if is_v2 and not gw:
+            # v2.0 infra-only config has no gateway section – that's fine
+            return src, warnings, errors
         errors.append(f"gateway.src must be one of {VALID_SOURCES}, got '{src}'")
         return src, warnings, errors  # can't validate further
 
     # -- gateway basics --------------------------------------------------------
-    if not gw.get("url"):
-        errors.append("gateway.url is required")
-    if not gw.get("database"):
-        errors.append("gateway.database is required")
+    if not is_v2:
+        if not gw.get("url"):
+            errors.append("gateway.url is required")
+        if not gw.get("database"):
+            errors.append("gateway.database is required")
 
     # App Services is always HTTPS
     url = gw.get("url", "")
@@ -1418,37 +1431,43 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
         )
 
     # -- auth ------------------------------------------------------------------
-    auth_method = auth_cfg.get("method", "basic")
+    if not is_v2:
+        auth_method = auth_cfg.get("method", "basic")
 
-    if auth_method == "bearer" and src == "edge_server":
-        errors.append(
-            "auth.method=bearer is not supported by Edge Server – "
-            "use 'basic' or 'session' instead"
-        )
+        if auth_method == "bearer" and src == "edge_server":
+            errors.append(
+                "auth.method=bearer is not supported by Edge Server – "
+                "use 'basic' or 'session' instead"
+            )
 
-    if auth_method == "session" and src == "couchdb":
-        errors.append(
-            "auth.method=session is not supported by CouchDB – "
-            "use 'basic' or 'bearer' instead"
-        )
+        if auth_method == "session" and src == "couchdb":
+            errors.append(
+                "auth.method=session is not supported by CouchDB – "
+                "use 'basic' or 'bearer' instead"
+            )
 
-    if auth_method == "basic":
-        if not auth_cfg.get("username"):
-            errors.append("auth.username is required when auth.method=basic")
-        if not auth_cfg.get("password"):
-            errors.append("auth.password is required when auth.method=basic")
-    elif auth_method == "session":
-        if not auth_cfg.get("session_cookie"):
-            errors.append("auth.session_cookie is required when auth.method=session")
-    elif auth_method == "bearer":
-        if not auth_cfg.get("bearer_token"):
-            errors.append("auth.bearer_token is required when auth.method=bearer")
-    elif auth_method != "none":
-        errors.append(
-            f"auth.method must be 'basic', 'session', 'bearer', or 'none' – got '{auth_method}'"
-        )
+        if auth_method == "basic":
+            if not auth_cfg.get("username"):
+                errors.append("auth.username is required when auth.method=basic")
+            if not auth_cfg.get("password"):
+                errors.append("auth.password is required when auth.method=basic")
+        elif auth_method == "session":
+            if not auth_cfg.get("session_cookie"):
+                errors.append(
+                    "auth.session_cookie is required when auth.method=session"
+                )
+        elif auth_method == "bearer":
+            if not auth_cfg.get("bearer_token"):
+                errors.append("auth.bearer_token is required when auth.method=bearer")
+        elif auth_method != "none":
+            errors.append(
+                f"auth.method must be 'basic', 'session', 'bearer', or 'none' – got '{auth_method}'"
+            )
 
     # -- changes_feed ----------------------------------------------------------
+    if is_v2:
+        return src, warnings, errors
+
     feed_type = feed_cfg.get("feed_type", "longpoll")
 
     if feed_type == "websocket" and src == "couchdb":
@@ -2895,22 +2914,6 @@ def main() -> None:
         loop.add_signal_handler(sig, _signal_handler)
 
     try:
-        if metrics is not None:
-            metrics_host = metrics_cfg.get("host", "0.0.0.0")
-            metrics_port = metrics_cfg.get("port", 9090)
-            metrics_runner = loop.run_until_complete(
-                start_metrics_server(
-                    metrics,
-                    metrics_host,
-                    metrics_port,
-                    restart_event=restart_event,
-                    shutdown_event=shutdown_event,
-                    offline_event=offline_event,
-                    cbl_scheduler=cbl_scheduler,
-                    shutdown_cfg=cfg.get("shutdown", {}),
-                )
-            )
-
         # ── Phase 6: PipelineManager-Based Job Orchestration ────────────
         db = None
         if USE_CBL:
@@ -2942,14 +2945,31 @@ def main() -> None:
             logger=logger,
         )
 
-        # Register Phase 10 job control endpoints with the metrics server
-        if metrics_runner is not None:
-            register_job_control_routes(metrics_runner.app, pipeline_manager)
-            log_event(
-                logger,
-                "debug",
-                "CONTROL",
-                "registered job control endpoints",
+        if metrics is not None:
+            metrics_host = metrics_cfg.get("host", "0.0.0.0")
+            metrics_port = metrics_cfg.get("port", 9090)
+
+            def _register_extra_routes(app: aiohttp.web.Application) -> None:
+                register_job_control_routes(app, pipeline_manager)
+                log_event(
+                    logger,
+                    "debug",
+                    "CONTROL",
+                    "registered job control endpoints",
+                )
+
+            metrics_runner = loop.run_until_complete(
+                start_metrics_server(
+                    metrics,
+                    metrics_host,
+                    metrics_port,
+                    restart_event=restart_event,
+                    shutdown_event=shutdown_event,
+                    offline_event=offline_event,
+                    cbl_scheduler=cbl_scheduler,
+                    shutdown_cfg=cfg.get("shutdown", {}),
+                    extra_routes_cb=_register_extra_routes,
+                )
             )
 
         # Wire signal handler to PipelineManager

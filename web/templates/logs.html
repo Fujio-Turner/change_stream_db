@@ -85,9 +85,14 @@
           </div>
         </div>
 
-        <!-- Row 2: Pipeline + Level + Log Key (all one row) -->
+        <!-- Row 2: Job + Pipeline + Level (all one row) -->
         <div class="flex flex-wrap items-center gap-1.5">
-          <span class="text-xs font-semibold opacity-60">Pipeline:</span>
+          <span class="text-xs font-semibold opacity-60">Job:</span>
+          <select id="jobFilter" class="select select-xs select-bordered w-48" onchange="handleJobFilterChange(event)">
+            <option value="">All Jobs</option>
+          </select>
+          
+          <span class="text-xs font-semibold opacity-60 ml-4">Pipeline:</span>
           <button class="btn btn-xs stage-btn" data-stage="source"  style="border-color:#36d399;color:#36d399;" onclick="toggleStage('source')">● Source <span class="stage-count" data-stage-count="source"></span></button>
           <button class="btn btn-xs stage-btn" data-stage="process" style="border-color:#3abff8;color:#3abff8;" onclick="toggleStage('process')">● Process <span class="stage-count" data-stage-count="process"></span></button>
           <button class="btn btn-xs stage-btn" data-stage="dlq"     style="border-color:#f87272;color:#f87272;" onclick="toggleStage('dlq')">● DLQ <span class="stage-count" data-stage-count="dlq"></span></button>
@@ -1058,6 +1063,46 @@
     });
   }
 
+  // ── Job Filter ──────────────────────────────────────────
+  var selectedJobId = null;
+
+  function handleJobFilterChange(event) {
+    selectedJobId = event.target.value || null;
+    
+    // If job_id filtering is supported, apply it here
+    // For now, just refresh logs (backend should support ?job_id= query param)
+    if (currentLogs && currentLogs.length > 0) {
+      renderLogs();
+      updateCharts();
+    } else {
+      refreshLogs();
+    }
+  }
+
+  function populateJobSelectors() {
+    // Load jobs from /api/jobs and populate job filter dropdown
+    fetch('/api/jobs')
+      .then(r => r.json())
+      .then(jobs => {
+        var select = document.getElementById('jobFilter');
+        if (select) {
+          var opts = '<option value="">All Jobs</option>';
+          if (Array.isArray(jobs)) {
+            jobs.forEach(job => {
+              opts += '<option value="' + escapeHtml(job.id || job.job_id) + '">' + escapeHtml(job.name || job.id) + '</option>';
+            });
+          }
+          select.innerHTML = opts;
+        }
+      })
+      .catch(err => console.warn('Failed to load job list', err));
+  }
+
+  function escapeHtml(text) {
+    var map = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'};
+    return text.replace(/[&<>"']/g, m => map[m]);
+  }
+
   // ── Inject SVG icons into static buttons ─────────────────
   document.getElementById('btnTail').innerHTML = ICO.play + ' Tail';
   document.getElementById('btnRefresh').innerHTML = ICO.refresh;
@@ -1067,6 +1112,7 @@
 
   initCharts();
   loadFileList();
+  populateJobSelectors();
   </script>
 
   <script src="/static/js/sidebar.js"></script>

@@ -28,6 +28,7 @@ except ImportError:
 CBL_DB_DIR = os.environ.get("CBL_DB_DIR", "/app/data")
 CBL_DB_NAME = os.environ.get("CBL_DB_NAME", "changes_worker_db")
 CBL_SCOPE = "changes-worker"
+CBL_SCOPE_Q = "`changes-worker`"  # backtick-quoted for N1QL/SQL++ queries
 
 # ── Collections (v2.0) ────────────────────────────────────────
 # Pipeline Collections (core data model)
@@ -2056,7 +2057,7 @@ class CBLStore:
         t0 = time.monotonic()
         query = f"""
             SELECT _id, type, id, state, created_at, updated_at
-            FROM {CBL_SCOPE}.{COLL_JOBS}
+            FROM {CBL_SCOPE_Q}.{COLL_JOBS}
             WHERE type = 'job'
             ORDER BY updated_at DESC
         """
@@ -2283,7 +2284,7 @@ class CBLStore:
         t0 = time.monotonic()
         query = f"""
             SELECT _id, type, session_id, expires_at, created_at
-            FROM {CBL_SCOPE}.{COLL_SESSIONS}
+            FROM {CBL_SCOPE_Q}.{COLL_SESSIONS}
             WHERE type = 'session'
             ORDER BY updated_at DESC
         """
@@ -2318,7 +2319,7 @@ class CBLStore:
         now = int(time.time())
         t0 = time.monotonic()
         query = f"""
-            SELECT _id FROM {CBL_SCOPE}.{COLL_SESSIONS}
+            SELECT _id FROM {CBL_SCOPE_Q}.{COLL_SESSIONS}
             WHERE type = 'session' AND expires_at < {now}
         """
         results = _run_n1ql(self.db, query)
@@ -2389,7 +2390,7 @@ class CBLStore:
             query = f"""
                 SELECT _id, type, job_id, doc_id, table_name, column_name,
                        original_value, coerced_value, coerce_type, timestamp
-                FROM {CBL_SCOPE}.{COLL_DATA_QUALITY}
+                FROM {CBL_SCOPE_Q}.{COLL_DATA_QUALITY}
                 WHERE type = 'data_quality' AND job_id = '{job_id}'
                 ORDER BY timestamp DESC
             """
@@ -2397,7 +2398,7 @@ class CBLStore:
             query = f"""
                 SELECT _id, type, job_id, doc_id, table_name, column_name,
                        original_value, coerced_value, coerce_type, timestamp
-                FROM {CBL_SCOPE}.{COLL_DATA_QUALITY}
+                FROM {CBL_SCOPE_Q}.{COLL_DATA_QUALITY}
                 WHERE type = 'data_quality'
                 ORDER BY timestamp DESC
             """
@@ -2472,7 +2473,7 @@ class CBLStore:
         t0 = time.monotonic()
         query_parts = [
             f"SELECT _id, type, job_id, doc_id, source, status, result, timestamp",
-            f"FROM {CBL_SCOPE}.{COLL_ENRICHMENTS}",
+            f"FROM {CBL_SCOPE_Q}.{COLL_ENRICHMENTS}",
             "WHERE type = 'enrichment'",
         ]
         if job_id:
