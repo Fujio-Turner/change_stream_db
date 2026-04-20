@@ -3155,3 +3155,139 @@ def migrate_files_to_cbl(config_path: str = "config.json") -> None:
         )
 
     ic("migrate_files_to_cbl: done", len(disk_names), added, updated, removed)
+
+
+def migrate_mappings_to_jobs() -> None:
+    """Phase 9: Embed mappings into job documents.
+
+    Strategy:
+      - For each job in the `jobs` collection:
+        - If the job already has schema_mapping embedded (non-empty), skip it
+        - Otherwise, find a corresponding mapping file or CBL mapping entry
+        - Embed it in the job document
+      - After migration, mappings/ directory becomes optional import surface
+    """
+    from pathlib import Path
+
+    store = CBLStore()
+
+    # Load all jobs
+    jobs = store.list_jobs()
+    if not jobs:
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "no jobs found — skipping mapping migration",
+            operation="SELECT",
+            doc_type="job",
+        )
+        return
+
+    log_event(
+        logger,
+        "info",
+        "CBL",
+        "starting schema mapping migration into jobs",
+        operation="MIGRATE",
+        doc_type="job",
+        job_count=len(jobs),
+    )
+
+    embedded = skipped = failed = 0
+
+    for job in jobs:
+        job_id = job.get("id")
+        job_name = job.get("name", job_id)
+
+        # Skip if mapping already embedded (non-empty)
+        existing_mapping = job.get("schema_mapping", {})
+        if existing_mapping and len(existing_mapping) > 0:
+            skipped += 1
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                f"job {job_id} already has schema_mapping — skipping",
+                operation="SELECT",
+                doc_type="job",
+                job_id=job_id,
+            )
+            continue
+
+        # Try to find mapping from disk or CBL
+        mapping_content = None
+        mapping_source = None
+
+        # Strategy 1: look for mapping file on disk named after the job
+        mappings_dir = Path("mappings")
+        if mappings_dir.is_dir():
+            for suffix in (".json", ".yaml", ".yml"):
+                candidate_path = mappings_dir / f"{job_id}{suffix}"
+                if candidate_path.exists():
+                    mapping_content = candidate_path.read_text()
+                    mapping_source = f"disk:{candidate_path}"
+                    break
+
+        # Strategy 2: look in CBL mappings collection (by job ID)
+        if not mapping_content:
+            cbl_mapping = store.get_mapping(f"{job_id}.json")
+            if cbl_mapping:
+                mapping_content = cbl_mapping
+                mapping_source = f"cbl:mapping:{job_id}"
+
+        # Strategy 3: for backwards compat, try to find by common patterns
+        #  e.g., if job is named "orders", look for orders.json
+        if not mapping_content:
+            job_slug = job_name.lower().replace(" ", "_").split("—")[0].strip()
+            cbl_mapping = store.get_mapping(f"{job_slug}.json")
+            if cbl_mapping:
+                mapping_content = cbl_mapping
+                mapping_source = f"cbl:mapping:{job_slug}"
+
+        if mapping_content:
+            # Parse mapping (may be JSON or raw)
+            try:
+                if mapping_content.strip().startswith("{"):
+                    mapping_obj = json.loads(mapping_content)
+                else:
+                    mapping_obj = {"raw": mapping_content}
+            except json.JSONDecodeError:
+                mapping_obj = {"raw": mapping_content}
+
+            # Update job document
+            store.update_job(job_id, {"schema_mapping": mapping_obj})
+            embedded += 1
+            log_event(
+                logger,
+                "info",
+                "CBL",
+                f"embedded schema_mapping into job {job_id} from {mapping_source}",
+                operation="UPDATE",
+                doc_type="job",
+                job_id=job_id,
+                mapping_source=mapping_source,
+            )
+        else:
+            failed += 1
+            log_event(
+                logger,
+                "warning",
+                "CBL",
+                f"no mapping found for job {job_id} — skipping",
+                operation="SKIP",
+                doc_type="job",
+                job_id=job_id,
+            )
+
+    log_event(
+        logger,
+        "info",
+        "CBL",
+        f"mapping migration complete: {embedded} embedded, {skipped} skipped, {failed} failed",
+        operation="MIGRATE",
+        doc_type="job",
+        embedded=embedded,
+        skipped=skipped,
+        failed=failed,
+    )

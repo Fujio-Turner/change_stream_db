@@ -501,6 +501,18 @@ class SchemaMapper:
             data = json.load(f)
         return cls(data)
 
+    @classmethod
+    def from_job(cls, job: dict) -> SchemaMapper:
+        """Load a mapping from a job document.
+
+        Phase 9: Mappings are now embedded in job documents under schema_mapping.
+        This method extracts the mapping from a job and creates a SchemaMapper.
+        """
+        mapping = job.get("schema_mapping", {})
+        if not mapping:
+            raise ValueError(f"Job {job.get('id')} has no schema_mapping")
+        return cls(mapping)
+
     # ------------------------------------------------------------------ #
     # Source matching
     # ------------------------------------------------------------------ #

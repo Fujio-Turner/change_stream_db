@@ -85,6 +85,7 @@ from cbl_store import (
     close_db,
     migrate_files_to_cbl,
     migrate_default_to_collections,
+    migrate_mappings_to_jobs,
     COLL_CHECKPOINTS,
 )
 from rest.attachment_config import parse_attachment_config
@@ -2808,6 +2809,7 @@ def main() -> None:
     if USE_CBL:
         migrate_files_to_cbl(args.config)
         migrate_default_to_collections()
+        migrate_mappings_to_jobs()  # Phase 9: embed mappings into jobs
 
     # ── Startup config validation ────────────────────────────────────────
     src, warnings, errors = validate_config(cfg)
