@@ -85,6 +85,7 @@ from cbl_store import (
     close_db,
     migrate_files_to_cbl,
     migrate_default_to_collections,
+    COLL_CHECKPOINTS,
 )
 from rest.attachment_config import parse_attachment_config
 from rest.attachments import AttachmentProcessor
@@ -1726,6 +1727,136 @@ def build_basic_auth(auth_cfg: dict) -> aiohttp.BasicAuth | None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 6: Job-Based Startup
+# ---------------------------------------------------------------------------
+
+
+def load_enabled_jobs(db: CBLStore | None) -> list[dict]:
+    """
+    Load all enabled job documents from CBL.
+
+    Returns list of job documents with fields:
+        {
+            "_id": "job_uuid",
+            "type": "job",
+            "name": "...",
+            "enabled": true,
+            "inputs": [input_doc],
+            "outputs": [output_doc],
+            "output_type": "...",
+            "mapping": {...},
+            "system": {...}
+        }
+    """
+    if not db:
+        logger.warning("CBL not available – no jobs")
+        return []
+
+    try:
+        jobs = db.list_jobs()  # Returns all jobs from CBL
+        return [j for j in jobs if j.get("enabled", False)]
+    except Exception as e:
+        logger.error("Failed to load jobs: %s", e)
+        return []
+
+
+def build_pipeline_config_from_job(job_doc: dict) -> dict:
+    """
+    Convert a job document to pipeline config format.
+
+    Returns config with keys:
+        {
+            "job_id": "...",
+            "job_name": "...",
+            "gateway": input_entry,
+            "auth": {...},
+            "changes_feed": {...},
+            "processing": {...},
+            "output": output_entry,
+            "checkpoint": {...with job_id suffix},
+            "mapping": {...},
+            "system": {...}
+        }
+    """
+    job_id = job_doc.get("_id") or job_doc.get("id")
+    job_name = job_doc.get("name", "Unnamed Job")
+
+    # Extract input/output entries
+    inputs = job_doc.get("inputs", [])
+    outputs = job_doc.get("outputs", [])
+
+    if not inputs or not outputs:
+        raise ValueError(f"Job {job_id} missing inputs or outputs")
+
+    input_entry = inputs[0]
+    output_entry = outputs[0]
+
+    # Build pipeline config by taking the input/output entries
+    # and merging with defaults
+    return {
+        "job_id": job_id,
+        "job_name": job_name,
+        "gateway": input_entry,  # {url, database, src, scope, collection, auth}
+        "auth": input_entry.get("auth", {}),
+        "changes_feed": input_entry.get("changes_feed", {}),
+        "processing": input_entry.get("processing", {}),
+        "output": output_entry,  # {mode, target_url, ...}
+        "output_type": job_doc.get("output_type", "http"),
+        "checkpoint": {
+            "enabled": True,
+            "file": f"checkpoint_{job_id}.json",
+        },
+        "mapping": job_doc.get("mapping"),
+        "system": job_doc.get("system", {}),
+        "retry": job_doc.get("retry", {}),
+        "metrics": job_doc.get("metrics", {}),
+        "logging": job_doc.get("logging", {}),
+    }
+
+
+def migrate_legacy_config_to_job(db: CBLStore, cfg: dict) -> dict | None:
+    """
+    Auto-migrate v1.x config.json to a job document.
+
+    Returns the migrated job document, or None if migration failed.
+    """
+    try:
+        gw = cfg.get("gateway", {})
+        out = cfg.get("output", {})
+
+        if not gw or not out:
+            logger.warning(
+                "Legacy config missing gateway or output – cannot auto-migrate"
+            )
+            return None
+
+        job_id = "legacy_auto_migrated_" + str(int(time.time()))
+        job_name = "Auto-migrated v1.x config"
+
+        job_data = {
+            "name": job_name,
+            "enabled": True,
+            "inputs": [gw],
+            "outputs": [out],
+            "output_type": out.get("mode", "stdout"),
+            "mapping": None,
+            "system": cfg.get("system", {}),
+            "retry": cfg.get("retry", {}),
+        }
+
+        # Save to CBL (save_job expects job_id and job_data separately)
+        db.save_job(job_id, job_data)
+        logger.info("Auto-migrated legacy config.json to job %s", job_id)
+
+        # Return the full document as it would be retrieved
+        job_doc = {"_id": job_id, "id": job_id, **job_data}
+        return job_doc
+    except Exception as e:
+        logger.error("Failed to auto-migrate legacy config: %s", e)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Checkpoint persistence
 # ---------------------------------------------------------------------------
 
@@ -1748,8 +1879,11 @@ class Checkpoint:
         }
     """
 
-    def __init__(self, cfg: dict, gw_cfg: dict, channels: list[str]):
+    def __init__(
+        self, cfg: dict, gw_cfg: dict, channels: list[str], job_id: str | None = None
+    ):
         self._enabled = cfg.get("enabled", True)
+        self._job_id = job_id  # Phase 6: per-job checkpoint isolation
         self._lock = asyncio.Lock()
         self._seq: str = "0"
         self._rev: str | None = None  # SG doc _rev for updates
@@ -1757,17 +1891,24 @@ class Checkpoint:
         self._initial_sync_done: bool = False
 
         # Build the deterministic UUID the same way CBL does:
-        #   HASH(local_client_id + SG URL + channel_names)
+        #   HASH(local_client_id + SG URL + channel_names + job_id)
         client_id = cfg.get("client_id", "changes_worker")
         sg_url = build_base_url(gw_cfg)
         channel_str = ",".join(sorted(channels)) if channels else ""
-        raw = f"{client_id}{sg_url}{channel_str}"
+        job_str = job_id or ""  # Phase 6: include job_id in UUID for isolation
+        raw = f"{client_id}{sg_url}{channel_str}{job_str}"
         self._uuid = hashlib.sha1(raw.encode()).hexdigest()
         self._client_id = client_id
         self._local_doc_id = f"checkpoint-{self._uuid}"
 
         # Fallback to local file when SG is unreachable for checkpoint ops
-        self._fallback_path = Path(cfg.get("file", "checkpoint.json"))
+        # Phase 6: use job_id in fallback filename for isolation
+        fallback_file = cfg.get("file", "checkpoint.json")
+        if job_id:
+            # Transform "checkpoint.json" -> "checkpoint_<job_id>.json"
+            path = Path(fallback_file)
+            fallback_file = str(path.parent / f"{path.stem}_{job_id}{path.suffix}")
+        self._fallback_path = Path(fallback_file)
 
         ic(self._uuid, self._local_doc_id, raw)
 
@@ -2002,12 +2143,21 @@ async def poll_changes(
     shutdown_event: asyncio.Event,
     metrics: MetricsCollector | None = None,
     restart_event: asyncio.Event | None = None,
+    job_id: str | None = None,  # Phase 6: job-specific identifier
 ) -> None:
-    gw = cfg["gateway"]
-    auth_cfg = cfg["auth"]
-    feed_cfg = cfg["changes_feed"]
-    proc_cfg = cfg["processing"]
-    out_cfg = cfg["output"]
+    gw = cfg.get(
+        "gateway", cfg.get("inputs", [{}])[0]
+    )  # Support both old and new configs
+    auth_cfg = cfg.get("auth", gw.get("auth", {}))  # Phase 6: auth from gateway
+    feed_cfg = cfg.get(
+        "changes_feed", gw.get("changes_feed", {})
+    )  # Phase 6: changes_feed from gateway
+    proc_cfg = cfg.get(
+        "processing", gw.get("processing", {})
+    )  # Phase 6: processing from gateway
+    out_cfg = cfg.get(
+        "output", cfg.get("outputs", [{}])[0]
+    )  # Support both old and new configs
     retry_cfg = cfg.get("retry", {})
 
     log_event(logger, "info", "PROCESSING", "source type: %s" % src)
@@ -2033,7 +2183,9 @@ async def poll_changes(
     auth_headers = build_auth_headers(auth_cfg, src)
 
     channels = feed_cfg.get("channels", [])
-    checkpoint = Checkpoint(cfg.get("checkpoint", {}), gw, channels)
+    checkpoint = Checkpoint(
+        cfg.get("checkpoint", {}), gw, channels, job_id=job_id
+    )  # Phase 6: pass job_id
     if metrics:
         checkpoint.set_metrics(metrics)
 
@@ -2755,25 +2907,88 @@ def main() -> None:
                 )
             )
 
+        # ── Phase 6: Job-Based Startup ────────────────────────────────
+        # Load enabled jobs and start pipeline for each
+        db = None
+        if USE_CBL:
+            db = CBLStore()
+
+        enabled_jobs = []
+        if db:
+            enabled_jobs = load_enabled_jobs(db)
+
+        # Backward compatibility: if no jobs and old config exists, auto-migrate
+        if not enabled_jobs and cfg.get("gateway") and cfg.get("output"):
+            job_doc = migrate_legacy_config_to_job(db, cfg)
+            if job_doc:
+                enabled_jobs = [job_doc]
+
+        if not enabled_jobs:
+            logger.warning(
+                "No enabled jobs found. Visit the web UI to create jobs: http://localhost:8080"
+            )
+            # Keep running for UI management
+            log_event(logger, "info", "CONTROL", "waiting for jobs via web UI")
+
         # ── Restart loop: reload config & re-enter poll_changes ──────
         while not shutdown_event.is_set():
             restart_event.clear()
+
+            # Reload jobs on each restart
+            if db:
+                enabled_jobs = load_enabled_jobs(db)
+
+            if not enabled_jobs:
+                logger.warning(
+                    "No enabled jobs – waiting for jobs to be created via UI"
+                )
+                loop.run_until_complete(asyncio.sleep(5))
+                continue
+
+            # Start pipeline for each enabled job
             log_event(
                 logger,
                 "info",
                 "PROCESSING",
-                f"starting changes feed (feed_type={cfg.get('changes_feed', {}).get('feed_type', 'longpoll')})",
+                f"starting {len(enabled_jobs)} job(s) (feed_type={cfg.get('changes_feed', {}).get('feed_type', 'longpoll')})",
             )
 
-            loop.run_until_complete(
-                poll_changes(
-                    cfg,
-                    src,
-                    shutdown_event,
-                    metrics=metrics,
-                    restart_event=restart_event,
+            # Create tasks for each job
+            job_tasks = []
+            for job_doc in enabled_jobs:
+                try:
+                    job_config = build_pipeline_config_from_job(job_doc)
+                    job_id = job_doc.get("_id") or job_doc.get("id")
+                    log_event(
+                        logger,
+                        "info",
+                        "PROCESSING",
+                        f"starting job: {job_doc.get('name')} ({job_id})",
+                    )
+
+                    # Create task for this job
+                    task = asyncio.create_task(
+                        poll_changes(
+                            job_config,
+                            src,
+                            shutdown_event,
+                            metrics=metrics,
+                            restart_event=restart_event,
+                            job_id=job_id,  # Phase 6: pass job_id
+                        )
+                    )
+                    job_tasks.append(task)
+                except Exception as e:
+                    logger.error(f"Failed to start job {job_doc.get('name')}: {e}")
+
+            # Wait for all job pipelines to complete
+            if job_tasks:
+                loop.run_until_complete(
+                    asyncio.gather(*job_tasks, return_exceptions=True)
                 )
-            )
+            else:
+                # No jobs – wait a bit and restart
+                loop.run_until_complete(asyncio.sleep(5))
 
             if shutdown_event.is_set():
                 break
