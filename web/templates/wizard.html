@@ -2149,7 +2149,7 @@ function srcLoadExistingSources() {
         tbody.innerHTML = data.sources.map(function(src) {
           var sourceName = src.config && src.config.src_name ? src.config.src_name : 'unknown';
           var system = src.system || 'unknown';
-          var savedAt = src._meta && src._meta.saved_at ? new Date(src._meta.saved_at).toLocaleDateString() : '-';
+          var savedAt = src.meta && src.meta.saved_at ? new Date(src.meta.saved_at).toLocaleDateString() : '-';
           return '<tr><td>' + esc(sourceName) + '</td>' +
                  '<td>' + esc(src.type || 'source') + '</td>' +
                  '<td>' + esc(system) + '</td>' +
@@ -2355,7 +2355,7 @@ function srcShowSummary() {
     type: 'source',
     system: srcSelectedSystem,
     config: srcAnswers,
-    _meta: { saved_at: new Date().toISOString() }
+    meta: { saved_at: new Date().toISOString() }
   };
   document.getElementById('srcConfigPreview').textContent = JSON.stringify(srcDoc, null, 2);
 }
@@ -2408,7 +2408,7 @@ function saveSourceConfig() {
     type: 'source',
     system: srcSelectedSystem,
     config: srcAnswers,
-    _meta: { saved_at: new Date().toISOString() }
+    meta: { saved_at: new Date().toISOString() }
   };
   
   fetch('/api/source/save', {

@@ -195,7 +195,7 @@ class TestMigrationOutputs(TestMigrationV1toV2Base):
             self.assertEqual(output["engine"], "postgres")
             self.assertEqual(output["host"], "localhost")
             self.assertEqual(output["port"], 5432)
-            self.assertEqual(output["user"], "postgres")
+            self.assertEqual(output["username"], "postgres")
 
     def test_migration_extracts_http_output(self):
         """Migration should extract HTTP output → outputs_http."""

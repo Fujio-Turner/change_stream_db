@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/notifications.schema.json",
+  "title": "Notification",
+  "description": "System notifications for alerts and events (future use)",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "notification",
+      "description": "Document type identifier"
+    },
+    "id": {
+      "type": "string",
+      "description": "Unique notification ID"
+    },
+    "title": {
+      "type": "string",
+      "description": "Notification title"
+    },
+    "message": {
+      "type": "string",
+      "description": "Notification message"
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "warning",
+        "error",
+        "critical"
+      ],
+      "description": "Severity level"
+    },
+    "category": {
+      "type": ["string", "null"],
+      "enum": [
+        "job_status",
+        "data_quality",
+        "system_health",
+        "security",
+        "user_action"
+      ],
+      "description": "Notification category"
+    },
+    "related_resource_type": {
+      "type": ["string", "null"],
+      "description": "Type of affected resource"
+    },
+    "related_resource_id": {
+      "type": ["string", "null"],
+      "description": "ID of affected resource"
+    },
+    "created_at": {
+      "type": "integer",
+      "description": "Creation Unix timestamp"
+    },
+    "read": {
+      "type": ["boolean", "null"],
+      "default": false,
+      "description": "Whether notification has been read"
+    },
+    "read_at": {
+      "type": ["integer", "null"],
+      "description": "When notification was read (Unix timestamp)"
+    },
+    "recipients": {
+      "type": ["array", "null"],
+      "description": "List of recipient usernames",
+      "items": {
+        "type": "string"
+      }
+    },
+    "delivery_status": {
+      "type": ["object", "null"],
+      "description": "Delivery status per channel",
+      "additionalProperties": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "sent",
+          "failed",
+          "acknowledged"
+        ]
+      }
+    }
+  },
+  "required": [
+    "type",
+    "id",
+    "title",
+    "message",
+    "severity",
+    "created_at"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "notification",
+      "id": "notif-001",
+      "title": "Job Failed",
+      "message": "Hotel Sync Job failed to process 100 documents",
+      "severity": "error",
+      "category": "job_status",
+      "related_resource_type": "job",
+      "related_resource_id": "550e8400-e29b-41d4-a716-446655440000",
+      "created_at": 1705324200,
+      "read": false,
+      "recipients": [
+        "john_admin",
+        "jane_operator"
+      ]
+    }
+  ]
+}

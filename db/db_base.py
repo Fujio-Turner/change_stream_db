@@ -306,7 +306,7 @@ class BaseOutputForwarder(abc.ABC):
                             continue
                         try:
                             raw = json.loads(f.read_text())
-                            meta = raw.get("_meta", {})
+                            meta = raw.get("meta", {})
                             if not meta.get("active", True):
                                 log_event(
                                     logger,

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/audit_log.schema.json",
+  "title": "Audit Log Entry",
+  "description": "Audit trail for tracking changes, access, and operations (future use)",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "audit",
+      "description": "Document type identifier"
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "Event Unix timestamp"
+    },
+    "user": {
+      "type": ["string", "null"],
+      "description": "Username of actor"
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "create",
+        "read",
+        "update",
+        "delete",
+        "start",
+        "stop",
+        "restart",
+        "login",
+        "logout",
+        "permission_change"
+      ],
+      "description": "Type of action performed"
+    },
+    "resource_type": {
+      "type": "string",
+      "description": "Type of resource affected"
+    },
+    "resource_id": {
+      "type": ["string", "null"],
+      "description": "ID of affected resource"
+    },
+    "status": {
+      "type": ["string", "null"],
+      "enum": [
+        "success",
+        "failure",
+        "pending"
+      ],
+      "description": "Result of action"
+    },
+    "details": {
+      "type": ["object", "null"],
+      "description": "Additional action details",
+      "additionalProperties": true
+    },
+    "ip_address": {
+      "type": ["string", "null"],
+      "description": "Source IP address"
+    },
+    "session_id": {
+      "type": ["string", "null"],
+      "description": "Associated session ID"
+    }
+  },
+  "required": [
+    "type",
+    "timestamp",
+    "action",
+    "resource_type"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "audit",
+      "timestamp": 1705324200,
+      "user": "john_admin",
+      "action": "update",
+      "resource_type": "job",
+      "resource_id": "550e8400-e29b-41d4-a716-446655440000",
+      "status": "success",
+      "details": {
+        "changed_fields": [
+          "name",
+          "mapping"
+        ]
+      },
+      "ip_address": "192.168.1.100",
+      "session_id": "sess-123456"
+    }
+  ]
+}

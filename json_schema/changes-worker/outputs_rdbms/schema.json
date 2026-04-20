@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/outputs_rdbms.schema.json",
+  "title": "RDBMS Output Configuration",
+  "description": "Defines output destinations for relational databases (MySQL, PostgreSQL, MSSQL, Oracle)",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "outputs_rdbms",
+      "description": "Document type identifier"
+    },
+    "src": {
+      "type": "array",
+      "description": "Array of RDBMS output definitions",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this output destination"
+          },
+          "database_type": {
+            "type": "string",
+            "enum": [
+              "mysql",
+              "postgres",
+              "mssql",
+              "oracle"
+            ],
+            "description": "Type of relational database"
+          },
+          "host": {
+            "type": "string",
+            "description": "Hostname or IP address of the database server"
+          },
+          "port": {
+            "type": "integer",
+            "description": "Database server port number"
+          },
+          "database": {
+            "type": "string",
+            "description": "Database name"
+          },
+          "schema": {
+            "type": ["string", "null"],
+            "description": "Schema name (for databases that support it)"
+          },
+          "username": {
+            "type": "string",
+            "description": "Database username"
+          },
+          "password": {
+            "type": ["string", "null"],
+            "description": "Database password (should be encrypted)"
+          },
+          "ssl": {
+            "type": ["boolean", "null"],
+            "description": "Enable SSL/TLS connection"
+          },
+          "pool_size": {
+            "type": ["integer", "null"],
+            "default": 10,
+            "description": "Connection pool size"
+          },
+          "timeout_seconds": {
+            "type": ["integer", "null"],
+            "default": 30,
+            "description": "Connection timeout in seconds"
+          },
+          "batch_size": {
+            "type": ["integer", "null"],
+            "default": 100,
+            "description": "Batch insert size"
+          }
+        },
+        "required": ["id", "database_type", "host", "port", "database", "username"],
+        "additionalProperties": true
+      }
+    },
+    "meta": {
+      "type": ["object", "null"],
+      "description": "Metadata for tracking and audit purposes"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update"
+    }
+  },
+  "required": ["type", "src"],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "outputs_rdbms",
+      "src": [
+        {
+          "id": "postgres-prod",
+          "database_type": "postgres",
+          "host": "db.example.com",
+          "port": 5432,
+          "database": "production",
+          "schema": "public",
+          "username": "app_user",
+          "ssl": true,
+          "pool_size": 20,
+          "timeout_seconds": 45,
+          "batch_size": 500
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/sessions.schema.json",
+  "title": "User Session",
+  "description": "User session tokens and authentication state (future use)",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "session",
+      "description": "Document type identifier"
+    },
+    "token": {
+      "type": "string",
+      "description": "Session token (JWT or opaque token)"
+    },
+    "username": {
+      "type": "string",
+      "description": "Associated username"
+    },
+    "ip_address": {
+      "type": ["string", "null"],
+      "format": "ipv4",
+      "description": "Client IP address"
+    },
+    "user_agent": {
+      "type": ["string", "null"],
+      "description": "Client user agent string"
+    },
+    "created_at": {
+      "type": "integer",
+      "description": "Session creation Unix timestamp"
+    },
+    "expires_at": {
+      "type": "integer",
+      "description": "Session expiration Unix timestamp"
+    },
+    "last_activity": {
+      "type": ["integer", "null"],
+      "description": "Last activity Unix timestamp"
+    },
+    "active": {
+      "type": ["boolean", "null"],
+      "default": true,
+      "description": "Whether session is currently active"
+    },
+    "revoked": {
+      "type": ["boolean", "null"],
+      "default": false,
+      "description": "Whether session was explicitly revoked"
+    }
+  },
+  "required": [
+    "type",
+    "token",
+    "username",
+    "created_at",
+    "expires_at"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "session",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+      "username": "john_admin",
+      "ip_address": "192.168.1.100",
+      "created_at": 1705324200,
+      "expires_at": 1705327800,
+      "last_activity": 1705326900,
+      "active": true,
+      "revoked": false
+    }
+  ]
+}

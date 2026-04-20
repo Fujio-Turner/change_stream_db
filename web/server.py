@@ -371,7 +371,7 @@ async def list_mappings(request):
         meta = {"active": True, "updated_at": ""}
         try:
             parsed = json.loads(content)
-            m = parsed.get("_meta", {})
+            m = parsed.get("meta", {})
             meta["active"] = m.get("active", True)
             meta["updated_at"] = m.get("updated_at", "")
         except (json.JSONDecodeError, AttributeError):
@@ -406,14 +406,14 @@ async def put_mapping(request):
     content = await request.text()
     if USE_CBL:
         CBLStore().save_mapping(name, content)
-    # Inject _meta into JSON content before writing to filesystem
+    # Inject meta into JSON content before writing to filesystem
     try:
         parsed = json.loads(content)
-        meta = parsed.get("_meta", {})
+        meta = parsed.get("meta", {})
         meta["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         if "active" not in meta:
             meta["active"] = True
-        parsed["_meta"] = meta
+        parsed["meta"] = meta
         content = json.dumps(parsed, indent=2)
     except (json.JSONDecodeError, ValueError):
         pass  # not valid JSON, save as-is
@@ -444,12 +444,12 @@ async def patch_mapping_active(request):
     if path.is_file():
         try:
             parsed = json.loads(path.read_text())
-            meta = parsed.get("_meta", {})
+            meta = parsed.get("meta", {})
             meta["active"] = active
             meta["updated_at"] = datetime.datetime.now(
                 datetime.timezone.utc
             ).isoformat()
-            parsed["_meta"] = meta
+            parsed["meta"] = meta
             path.write_text(json.dumps(parsed, indent=2))
         except (json.JSONDecodeError, ValueError):
             pass
@@ -1966,8 +1966,8 @@ async def save_source(request):
         "type": "source",
         "system": body["system"],
         "config": body["config"],
-        "_meta": {
-            **body.get("_meta", {}),
+        "meta": {
+            **body.get("meta", {}),
             "saved_at": datetime.datetime.utcnow().isoformat(),
         },
     }

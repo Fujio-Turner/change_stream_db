@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/dlq.schema.json",
+  "title": "Dead Letter Queue Entry",
+  "description": "Stores documents that failed processing for later retry or analysis",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "dlq",
+      "description": "Document type identifier"
+    },
+    "doc_id_original": {
+      "type": "string",
+      "description": "Original document ID that failed"
+    },
+    "seq": {
+      "type": "string",
+      "description": "Sequence number from source system"
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
+      ],
+      "description": "HTTP method that was attempted"
+    },
+    "status": {
+      "type": "integer",
+      "description": "HTTP status code from the failed request"
+    },
+    "error": {
+      "type": "string",
+      "description": "Error message from the failed request"
+    },
+    "reason": {
+      "type": ["string", "null"],
+      "description": "Category of failure (e.g., 'timeout', 'validation_error', '4xx', '5xx')"
+    },
+    "time": {
+      "type": "integer",
+      "description": "Unix timestamp when entry was created"
+    },
+    "expires_at": {
+      "type": ["integer", "null"],
+      "description": "Unix timestamp when entry should auto-delete (0 = no expiry)"
+    },
+    "retried": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this entry has been retried"
+    },
+    "replay_attempts": {
+      "type": "integer",
+      "default": 0,
+      "description": "Number of replay attempts made"
+    },
+    "target_url": {
+      "type": ["string", "null"],
+      "description": "Target endpoint that failed"
+    },
+    "doc_data": {
+      "type": "string",
+      "description": "JSON-serialized original document data"
+    }
+  },
+  "required": [
+    "type",
+    "doc_id_original",
+    "seq",
+    "method",
+    "status",
+    "error",
+    "time",
+    "doc_data"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "dlq",
+      "doc_id_original": "doc-123",
+      "seq": "12345",
+      "method": "POST",
+      "status": 500,
+      "error": "Internal Server Error",
+      "reason": "5xx",
+      "time": 1705324200,
+      "expires_at": 1705410600,
+      "retried": false,
+      "replay_attempts": 0,
+      "target_url": "https://api.example.com/ingest",
+      "doc_data": "{\"type\":\"hotel\",\"name\":\"Grand Hotel\"}"
+    }
+  ]
+}

@@ -730,7 +730,7 @@ class CBLStore:
                 "gateway": found_fields.get("gateway", {}),
                 "auth": found_fields.get("auth", {}),
                 "changes_feed": found_fields.get("changes_feed", {}),
-                "_meta": {
+                "meta": {
                     "migrated_from": "settings",
                     "migrated_at": datetime.datetime.now(
                         datetime.timezone.utc
@@ -1033,8 +1033,8 @@ class CBLStore:
             "dialect": doc.get("dialect", "sql"),
             "data": doc.get("data", {}),
         }
-        if "_meta" in doc:
-            schema["_meta"] = dict(doc["_meta"])
+        if "meta" in doc:
+            schema["meta"] = dict(doc["meta"])
         return schema
 
     def save_schema(self, schema: dict) -> None:
@@ -1049,8 +1049,8 @@ class CBLStore:
         doc["type"] = schema.get("type", "rdbms")
         doc["dialect"] = schema.get("dialect", "sql")
         doc["data"] = schema.get("data", {})
-        if "_meta" in schema:
-            doc["_meta"] = schema["_meta"]
+        if "meta" in schema:
+            doc["meta"] = schema["meta"]
         _coll_save_doc(self.db, COLL_MAPPINGS, doc)
         elapsed = (time.monotonic() - t0) * 1000
 
@@ -1111,7 +1111,7 @@ class CBLStore:
                         "type": doc.get("type", "source"),
                         "system": doc.get("system"),
                         "config": doc.get("config", {}),
-                        "_meta": dict(doc.get("_meta", {})) if doc.get("_meta") else {},
+                        "meta": dict(doc.get("meta", {})) if doc.get("meta") else {},
                     }
             return sources
         except Exception as e:
@@ -1136,8 +1136,8 @@ class CBLStore:
         doc["type"] = "source"
         doc["system"] = source_doc.get("system")
         doc["config"] = source_doc.get("config", {})
-        if "_meta" in source_doc:
-            doc["_meta"] = source_doc["_meta"]
+        if "meta" in source_doc:
+            doc["meta"] = source_doc["meta"]
         _coll_save_doc(self.db, COLL_MAPPINGS, doc)
 
         # Update the source index document
@@ -1857,8 +1857,8 @@ class CBLStore:
             "type": doc.get("type", "inputs_changes"),
             "src": list(doc.get("src") or []),
         }
-        if "_meta" in doc:
-            result["_meta"] = dict(doc["_meta"])
+        if "meta" in doc:
+            result["meta"] = dict(doc["meta"])
         log_event(
             logger,
             "debug",
@@ -1883,8 +1883,8 @@ class CBLStore:
         doc["type"] = "inputs_changes"
         doc["src"] = data.get("src", [])
         doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        if "_meta" in data:
-            doc["_meta"] = data["_meta"]
+        if "meta" in data:
+            doc["meta"] = data["meta"]
         _coll_save_doc(self.db, COLL_INPUTS_CHANGES, doc)
         elapsed = (time.monotonic() - t0) * 1000
         log_event(
@@ -1930,8 +1930,8 @@ class CBLStore:
             "type": doc.get("type", f"outputs_{output_type}"),
             "src": list(doc.get("src") or []),
         }
-        if "_meta" in doc:
-            result["_meta"] = dict(doc["_meta"])
+        if "meta" in doc:
+            result["meta"] = dict(doc["meta"])
         log_event(
             logger,
             "debug",
@@ -1965,8 +1965,8 @@ class CBLStore:
         doc["type"] = f"outputs_{output_type}"
         doc["src"] = data.get("src", [])
         doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        if "_meta" in data:
-            doc["_meta"] = data["_meta"]
+        if "meta" in data:
+            doc["meta"] = data["meta"]
         _coll_save_doc(self.db, coll_name, doc)
         elapsed = (time.monotonic() - t0) * 1000
         log_event(
@@ -2037,8 +2037,8 @@ class CBLStore:
             datetime.datetime.now(datetime.timezone.utc).isoformat(),
         )
         doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        if "_meta" in job_data:
-            doc["_meta"] = job_data["_meta"]
+        if "meta" in job_data:
+            doc["meta"] = job_data["meta"]
         _coll_save_doc(self.db, COLL_JOBS, doc)
         elapsed = (time.monotonic() - t0) * 1000
         log_event(
@@ -2200,8 +2200,8 @@ class CBLStore:
         doc["last_seq"] = data.get("last_seq", "0")
         doc["remote_counter"] = data.get("remote_counter", 0)
         doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        if "_meta" in data:
-            doc["_meta"] = data["_meta"]
+        if "meta" in data:
+            doc["meta"] = data["meta"]
         _coll_save_doc(self.db, COLL_CHECKPOINTS, doc)
         elapsed = (time.monotonic() - t0) * 1000
         log_event(
@@ -2263,8 +2263,8 @@ class CBLStore:
         doc["expires_at"] = data.get("expires_at")
         doc["created_at"] = data.get("created_at", int(time.time()))
         doc["updated_at"] = int(time.time())
-        if "_meta" in data:
-            doc["_meta"] = data["_meta"]
+        if "meta" in data:
+            doc["meta"] = data["meta"]
         _coll_save_doc(self.db, COLL_SESSIONS, doc)
         elapsed = (time.monotonic() - t0) * 1000
         log_event(

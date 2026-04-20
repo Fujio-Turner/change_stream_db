@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/enrichments.schema.json",
+  "title": "Data Enrichment Metadata",
+  "description": "Stores enrichment rules, lookup tables, and transformation metadata",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "enrichment",
+      "description": "Document type identifier"
+    },
+    "id": {
+      "type": "string",
+      "description": "Unique enrichment identifier"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable enrichment name"
+    },
+    "description": {
+      "type": ["string", "null"],
+      "description": "Optional description"
+    },
+    "enrichment_type": {
+      "type": "string",
+      "enum": [
+        "lookup_table",
+        "javascript_function",
+        "sql_query",
+        "api_call",
+        "groovy_script",
+        "semantic_mapping"
+      ],
+      "description": "Type of enrichment rule"
+    },
+    "source_field": {
+      "type": ["string", "null"],
+      "description": "Input field to enrich"
+    },
+    "target_field": {
+      "type": ["string", "null"],
+      "description": "Output field for enriched data"
+    },
+    "rule_config": {
+      "type": "object",
+      "description": "Configuration specific to the enrichment type",
+      "additionalProperties": true
+    },
+    "lookup_table": {
+      "type": ["object", "null"],
+      "description": "Lookup table mapping for lookup_table type",
+      "additionalProperties": true
+    },
+    "enabled": {
+      "type": ["boolean", "null"],
+      "default": true,
+      "description": "Whether this enrichment is active"
+    },
+    "created_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Creation timestamp"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Last update timestamp"
+    }
+  },
+  "required": [
+    "type",
+    "id",
+    "name",
+    "enrichment_type"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "enrichment",
+      "id": "enrich-country-code",
+      "name": "Country Code Lookup",
+      "description": "Converts country names to ISO codes",
+      "enrichment_type": "lookup_table",
+      "source_field": "country_name",
+      "target_field": "country_code",
+      "lookup_table": {
+        "United States": "US",
+        "Canada": "CA",
+        "Mexico": "MX"
+      },
+      "enabled": true
+    }
+  ]
+}
