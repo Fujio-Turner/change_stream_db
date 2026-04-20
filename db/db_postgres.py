@@ -54,7 +54,13 @@ class PostgresOutputForwarder(BaseOutputForwarder):
         return "postgres"
 
     def _get_engine_cfg(self, out_cfg: dict) -> dict:
-        return out_cfg.get("db", None) or out_cfg.get("postgres", {})
+        nested = out_cfg.get("db", None) or out_cfg.get("postgres", None)
+        if nested:
+            return nested
+        # v2 job outputs store connection fields at the top level
+        if "host" in out_cfg or "port" in out_cfg or "database" in out_cfg:
+            return out_cfg
+        return {}
 
     def __init__(self, out_cfg: dict, dry_run: bool = False, metrics=None):
         if asyncpg is None:
@@ -66,7 +72,7 @@ class PostgresOutputForwarder(BaseOutputForwarder):
         self._host = pg_cfg.get("host", "localhost")
         self._port = pg_cfg.get("port", 5432)
         self._database = pg_cfg.get("database", "")
-        self._user = pg_cfg.get("username", pg_cfg.get("user", "postgres"))
+        self._user = pg_cfg.get("username") or pg_cfg.get("user") or "postgres"
         self._password = pg_cfg.get("password", "")
         self._schema = pg_cfg.get("schema", "public")
         self._ssl = pg_cfg.get("ssl", False)

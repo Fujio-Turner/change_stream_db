@@ -54,6 +54,29 @@ Status for Changes Feed, Processing, and Output is computed **client-side** from
 
 All four status dots start as **yellow** (unknown) on page load. Once data is fetched, each dot transitions to its computed color. When the worker's metrics endpoint is unreachable or metrics are disabled in the config, the feed/processing/output dots remain **yellow** (unknown / not monitored) — never red. The CBL dot is set independently from `/api/status`.
 
+#### Live Pipeline Status
+
+The dashboard fetches live pipeline state from the worker via the `/api/jobs/{id}/state` proxy endpoint. Instead of reading stale state from the stored job document, the job status shows real-time values:
+
+| Status | Badge Color | Description |
+|---|---|---|
+| **running** | Green | Pipeline threads are active and processing |
+| **stopped** | Grey | Pipeline has been stopped |
+| **error** | Red | Pipeline encountered an error |
+
+Live metrics displayed alongside the status include **uptime** (how long the pipeline has been running) and **error count** (errors from the actual pipeline threads).
+
+#### Job Status Table
+
+Below the status indicators, a job status table shows live metrics for each managed job:
+
+| Column | Description |
+|---|---|
+| **Job ID** | The job identifier |
+| **Status** | Color-coded badge (green=running, grey=stopped, red=error) |
+| **Uptime** | Duration the pipeline has been running, sourced from the live worker state |
+| **Errors** | Error count from the actual pipeline threads |
+
 #### Architecture Graph
 
 The architecture diagram below the status bar shows the live pipeline topology. Nodes represent pipeline stages and update with real-time metrics.
@@ -64,6 +87,10 @@ The diagram operates in two visual modes:
 - **Attachments + Data** (`attachments.enabled = true`) — Four columns: Source → Worker+DLQ → Attachments → Outputs. The Attachments node appears between Worker and Outputs with live metrics (uploaded count, errors). Arrows route through the Attachments node to the active output.
 
 Inactive output nodes are dimmed. The active output node (matching `output.mode`) is fully visible with colored health arrows. Click any node to open a detail modal with expanded metrics and mini-charts.
+
+##### Active Output Detection
+
+For v2 jobs, the diagram detects the active output type from the running job's configuration. It fetches the job document to determine the output mode and highlights the active output node accordingly. For example, when a Postgres job is running the RDBMS arrow turns **green** to indicate the active output path. Other output nodes remain dimmed.
 
 #### Charts Row
 

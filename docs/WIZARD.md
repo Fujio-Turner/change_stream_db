@@ -189,7 +189,10 @@ Write documents to a relational database.
 | **Database** | Database / service name |
 | **User / Password** | Database credentials |
 | **Schema** | Schema name (e.g., `public` for PostgreSQL, `dbo` for SQL Server) |
+| **Pool Min** | Minimum connections in the connection pool |
+| **Pool Max** | Maximum connections in the connection pool |
 | **SSL** | Enable SSL connections |
+| **Mode** | Auto-set from the selected engine (e.g., `postgresql`, `mysql`). Displayed as a badge under the engine selector — not user-editable. |
 
 Actions:
 - **🔌 Test Connection** — Reuses `POST /api/db/test`. Shows database version on success.
@@ -430,6 +433,71 @@ This allows the system to understand RDBMS table structures for:
 - Table introspection during Step 2 of Schema Mapping Wizard
 - Data type inference for transforms
 - Foreign key relationship discovery
+
+---
+
+## Jobs Manager
+
+The wizard includes a jobs manager interface for controlling pipeline jobs. The jobs list displays all configured v2 jobs with inline controls.
+
+### Job List
+
+Each job row shows:
+
+| Element | Description |
+|---|---|
+| **Job Name / ID** | The job identifier |
+| **Status Badge** | Color-coded: green = running, grey = stopped, red = error |
+| **▶ Start** | Start the job — calls `POST /api/jobs/{id}/start` |
+| **⏹ Stop** | Stop the job — calls `POST /api/jobs/{id}/stop` |
+| **⋯ Overflow Menu** | Additional actions (see below) |
+
+### Overflow Menu Actions
+
+| Action | API Endpoint |
+|---|---|
+| **Refresh Input** | `POST /api/v2/jobs/{id}/refresh-input` |
+| **Refresh Output** | `POST /api/v2/jobs/{id}/refresh-output` |
+| **Restart** | `POST /api/jobs/{id}/restart` |
+| **Edit** | Opens the job editor |
+| **Delete** | `DELETE /api/v2/jobs/{id}` |
+
+---
+
+## API Endpoint Reference
+
+The wizard uses the following corrected API endpoints for managing inputs, outputs, and jobs.
+
+### Inputs
+
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/api/inputs_changes` | `{"src": [...]}` — list of configured change feed inputs |
+
+### Outputs
+
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/api/outputs_{type}` | `{"src": [...]}` — list of configured outputs for the given type (e.g., `/api/outputs_http`, `/api/outputs_rdbms`) |
+
+### Jobs (v2)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/v2/jobs` | List all jobs |
+| `POST` | `/api/v2/jobs` | Create a new job |
+| `PUT` | `/api/v2/jobs/{id}` | Update an existing job |
+| `DELETE` | `/api/v2/jobs/{id}` | Delete a job |
+
+### Job Control
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/jobs/{id}/start` | Start a job |
+| `POST` | `/api/jobs/{id}/stop` | Stop a job |
+| `POST` | `/api/jobs/{id}/restart` | Restart a job |
+| `POST` | `/api/v2/jobs/{id}/refresh-input` | Refresh the job's input configuration |
+| `POST` | `/api/v2/jobs/{id}/refresh-output` | Refresh the job's output configuration |
 
 ---
 

@@ -1613,12 +1613,37 @@ function loadConfig() {
   dbg('loadConfig: fetching /api/config');
   Promise.all([
     fetch('/api/config').then(function(r) { return r.json(); }),
-    fetch('/api/mappings').then(function(r) { return r.json(); }).catch(function() { return []; })
+    fetch('/api/mappings').then(function(r) { return r.json(); }).catch(function() { return []; }),
+    fetch('/api/jobs/status').then(function(r) { return r.json(); }).catch(function() { return { jobs: [] }; })
   ]).then(function(results) {
     var cfg = results[0];
     var mappings = results[1];
+    var jobsStatus = results[2];
     var mappingFiles = (mappings.files || mappings || []);
     dbg('loadConfig: got config', cfg);
+
+    // Enrich cfg with active job's gateway/output for the architecture diagram
+    var activeJobs = (jobsStatus.jobs || []).filter(function(j) { return j.status === 'running' || j.enabled; });
+    if (activeJobs.length > 0) {
+      var activeJobId = activeJobs[0].job_id;
+      // Fetch the full job doc to get input/output details
+      fetch('/api/v2/jobs/' + activeJobId).then(function(r) { return r.json(); }).then(function(job) {
+        var inp = (job.inputs || [])[0] || {};
+        var out = (job.outputs || [])[0] || {};
+        // Map output mode to the diagram's expected format
+        var mode = out.mode || out.engine || '';
+        // The diagram expects 'db' for any RDBMS engine
+        if (['postgres','mysql','mssql','oracle'].indexOf(mode) >= 0) {
+          cfg.output = { mode: 'db', db: { engine: mode } };
+        } else {
+          cfg.output = { mode: mode || '--' };
+        }
+        cfg.gateway = inp;
+        cfg.changes_feed = inp.changes_feed || {};
+        cachedCfg = cfg;
+        drawArchArrows();
+      }).catch(function() {});
+    }
     cachedCfg = cfg;
 
     // Build output details
@@ -1765,6 +1790,7 @@ function loadMetrics() {
 
 // ── Job Selector & Status ────────────────────────────────────
 var selectedJob = '';
+var jobsCache = {};
 
 function loadJobStatus() {
   var tableBody = document.getElementById('jobStatusTable');
@@ -1779,13 +1805,15 @@ function loadJobStatus() {
         return;
       }
       
-      // Update job dropdown
+      // Update job dropdown and populate cache
       var selector = document.getElementById('jobSelector');
+      jobsCache = {}; // Reset cache
       if (selector) {
         var currentValue = selector.value;
         var opts = ['<option value="">All Jobs (Aggregate)</option>'];
         for (var i = 0; i < data.jobs.length; i++) {
           var job = data.jobs[i];
+          jobsCache[job.job_id] = job; // Cache the job data
           opts.push('<option value="' + job.job_id + '">' + job.name + '</option>');
         }
         selector.innerHTML = opts.join('');
@@ -1848,51 +1876,97 @@ function openJobManager() {
 }
 
 // Job control functions
-function startJob(jobId) {
-  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/start', { method: 'POST' })
-    .then(r => r.json())
-    .then(() => {
-      showToast('Job started', 'success');
-      loadJobStatus();
-    })
-    .catch(err => showToast('Failed to start job: ' + err.message, 'error'));
-}
-
-function stopJob(jobId) {
-  if (!confirm('Stop this job gracefully?')) return;
-  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/stop', { method: 'POST' })
-    .then(r => r.json())
-    .then(() => {
-      showToast('Job stopping...', 'success');
-      loadJobStatus();
-    })
-    .catch(err => showToast('Failed to stop job', 'error'));
-}
-
-function killJob(jobId) {
-  if (!confirm('KILL this job (non-graceful)? This may lose checkpoint.')) return;
-  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/kill', { method: 'POST' })
-    .then(r => r.json())
-    .then(() => {
-      showToast('Job killed', 'warning');
-      loadJobStatus();
-    })
-    .catch(err => showToast('Failed to kill job', 'error'));
-}
-
-function restartJob(jobId) {
-  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/restart', { method: 'POST' })
-    .then(r => r.json())
-    .then(() => {
-      showToast('Job restarting...', 'success');
-      loadJobStatus();
-    })
-    .catch(err => showToast('Failed to restart job', 'error'));
-}
-
 function editJob(jobId) {
   // TODO: Open job edit modal in v2.1+
   showToast('Job editor coming in v2.1+', 'info');
+}
+
+// ── Job Control Functions (Phase 10) ─────────────────────────
+
+function startJob(jobId) {
+  if (!jobsCache[jobId]) return showToast('Job not found', 'error');
+  var jobName = jobsCache[jobId].name || jobId;
+  
+  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/start', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.status === 'already_running') {
+        showToast(jobName + ' is already running', 'info');
+      } else if (data.error) {
+        showToast('Failed to start ' + jobName + ': ' + data.error, 'error');
+      } else {
+        showToast(jobName + ' started', 'success');
+      }
+      loadJobStatus();
+    })
+    .catch(err => {
+      console.error('Start job error:', err);
+      showToast('Failed to start ' + jobName, 'error');
+    });
+}
+
+function stopJob(jobId) {
+  if (!jobsCache[jobId]) return showToast('Job not found', 'error');
+  var jobName = jobsCache[jobId].name || jobId;
+  
+  if (!confirm('Stop ' + jobName + ' gracefully? It will drain in-flight documents.')) return;
+  
+  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/stop', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        showToast('Failed to stop ' + jobName + ': ' + data.error, 'error');
+      } else {
+        showToast(jobName + ' stopping...', 'success');
+      }
+      loadJobStatus();
+    })
+    .catch(err => {
+      console.error('Stop job error:', err);
+      showToast('Failed to stop ' + jobName, 'error');
+    });
+}
+
+function killJob(jobId) {
+  if (!jobsCache[jobId]) return showToast('Job not found', 'error');
+  var jobName = jobsCache[jobId].name || jobId;
+  
+  if (!confirm('KILL ' + jobName + ' immediately (non-graceful)?\n\nWarning: This may lose the current checkpoint. The job will resync from the last saved checkpoint on restart.')) return;
+  
+  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/kill', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        showToast('Failed to kill ' + jobName + ': ' + data.error, 'error');
+      } else {
+        showToast(jobName + ' killed', 'warning');
+      }
+      loadJobStatus();
+    })
+    .catch(err => {
+      console.error('Kill job error:', err);
+      showToast('Failed to kill ' + jobName, 'error');
+    });
+}
+
+function restartJob(jobId) {
+  if (!jobsCache[jobId]) return showToast('Job not found', 'error');
+  var jobName = jobsCache[jobId].name || jobId;
+  
+  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/restart', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        showToast('Failed to restart ' + jobName + ': ' + data.error, 'error');
+      } else {
+        showToast(jobName + ' restarting...', 'success');
+      }
+      loadJobStatus();
+    })
+    .catch(err => {
+      console.error('Restart job error:', err);
+      showToast('Failed to restart ' + jobName, 'error');
+    });
 }
 
 // ── Helper Functions ─────────────────────────────────────────

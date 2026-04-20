@@ -332,14 +332,15 @@
                <div class="grid grid-cols-3 gap-4">
                  <div>
                    <label class="label"><span class="label-text font-semibold">Engine</span></label>
-                   <select id="outRdbmsEngine" class="select select-bordered w-full">
+                   <select id="outRdbmsEngine" class="select select-bordered w-full" onchange="document.getElementById('outRdbmsMode').textContent = this.value || '–'">
                      <option value="">Choose engine...</option>
                      <option value="postgres">PostgreSQL</option>
                      <option value="mysql">MySQL</option>
                      <option value="mssql">MSSQL</option>
                      <option value="oracle">Oracle</option>
                    </select>
-                 </div>
+                   <p class="text-xs opacity-60 mt-1">Mode: <span id="outRdbmsMode" class="font-mono">–</span></p>
+                   </div>
                  <div>
                    <label class="label"><span class="label-text font-semibold">Host</span></label>
                    <input id="outRdbmsHost" type="text" class="input input-bordered w-full" placeholder="localhost" />
@@ -378,16 +379,33 @@
                  </div>
                </div>
 
+               <div class="grid grid-cols-3 gap-4">
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Schema</span></label>
+                   <input id="outRdbmsSchema" type="text" class="input input-bordered w-full" placeholder="public" value="public" />
+                 </div>
+                 <div>
+                   <label class="label"><span class="label-text font-semibold">Pool Min</span></label>
+                   <input id="outRdbmsPoolMin" type="number" class="input input-bordered w-full" placeholder="2" value="2" />
+                 </div>
+                 <div>
+                   <label class="label">
+                     <span class="label-text font-semibold">SSL</span>
+                     <input id="outRdbmsSsl" type="checkbox" class="checkbox checkbox-sm" />
+                   </label>
+                 </div>
+               </div>
+
                <div class="flex gap-2 mt-6">
                  <button class="btn btn-success" onclick="outputsRdbmsSave()">Save Output</button>
                  <button class="btn btn-ghost" onclick="outputsCancel('rdbms')">Cancel</button>
                </div>
-             </div>
-           </div>
-         </div>
-       </div>
+               </div>
+               </div>
+               </div>
+               </div>
 
-       <!-- HTTP Outputs -->
+               <!-- HTTP Outputs -->
        <div id="outPanelHttp" class="hidden space-y-6">
          <!-- Existing HTTP Outputs -->
          <div class="card bg-base-100 shadow-sm rounded-2xl border-l-4 border-success">
@@ -1550,15 +1568,14 @@
                <tr class="bg-base-200">
                  <th class="text-xs font-semibold">Job ID</th>
                  <th class="text-xs font-semibold">Name</th>
-                 <th class="text-xs font-semibold">System</th>
+                 <th class="text-xs font-semibold">Status</th>
                  <th class="text-xs font-semibold">Input</th>
                  <th class="text-xs font-semibold">Output</th>
-                 <th class="text-xs font-semibold">Fields</th>
                  <th class="text-xs font-semibold text-right">Actions</th>
                </tr>
              </thead>
              <tbody id="jobsTableBody">
-               <tr><td colspan="7" class="text-center opacity-60">Loading jobs...</td></tr>
+               <tr><td colspan="6" class="text-center opacity-60">Loading jobs...</td></tr>
              </tbody>
            </table>
          </div>
@@ -4988,6 +5005,10 @@ function outputsRdbmsAddNew() {
   document.getElementById('outRdbmsPass').value = '';
   document.getElementById('outRdbmsPoolMax').value = '10';
   document.getElementById('outRdbmsEnabled').checked = true;
+  document.getElementById('outRdbmsSchema').value = 'public';
+  document.getElementById('outRdbmsPoolMin').value = '2';
+  document.getElementById('outRdbmsSsl').checked = false;
+  document.getElementById('outRdbmsMode').textContent = '–';
   document.getElementById('outRdbmsFormCard').classList.remove('hidden');
 }
 
@@ -5044,6 +5065,10 @@ function outputsEdit(outId, type) {
         document.getElementById('outRdbmsPass').value = src.password || '';
         document.getElementById('outRdbmsPoolMax').value = src.pool_max || '10';
         document.getElementById('outRdbmsEnabled').checked = src.enabled !== false;
+        document.getElementById('outRdbmsSchema').value = src.schema || 'public';
+        document.getElementById('outRdbmsPoolMin').value = src.pool_min || '2';
+        document.getElementById('outRdbmsSsl').checked = src.ssl || false;
+        document.getElementById('outRdbmsMode').textContent = src.mode || src.engine || '–';
         document.getElementById('outRdbmsFormCard').classList.remove('hidden');
       } else if (type === 'http') {
         document.getElementById('outHttpId').value = src.id || '';
@@ -5084,6 +5109,10 @@ function outputsRdbmsSave() {
   var password = document.getElementById('outRdbmsPass').value;
   var pool_max = parseInt(document.getElementById('outRdbmsPoolMax').value) || 10;
   var enabled = document.getElementById('outRdbmsEnabled').checked;
+  var schema = document.getElementById('outRdbmsSchema').value.trim() || 'public';
+  var pool_min = parseInt(document.getElementById('outRdbmsPoolMin').value) || 2;
+  var ssl = document.getElementById('outRdbmsSsl').checked;
+  var mode = engine;
   
   if (!id || !engine || !host) {
     alert('ID, Engine, and Host are required');
@@ -5091,8 +5120,9 @@ function outputsRdbmsSave() {
   }
   
   outputsSaveEntry('rdbms', {
-    id: id, name: name, enabled: enabled, engine: engine, host: host, port: port,
-    database: database, username: username, password: password, pool_max: pool_max
+    id: id, name: name, enabled: enabled, mode: mode, engine: engine, host: host, port: port,
+    database: database, username: username, password: password, schema: schema,
+    pool_min: pool_min, pool_max: pool_max, ssl: ssl
   });
 }
 
@@ -5253,7 +5283,7 @@ let jobsState = {
 
 async function jobsLoadList() {
   try {
-    const resp = await fetch('/api/jobs');
+    const resp = await fetch('/api/v2/jobs');
     const data = await resp.json();
     jobsState.jobs = data.jobs || [];
     jobsRenderList();
@@ -5264,9 +5294,9 @@ async function jobsLoadList() {
 
 async function jobsLoadInputs() {
   try {
-    const resp = await fetch('/api/inputs');
+    const resp = await fetch('/api/inputs_changes');
     const data = await resp.json();
-    jobsState.inputs = data.inputs || [];
+    jobsState.inputs = (data.src || []).map(s => ({...s, input_id: s.id}));
   } catch (e) {
     showToast('Error loading inputs: ' + e.message, 'error');
   }
@@ -5274,9 +5304,9 @@ async function jobsLoadInputs() {
 
 async function jobsLoadOutputs(outputType) {
   try {
-    const resp = await fetch('/api/outputs/' + outputType);
+    const resp = await fetch('/api/outputs_' + outputType);
     const data = await resp.json();
-    jobsState.outputs[outputType] = data[outputType] || [];
+    jobsState.outputs[outputType] = (data.src || []).map(s => ({...s, output_id: s.id}));
   } catch (e) {
     showToast('Error loading outputs: ' + e.message, 'error');
   }
@@ -5286,7 +5316,7 @@ async function jobsLoadMappings() {
   try {
     const resp = await fetch('/api/mappings');
     const data = await resp.json();
-    jobsState.mappings = data.mappings || [];
+    jobsState.mappings = Array.isArray(data) ? data : [];
   } catch (e) {
     showToast('Error loading mappings: ' + e.message, 'error');
   }
@@ -5297,27 +5327,39 @@ function jobsRenderList() {
   tbody.innerHTML = '';
   
   if (jobsState.jobs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center opacity-60">No jobs yet. Create one to get started.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center opacity-60">No jobs yet. Create one to get started.</td></tr>';
     document.getElementById('jobsCount').textContent = '0 jobs';
     return;
   }
   
   jobsState.jobs.forEach(job => {
     const row = document.createElement('tr');
-    const inputName = jobsState.inputs.find(i => i.input_id === job.input_id)?.name || job.input_id;
+    const jobId = job.id || '';
+    const inputInfo = (job.inputs || [])[0];
+    const inputName = inputInfo ? (inputInfo.id || inputInfo.host || 'unknown') : 'none';
     const outputType = job.output_type || 'unknown';
-    const fieldCount = Object.keys(job.mapping || {}).length;
+    const status = (job.state && job.state.status) || 'unknown';
+    const statusColor = status === 'running' ? 'badge-success' : status === 'stopped' ? 'badge-ghost' : status === 'error' ? 'badge-error' : 'badge-warning';
     
     row.innerHTML = `
-      <td class="font-mono text-xs">${job.job_id.slice(0,8)}...</td>
-      <td>${job.name || '(unnamed)'}</td>
-      <td><span class="badge badge-sm">${job.system || 'default'}</span></td>
-      <td>${inputName}</td>
-      <td><span class="badge badge-outline">${outputType}</span></td>
-      <td class="text-xs">${fieldCount} fields</td>
-      <td>
-        <button class="btn btn-xs btn-ghost" onclick="jobsEditJob('${job.job_id}')">Edit</button>
-        <button class="btn btn-xs btn-error btn-ghost" onclick="jobsDeleteJob('${job.job_id}')">Delete</button>
+      <td class="font-mono text-xs">${esc(jobId.slice(0,8))}...</td>
+      <td>${esc(job.name || '(unnamed)')}</td>
+      <td><span class="badge badge-sm ${statusColor}">${esc(status)}</span></td>
+      <td>${esc(inputName)}</td>
+      <td><span class="badge badge-outline">${esc(outputType)}</span></td>
+      <td class="text-right space-x-1">
+        <button class="btn btn-xs btn-success btn-outline" onclick="jobsStartJob('${esc(jobId)}')" title="Start">▶</button>
+        <button class="btn btn-xs btn-error btn-outline" onclick="jobsStopJob('${esc(jobId)}')" title="Stop">⏹</button>
+        <div class="dropdown dropdown-end dropdown-hover">
+          <label tabindex="0" class="btn btn-xs btn-ghost">⋯</label>
+          <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-200 rounded-box shadow w-40 z-10">
+            <li><a onclick="jobsRefreshInput('${esc(jobId)}')">Refresh Input</a></li>
+            <li><a onclick="jobsRefreshOutput('${esc(jobId)}')">Refresh Output</a></li>
+            <li><a onclick="jobsRestartJob('${esc(jobId)}')">Restart</a></li>
+            <li><a onclick="jobsEditJob('${esc(jobId)}')">Edit</a></li>
+            <li><a class="text-error" onclick="jobsDeleteJob('${esc(jobId)}')">Delete</a></li>
+          </ul>
+        </div>
       </td>
     `;
     tbody.appendChild(row);
@@ -5335,7 +5377,7 @@ function jobsResetForm() {
 
 async function jobsAddNew() {
   jobsState.currentJob = {
-    job_id: 'job_' + Date.now(),
+    id: '',
     name: '',
     input_id: '',
     output_type: 'rdbms',
@@ -5357,7 +5399,7 @@ async function jobsAddNew() {
 }
 
 async function jobsEditJob(jobId) {
-  const job = jobsState.jobs.find(j => j.job_id === jobId);
+  const job = jobsState.jobs.find(j => j.id === jobId);
   if (!job) {
     showToast('Job not found', 'error');
     return;
@@ -5387,7 +5429,7 @@ function jobsRenderForm() {
   const title = jobsState.isEditing ? 'Edit Job' : 'Create Job';
   
   document.getElementById('jobsFormTitle').textContent = title;
-  document.getElementById('jobsFormJobId').value = job.job_id;
+  document.getElementById('jobsFormJobId').value = job.id || '';
   document.getElementById('jobsFormJobId').disabled = jobsState.isEditing;
   document.getElementById('jobsFormName').value = job.name || '';
   
@@ -5411,9 +5453,7 @@ function jobsRenderForm() {
   const outputs = jobsState.outputs[job.output_type || 'rdbms'] || [];
   outputSel.innerHTML = '<option value="">Choose output...</option>';
   outputs.forEach(out => {
-    const key = job.output_type === 'http' ? 'output_id' : 
-               job.output_type === 'cloud' ? 'output_id' : 'output_id';
-    const outId = out[key] || out.output_id;
+    const outId = out.output_id || out.id;
     const outName = out.name || outId;
     const opt = document.createElement('option');
     opt.value = outId;
@@ -5427,9 +5467,9 @@ function jobsRenderForm() {
   mapSel.innerHTML = '<option value="">No mapping</option>';
   jobsState.mappings.forEach(map => {
     const opt = document.createElement('option');
-    opt.value = map._id;
-    opt.textContent = map.name || map._id;
-    if (map._id === job.mapping_id) opt.selected = true;
+    opt.value = map.name;
+    opt.textContent = map.name;
+    if (map.name === job.mapping_name) opt.selected = true;
     mapSel.appendChild(opt);
   });
   
@@ -5455,18 +5495,28 @@ async function jobsSaveJob() {
   // Update system field
   job.system = document.getElementById('jobsFormSystem').value || 'default';
   
+  // Build the body the API expects
+  const body = {
+    name: job.name,
+    input_id: job.input_id,
+    output_type: job.output_type,
+    output_id: job.output_id,
+    system: job.system,
+    mapping: job.mapping || {}
+  };
+  
   try {
-    const url = jobsState.isEditing ? `/api/jobs/${job.job_id}` : '/api/jobs';
+    const url = jobsState.isEditing ? `/api/v2/jobs/${job.id}` : '/api/v2/jobs';
     const method = jobsState.isEditing ? 'PUT' : 'POST';
     
     const resp = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(job)
+      body: JSON.stringify(body)
     });
     
     const data = await resp.json();
-    if (!data.ok) {
+    if (data.status !== 'ok') {
       showToast('Error saving job: ' + (data.error || 'Unknown error'), 'error');
       return;
     }
@@ -5483,10 +5533,10 @@ async function jobsDeleteJob(jobId) {
   if (!confirm('Delete job and its checkpoint? This cannot be undone.')) return;
   
   try {
-    const resp = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
+    const resp = await fetch(`/api/v2/jobs/${jobId}`, { method: 'DELETE' });
     const data = await resp.json();
     
-    if (!data.ok) {
+    if (data.status !== 'ok') {
       showToast('Error deleting job: ' + (data.error || 'Unknown error'), 'error');
       return;
     }
@@ -5496,6 +5546,56 @@ async function jobsDeleteJob(jobId) {
   } catch (e) {
     showToast('Error deleting job: ' + e.message, 'error');
   }
+}
+
+async function jobsStartJob(jobId) {
+  try {
+    const resp = await fetch(`/api/jobs/${jobId}/start`, { method: 'POST' });
+    const data = await resp.json();
+    if (data.error) { showToast('Start failed: ' + data.error, 'error'); return; }
+    showToast('Job started', 'success');
+    await jobsLoadList();
+  } catch (e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+async function jobsStopJob(jobId) {
+  try {
+    const resp = await fetch(`/api/jobs/${jobId}/stop`, { method: 'POST' });
+    const data = await resp.json();
+    if (data.error) { showToast('Stop failed: ' + data.error, 'error'); return; }
+    showToast('Job stopped', 'success');
+    await jobsLoadList();
+  } catch (e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+async function jobsRestartJob(jobId) {
+  try {
+    const resp = await fetch(`/api/jobs/${jobId}/restart`, { method: 'POST' });
+    const data = await resp.json();
+    if (data.error) { showToast('Restart failed: ' + data.error, 'error'); return; }
+    showToast('Job restarted', 'success');
+    await jobsLoadList();
+  } catch (e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+async function jobsRefreshInput(jobId) {
+  try {
+    const resp = await fetch(`/api/v2/jobs/${jobId}/refresh-input`, { method: 'POST' });
+    const data = await resp.json();
+    if (data.error) { showToast('Refresh input failed: ' + data.error, 'error'); return; }
+    showToast('Input refreshed for job ' + jobId.slice(0,8), 'success');
+    await jobsLoadList();
+  } catch (e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+async function jobsRefreshOutput(jobId) {
+  try {
+    const resp = await fetch(`/api/v2/jobs/${jobId}/refresh-output`, { method: 'POST' });
+    const data = await resp.json();
+    if (data.error) { showToast('Refresh output failed: ' + data.error, 'error'); return; }
+    showToast('Output refreshed for job ' + jobId.slice(0,8), 'success');
+    await jobsLoadList();
+  } catch (e) { showToast('Error: ' + e.message, 'error'); }
 }
 
 // ── Init ─────────────────────────────────────────────────────

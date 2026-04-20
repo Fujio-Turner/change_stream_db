@@ -1281,10 +1281,21 @@ async def start_metrics_server(
     app.router.add_put("/api/inputs_changes/{id}", api_put_inputs_changes_entry)
     app.router.add_delete("/api/inputs_changes/{id}", api_delete_inputs_changes_entry)
 
-    app.router.add_get("/api/outputs_{type}", api_get_outputs)
-    app.router.add_post("/api/outputs_{type}", api_post_outputs)
-    app.router.add_put("/api/outputs_{type}/{id}", api_put_outputs_entry)
-    app.router.add_delete("/api/outputs_{type}/{id}", api_delete_outputs_entry)
+    app.router.add_get(r"/api/outputs_{type:rdbms|http|cloud|stdout}", api_get_outputs)
+    app.router.add_post(
+        r"/api/outputs_{type:rdbms|http|cloud|stdout}", api_post_outputs
+    )
+    app.router.add_put(
+        r"/api/outputs_{type:rdbms|http|cloud|stdout}/{id}", api_put_outputs_entry
+    )
+    app.router.add_delete(
+        r"/api/outputs_{type:rdbms|http|cloud|stdout}/{id}", api_delete_outputs_entry
+    )
+
+    # Register job control endpoints BEFORE generic /api/jobs/{id} routes
+    # so more specific routes take precedence
+    if extra_routes_cb is not None:
+        extra_routes_cb(app)
 
     app.router.add_get("/api/jobs", api_get_jobs)
     app.router.add_get("/api/jobs/{id}", api_get_job)
@@ -1293,9 +1304,6 @@ async def start_metrics_server(
     app.router.add_delete("/api/jobs/{id}", api_delete_job)
     app.router.add_post("/api/jobs/{id}/refresh-input", api_refresh_job_input)
     app.router.add_post("/api/jobs/{id}/refresh-output", api_refresh_job_output)
-
-    if extra_routes_cb is not None:
-        extra_routes_cb(app)
 
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
@@ -1776,7 +1784,7 @@ def load_enabled_jobs(db: CBLStore | None) -> list[dict]:
 
     try:
         jobs = db.list_jobs()  # Returns all jobs from CBL
-        return [j for j in jobs if j.get("enabled", False)]
+        return [j for j in jobs if j.get("enabled", True)]
     except Exception as e:
         logger.error("Failed to load jobs: %s", e)
         return []
@@ -2199,7 +2207,14 @@ async def poll_changes(
 
     watcher_task = asyncio.create_task(_watch_events())
 
-    base_url = build_base_url(gw)
+    try:
+        base_url = build_base_url(gw)
+    except KeyError as e:
+        watcher_task.cancel()
+        raise KeyError(
+            f"Missing gateway field {e} — check that the job's input has "
+            f"'url' (or 'host') and 'database' configured"
+        ) from e
     ssl_ctx = build_ssl_context(gw)
     basic_auth = build_basic_auth(auth_cfg)
     auth_headers = build_auth_headers(auth_cfg, src)
@@ -2910,6 +2925,7 @@ def main() -> None:
         metrics.set("flood_threshold", flood_threshold)
 
     loop = asyncio.new_event_loop()
+    manager_thread = None
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _signal_handler)
 
@@ -2943,6 +2959,7 @@ def main() -> None:
             config=cfg,
             metrics=metrics,
             logger=logger,
+            poll_changes_func=poll_changes,
         )
 
         if metrics is not None:
@@ -2976,6 +2993,7 @@ def main() -> None:
         def _pipeline_signal_handler() -> None:
             logger.info("Shutdown signal received")
             pipeline_manager.trigger_shutdown()
+            loop.call_soon_threadsafe(loop.stop)
 
         # Replace signal handler with PipelineManager-aware one
         loop.remove_signal_handler(signal.SIGINT)
@@ -2983,15 +3001,29 @@ def main() -> None:
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, _pipeline_signal_handler)
 
-        # Start PipelineManager (blocks until shutdown)
-        pipeline_manager.start()
+        # Start PipelineManager in a background thread so the asyncio
+        # event loop keeps running (needed for the metrics/API server).
+        manager_thread = threading.Thread(
+            target=pipeline_manager.start,
+            name="pipeline-manager",
+            daemon=False,
+        )
+        manager_thread.start()
+
+        # Run the event loop on the main thread — this keeps the
+        # aiohttp metrics server responsive to incoming requests.
+        loop.run_forever()
 
     except KeyboardInterrupt:
         logger.info("Interrupted")
+        pipeline_manager.trigger_shutdown()
     except Exception as e:
         logger.error("Fatal error: %s", e)
         logger.exception("Exception details:")
     finally:
+        # Wait for manager thread to finish
+        if manager_thread is not None and manager_thread.is_alive():
+            manager_thread.join(timeout=60)
         if cbl_scheduler is not None:
             cbl_scheduler.stop()
         if metrics_runner is not None:

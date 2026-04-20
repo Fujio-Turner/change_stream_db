@@ -351,6 +351,7 @@
   // ── Filter logic ─────────────────────────────────────────
   function applyFilters() {
     var search = document.getElementById('logSearch').value.toLowerCase();
+    var selectedJobId = document.getElementById('jobFilter').value;  // Get selected job filter
     // Time range filter
     var minVal = parseInt(document.getElementById('rangeMin').value);
     var maxVal = parseInt(document.getElementById('rangeMax').value);
@@ -370,6 +371,11 @@
       // Stage filter
       var stage = LOG_KEY_STAGE[e.log_key] || 'process';
       if (!activeStages[stage]) continue;
+      // Job ID filter
+      if (selectedJobId) {
+        var logJobId = e.fields && e.fields.job_id ? e.fields.job_id : '';
+        if (logJobId !== selectedJobId) continue;
+      }
       if (search && (e.raw || (e.message + ' ' + JSON.stringify(e.fields))).toLowerCase().indexOf(search) === -1) continue;
       filteredLogs.push(e);
     }
@@ -403,6 +409,10 @@
       if (e.log_key) {
         html += '<span class="badge badge-outline badge-xs">' + esc(e.log_key) + '</span>';
       }
+      // Show job_id if present
+      if (e.fields && e.fields.job_id) {
+        html += '<span class="badge badge-secondary badge-xs font-mono" title="Job ID">🔗 ' + esc(e.fields.job_id).substring(0, 12) + '</span>';
+      }
       if (e.fields && e.fields.doc_id) {
         html += '<span class="badge badge-primary badge-xs font-mono">' + ICO.doc + ' ' + esc(e.fields.doc_id) + '</span>';
       }
@@ -410,7 +420,7 @@
       // Extra fields as small badges
       var keys = Object.keys(e.fields);
       for (var j = 0; j < keys.length; j++) {
-        if (keys[j] === 'doc_id') continue;
+        if (keys[j] === 'doc_id' || keys[j] === 'job_id') continue;  // Skip job_id, already shown
         var v = e.fields[keys[j]];
         if (v.length > 60) v = v.substring(0, 57) + '…';
         html += '<span class="badge badge-ghost badge-xs font-mono">' + esc(keys[j]) + '=' + esc(v) + '</span>';
@@ -1069,24 +1079,31 @@
   function handleJobFilterChange(event) {
     selectedJobId = event.target.value || null;
     
-    // If job_id filtering is supported, apply it here
-    // For now, just refresh logs (backend should support ?job_id= query param)
-    if (currentLogs && currentLogs.length > 0) {
-      renderLogs();
-      updateCharts();
-    } else {
-      refreshLogs();
-    }
+    // Re-apply all filters with the new job selection
+    applyFilters();
   }
 
   function populateJobSelectors() {
     // Load jobs from /api/jobs and populate job filter dropdown
     fetch('/api/jobs')
-      .then(r => r.json())
-      .then(jobs => {
+      .then(r => {
+        if (!r.ok) {
+          throw new Error('Failed to fetch jobs: ' + r.status + ' ' + r.statusText);
+        }
+        return r.text().then(text => {
+          try {
+            return JSON.parse(text);
+          } catch (e) {
+            console.error('JSON parse error. Response text:', text);
+            throw e;
+          }
+        });
+      })
+      .then(data => {
         var select = document.getElementById('jobFilter');
         if (select) {
           var opts = '<option value="">All Jobs</option>';
+          var jobs = data.jobs || [];
           if (Array.isArray(jobs)) {
             jobs.forEach(job => {
               opts += '<option value="' + escapeHtml(job.id || job.job_id) + '">' + escapeHtml(job.name || job.id) + '</option>';

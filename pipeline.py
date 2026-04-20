@@ -31,6 +31,7 @@ class Pipeline:
         metrics: Optional[Any],
         logger: logging.Logger,
         middleware_threads: int = 2,
+        poll_changes_func: Optional[any] = None,
     ):
         """
         Parameters:
@@ -40,6 +41,7 @@ class Pipeline:
             metrics: MetricsCollector instance
             logger: Logger instance
             middleware_threads: Number of threads for async middleware pool
+            poll_changes_func: The poll_changes coroutine to run for this job.
         """
         self.job_id = job_id
         self.job_doc = job_doc
@@ -47,10 +49,12 @@ class Pipeline:
         self.metrics = metrics
         self.logger = logger
         self.middleware_threads = middleware_threads
+        self.poll_changes_func = poll_changes_func
 
         # Thread state
         self._thread: Optional[threading.Thread] = None
         self._shutdown_event: Optional[asyncio.Event] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._running = False
         self._error: Optional[str] = None
         self._error_count = 0
@@ -66,19 +70,19 @@ class Pipeline:
         # Per-job logger with job_id tag
         self.logger = logging.getLogger(f"pipeline.{job_id[:8]}")
 
-    def run(self, poll_changes_func: Optional[any] = None) -> None:
+    def run(self) -> None:
         """
-        Main thread entry point.
-
-        Parameters:
-            poll_changes_func: Optional callback to the poll_changes coroutine.
-                              If not provided, the Pipeline just waits for shutdown.
-                              This allows testing without needing the full main.py stack.
+        Main thread entry point.  Uses self.poll_changes_func if set.
         """
         try:
             self._running = True
             self._start_time = time.time()
             self._error = None
+
+            if not self.poll_changes_func:
+                raise RuntimeError(
+                    f"Pipeline started without poll_changes_func for job {self.job_id}"
+                )
 
             # Build the config for this job from resolved input/output/system
             cfg = self._build_job_config()
@@ -86,40 +90,43 @@ class Pipeline:
             log_event(
                 self.logger,
                 "info",
-                "PIPELINE_START",
-                f"job {self.job_id} starting",
+                "CHANGES",
+                f"Pipeline starting for job",
+                job_id=self.job_id,
             )
 
             # Create and run the event loop for this job
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             self._shutdown_event = asyncio.Event()
+            self._loop = loop
 
             try:
-                if poll_changes_func:
-                    # Call the provided poll_changes function
-                    loop.run_until_complete(
-                        poll_changes_func(
-                            cfg,
-                            src=self.job_doc.get("inputs", [{}])[0].get(
-                                "source_type", "unknown"
+                # Call the provided poll_changes function
+                loop.run_until_complete(
+                    self.poll_changes_func(
+                        cfg,
+                        src=self.job_doc.get("inputs", [{}])[0].get(
+                            "src",
+                            self.job_doc.get("inputs", [{}])[0].get(
+                                "source_type", "sync_gateway"
                             ),
-                            shutdown_event=self._shutdown_event,
-                            metrics=self.metrics,
-                            job_id=self.job_id,
-                        )
+                        ),
+                        shutdown_event=self._shutdown_event,
+                        metrics=self.metrics,
+                        job_id=self.job_id,
                     )
-                else:
-                    # No poll_changes_func provided; just wait for shutdown
-                    loop.run_until_complete(self._shutdown_event.wait())
+                )
             finally:
+                self._loop = None
                 loop.close()
 
             log_event(
                 self.logger,
                 "info",
-                "PIPELINE_STOP",
-                f"job {self.job_id} stopped cleanly",
+                "CHANGES",
+                f"Pipeline stopped cleanly",
+                job_id=self.job_id,
             )
 
         except Exception as e:
@@ -128,8 +135,9 @@ class Pipeline:
             log_event(
                 self.logger,
                 "error",
-                "PIPELINE_ERROR",
-                f"job {self.job_id} crashed: {e}",
+                "CHANGES",
+                f"Pipeline crashed: {e}",
+                job_id=self.job_id,
             )
             # Write to DLQ if available
             try:
@@ -138,12 +146,17 @@ class Pipeline:
                 log_event(
                     self.logger,
                     "error",
-                    "DLQ_WRITE_ERROR",
-                    f"failed to write crash to DLQ: {dlq_err}",
+                    "DLQ",
+                    f"Failed to write crash to DLQ: {dlq_err}",
+                    job_id=self.job_id,
                 )
 
         finally:
-            self._running = False
+            with self._lock:
+                self._running = False
+                self._thread = None
+                self._loop = None
+                self._shutdown_event = None
 
     def stop(self, timeout_seconds: float = 30) -> bool:
         """
@@ -159,18 +172,22 @@ class Pipeline:
             log_event(
                 self.logger,
                 "info",
-                "PIPELINE_STOP_SIGNAL",
-                f"signaling job {self.job_id} to stop",
+                "CHANGES",
+                f"Signaling pipeline to stop",
+                job_id=self.job_id,
             )
 
-        # Store thread reference outside lock
-        thread = self._thread
+            # Grab references under the lock
+            thread = self._thread
+            loop = self._loop
+            shutdown_event = self._shutdown_event
 
-        # Note: We can't directly call _shutdown_event.set() from another thread
-        # if it's in a different event loop. The event loop will check it on the
-        # next iteration. For now, just wait for the thread to exit.
-        # In the real implementation, you'd use thread-safe mechanisms like
-        # loop.call_soon_threadsafe() or a queue.
+        # Signal the asyncio shutdown event from this thread safely
+        if loop is not None and shutdown_event is not None:
+            try:
+                loop.call_soon_threadsafe(shutdown_event.set)
+            except RuntimeError:
+                pass  # loop already closed
 
         # Wait for thread to exit
         if thread:
@@ -179,31 +196,31 @@ class Pipeline:
                 log_event(
                     self.logger,
                     "warning",
-                    "PIPELINE_TIMEOUT",
-                    f"job {self.job_id} did not stop within {timeout_seconds}s",
+                    "CHANGES",
+                    f"Pipeline did not stop within {timeout_seconds}s",
+                    job_id=self.job_id,
                 )
                 return False
-
-        with self._lock:
-            self._running = False
 
         log_event(
             self.logger,
             "info",
-            "PIPELINE_STOPPED",
-            f"job {self.job_id} stopped",
+            "CHANGES",
+            f"Pipeline stopped",
+            job_id=self.job_id,
         )
         return True
 
     def start(self) -> None:
         """Create and start the pipeline thread."""
         with self._lock:
-            if self._running or self._thread is not None:
+            if self._running:
                 log_event(
                     self.logger,
                     "warning",
-                    "PIPELINE_ALREADY_RUNNING",
-                    f"job {self.job_id} already running",
+                    "CHANGES",
+                    f"Pipeline already running",
+                    job_id=self.job_id,
                 )
                 return
 
@@ -219,8 +236,9 @@ class Pipeline:
         log_event(
             self.logger,
             "info",
-            "PIPELINE_RESTART",
-            f"restarting job {self.job_id}",
+            "CHANGES",
+            f"Pipeline restarting",
+            job_id=self.job_id,
         )
         self.stop(timeout_seconds)
         self.start()
@@ -259,23 +277,41 @@ class Pipeline:
 
         This extracts inputs[0], outputs[0], system config and builds
         the legacy config shape that poll_changes expects.
+
+        v2.0 input entries use ``host`` / ``source_type`` while the
+        legacy ``poll_changes`` code expects ``url`` / ``src``.  This
+        method normalises the fields so both schemas work.
         """
-        cfg = {}
+        cfg: Dict[str, Any] = {}
 
-        # Extract input
+        # Extract input — job inputs[0] should already contain the
+        # exact fields the pipeline expects (url, src, auth, etc.)
+        input_entry = {}
         if self.job_doc.get("inputs"):
-            cfg["gateway"] = self.job_doc["inputs"][0]
+            input_entry = self.job_doc["inputs"][0]
+            cfg["gateway"] = input_entry
 
-        # Extract output
+        # poll_changes falls back to gw.get("auth"), gw.get("changes_feed"), etc.
+        # but also checks top-level cfg["auth"], cfg["changes_feed"], cfg["processing"]
+        if input_entry.get("auth"):
+            cfg["auth"] = input_entry["auth"]
+        if input_entry.get("changes_feed"):
+            cfg["changes_feed"] = input_entry["changes_feed"]
+        if input_entry.get("processing"):
+            cfg["processing"] = input_entry["processing"]
+
+        # Extract output — job outputs[0] should already contain the
+        # exact fields the pipeline expects (mode, engine, username, etc.)
         if self.job_doc.get("outputs"):
             cfg["output"] = self.job_doc["outputs"][0]
 
         # Extract system config
-        if self.job_doc.get("system"):
-            system = self.job_doc["system"]
-            cfg["checkpoint"] = system.get("checkpoint", {})
-            cfg["processing"] = system.get("processing", {})
-            cfg["retry"] = system.get("retry", {})
+        system = self.job_doc.get("system", {})
+        cfg["checkpoint"] = system.get("checkpoint", {})
+        cfg["processing"] = cfg.get("processing") or system.get("processing", {})
+        cfg["retry"] = system.get("retry", {})
+        cfg["shutdown"] = system.get("shutdown", {})
+        cfg["attachments"] = system.get("attachments", {})
 
         # Extract mapping
         if self.job_doc.get("mapping"):
