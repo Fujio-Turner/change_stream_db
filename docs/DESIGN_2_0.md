@@ -1,6 +1,6 @@
 # Changes Worker v2.0 – Architecture Redesign
 
-> **Status:** 🔄 Phases 1-2 Complete (Migration Logic)
+> **Status:** 🔄 Phases 1-3 Complete (Inputs Wizard UI)
 > **Breaking change:** Yes – config format, CBL schema, cbl_store.py API, wizard UI, main.py startup  
 > **Goal:** Replace the monolithic `config.json` with a job-centric, composable document model stored in Couchbase Lite collections.
 
@@ -9,7 +9,8 @@
 ## 🎯 Completed Phases
 
 **Phase 1** ✅ — CBL Schema & `cbl_store.py` Updates  
-**Phase 2** ✅ — Migration Logic (v1.x → v2.0)
+**Phase 2** ✅ — Migration Logic (v1.x → v2.0)  
+**Phase 3** ✅ — Wizard UI for Inputs Management
 
 **Related docs:**
 - [`DESIGN.md`](DESIGN.md) – Current v1.x pipeline architecture
@@ -1215,20 +1216,20 @@ Each phase is designed to be done in a **separate chat/thread**. Phases are orde
 - [x] Write integration test: start with v1.x config.json → verify v2.0 documents exist
 - [x] Update `migrate_files_to_cbl()` to handle the new document layout
 
-### Phase 3: Wizard UI – Inputs Management
+### Phase 3: Wizard UI – Inputs Management ✅
 
 **Goal:** Update `wizard.html` to manage the `inputs_changes` document.
 
-- [ ] Add "Inputs" tab/section to wizard
-- [ ] Form to add a new `_changes` source (source_type dropdown, host, db, scope, collection, auth, feed config)
-- [ ] List existing inputs with edit/delete
-- [ ] Save button calls `POST /api/inputs_changes` → `CBLStore.save_inputs_changes()`
-- [ ] Add REST endpoints:
+- [x] Add "Inputs" tab/section to wizard
+- [x] Form to add a new `_changes` source (source_type dropdown, host, db, scope, collection, auth, feed config)
+- [x] List existing inputs with edit/delete
+- [x] Save button calls `POST /api/inputs_changes` → `CBLStore.save_inputs_changes()`
+- [x] Add REST endpoints:
   - `GET /api/inputs_changes` — load inputs_changes document
   - `POST /api/inputs_changes` — save inputs_changes document
   - `PUT /api/inputs_changes/{id}` — update one `src[]` entry
   - `DELETE /api/inputs_changes/{id}` — remove one `src[]` entry
-- [ ] Validate each input entry on save (source_type, host required, auth fields)
+- [x] Validate each input entry on save (source_type, host required, auth fields)
 
 ### Phase 4: Wizard UI – Outputs Management
 

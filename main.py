@@ -39,6 +39,16 @@ from rest import (
     VALID_OUTPUT_FORMATS,
 )
 from rest.output_http import check_serialization_library
+from rest.api_v2 import (
+    api_get_inputs_changes,
+    api_post_inputs_changes,
+    api_put_inputs_changes_entry,
+    api_delete_inputs_changes_entry,
+    api_get_outputs,
+    api_post_outputs,
+    api_put_outputs_entry,
+    api_delete_outputs_entry,
+)
 from rest.changes_http import (
     ShutdownRequested,
     RetryableHTTP,
@@ -1252,6 +1262,17 @@ async def start_metrics_server(
     app.router.add_post("/_offline", _offline_handler)
     app.router.add_post("/_online", _online_handler)
     app.router.add_get("/_status", _status_handler)
+
+    # API v2.0 routes (inputs, outputs, jobs, sessions)
+    app.router.add_get("/api/inputs_changes", api_get_inputs_changes)
+    app.router.add_post("/api/inputs_changes", api_post_inputs_changes)
+    app.router.add_put("/api/inputs_changes/{id}", api_put_inputs_changes_entry)
+    app.router.add_delete("/api/inputs_changes/{id}", api_delete_inputs_changes_entry)
+
+    app.router.add_get("/api/outputs_{type}", api_get_outputs)
+    app.router.add_post("/api/outputs_{type}", api_post_outputs)
+    app.router.add_put("/api/outputs_{type}/{id}", api_put_outputs_entry)
+    app.router.add_delete("/api/outputs_{type}/{id}", api_delete_outputs_entry)
 
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()

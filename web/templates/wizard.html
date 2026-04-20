@@ -49,42 +49,56 @@
         </div>
       </div>
       <div class="grid grid-cols-2 gap-6 max-w-3xl mx-auto">
-        <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startSettingsWizard()">
-          <div class="card-body items-center text-center">
-            <span class="text-5xl mb-3">⚙️</span>
-            <h2 class="card-title text-lg">Settings</h2>
-            <p class="text-sm opacity-60">Optimize pipeline settings with guided questions</p>
-          </div>
-        </div>
-        <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startSourceWizard()">
-          <div class="card-body items-center text-center">
-            <span class="text-5xl mb-3">📡</span>
-            <h2 class="card-title text-lg">Data Source</h2>
-            <p class="text-sm opacity-60">Configure replication source system</p>
-          </div>
-        </div>
-        <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startRdbmsSchemaWizard()">
-          <div class="card-body items-center text-center">
-            <span class="text-5xl mb-3">🗄️</span>
-            <h2 class="card-title text-lg">RDBMS</h2>
-            <p class="text-sm opacity-60">Connect to database &amp; import schema</p>
-          </div>
-        </div>
-        <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startCloudStorageWizard()">
-          <div class="card-body items-center text-center">
-            <span class="text-5xl mb-3">☁️</span>
-            <h2 class="card-title text-lg">Cloud Storage</h2>
-            <p class="text-sm opacity-60">Configure attachments &amp; JSON archival strategies</p>
-          </div>
-        </div>
-        <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startMappingWizard()">
-          <div class="card-body items-center text-center">
-            <span class="text-5xl mb-3">🗂️</span>
-            <h2 class="card-title text-lg">Schema Mapping</h2>
-            <p class="text-sm opacity-60">Connect source, configure output, map fields</p>
-          </div>
-        </div>
-      </div>
+         <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startInputsWizard()">
+           <div class="card-body items-center text-center">
+             <span class="text-5xl mb-3">📥</span>
+             <h2 class="card-title text-lg">Inputs</h2>
+             <p class="text-sm opacity-60">Manage _changes feed sources (v2.0)</p>
+           </div>
+         </div>
+         <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startOutputsWizard()">
+           <div class="card-body items-center text-center">
+             <span class="text-5xl mb-3">📤</span>
+             <h2 class="card-title text-lg">Outputs</h2>
+             <p class="text-sm opacity-60">Manage output destinations (v2.0)</p>
+           </div>
+         </div>
+         <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startSettingsWizard()">
+           <div class="card-body items-center text-center">
+             <span class="text-5xl mb-3">⚙️</span>
+             <h2 class="card-title text-lg">Settings</h2>
+             <p class="text-sm opacity-60">Optimize pipeline settings with guided questions</p>
+           </div>
+         </div>
+         <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startSourceWizard()">
+           <div class="card-body items-center text-center">
+             <span class="text-5xl mb-3">📡</span>
+             <h2 class="card-title text-lg">Data Source</h2>
+             <p class="text-sm opacity-60">Configure replication source system</p>
+           </div>
+         </div>
+         <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startRdbmsSchemaWizard()">
+           <div class="card-body items-center text-center">
+             <span class="text-5xl mb-3">🗄️</span>
+             <h2 class="card-title text-lg">RDBMS</h2>
+             <p class="text-sm opacity-60">Connect to database &amp; import schema</p>
+           </div>
+         </div>
+         <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startCloudStorageWizard()">
+           <div class="card-body items-center text-center">
+             <span class="text-5xl mb-3">☁️</span>
+             <h2 class="card-title text-lg">Cloud Storage</h2>
+             <p class="text-sm opacity-60">Configure attachments &amp; JSON archival strategies</p>
+           </div>
+         </div>
+         <div class="card bg-base-100 shadow-sm rounded-2xl cursor-pointer hover:shadow-lg transition-shadow" onclick="startMappingWizard()">
+           <div class="card-body items-center text-center">
+             <span class="text-5xl mb-3">🗂️</span>
+             <h2 class="card-title text-lg">Schema Mapping</h2>
+             <p class="text-sm opacity-60">Connect source, configure output, map fields</p>
+           </div>
+         </div>
+       </div>
       </div>
 
     <!-- ═══════════════════════════════════════════════════════ -->
@@ -128,6 +142,120 @@
       <div id="swNav" class="flex justify-between mt-6">
          <button class="btn btn-ghost" id="swBtnPrev" onclick="swPrevQuestion()" disabled>← Back</button>
          <button class="btn btn-primary hidden" id="swBtnNext" onclick="swNextFromFollowup()">Next →</button>
+       </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- INPUTS WIZARD (v2.0)                                   -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <div id="inputsWizard" class="hidden max-w-5xl mx-auto">
+       <div class="flex items-center justify-between mb-4">
+         <button class="btn btn-ghost btn-sm" onclick="showWizardLanding()">← Back to Wizards</button>
+         <span class="text-sm opacity-60">Inputs Manager</span>
+       </div>
+
+       <!-- Existing Inputs -->
+       <div id="inputsExistingCard" class="card bg-base-100 shadow-sm rounded-2xl mb-6 border-l-4 border-success">
+         <div class="card-body">
+           <div class="flex items-center justify-between mb-3">
+             <h3 class="text-lg font-bold">📥 Saved Inputs</h3>
+             <span id="inputsCount" class="badge badge-success text-xs"></span>
+           </div>
+           <div class="overflow-x-auto">
+             <table class="table table-xs table-zebra w-full cursor-pointer">
+               <thead>
+                 <tr class="bg-base-200">
+                   <th class="text-xs font-semibold">Input ID</th>
+                   <th class="text-xs font-semibold">Name</th>
+                   <th class="text-xs font-semibold">Type</th>
+                   <th class="text-xs font-semibold">Host</th>
+                   <th class="text-xs font-semibold text-right">Actions</th>
+                 </tr>
+               </thead>
+               <tbody id="inputsTableBody"></tbody>
+             </table>
+           </div>
+           <div class="mt-3 flex gap-2">
+             <button class="btn btn-warning btn-xs" onclick="inputsClearAll()">Clear All</button>
+             <button class="btn btn-primary btn-xs" onclick="inputsAddNew()">+ New Input</button>
+           </div>
+         </div>
+       </div>
+
+       <!-- Add/Edit Form -->
+       <div id="inputsFormCard" class="hidden card bg-base-100 shadow-sm rounded-2xl mb-6">
+         <div class="card-body">
+           <h2 class="text-xl font-bold mb-4">Input Configuration</h2>
+           <div class="space-y-4">
+             <div class="grid grid-cols-2 gap-4">
+               <div>
+                 <label class="label"><span class="label-text font-semibold">Input ID</span></label>
+                 <input id="inputsId" type="text" class="input input-bordered w-full" placeholder="e.g. sg-us-prices" />
+               </div>
+               <div>
+                 <label class="label"><span class="label-text font-semibold">Name</span></label>
+                 <input id="inputsName" type="text" class="input input-bordered w-full" placeholder="Display name" />
+               </div>
+             </div>
+             
+             <div class="grid grid-cols-2 gap-4">
+               <div>
+                 <label class="label"><span class="label-text font-semibold">Source Type</span></label>
+                 <select id="inputsSourceType" class="select select-bordered w-full">
+                   <option value="">Choose type...</option>
+                   <option value="sync_gateway">Sync Gateway</option>
+                   <option value="app_services">App Services</option>
+                   <option value="edge_server">Edge Server</option>
+                   <option value="couchdb">CouchDB</option>
+                 </select>
+               </div>
+               <div>
+                 <label class="label"><span class="label-text font-semibold">Host</span></label>
+                 <input id="inputsHost" type="text" class="input input-bordered w-full" placeholder="http://localhost:4984" />
+               </div>
+             </div>
+
+             <div class="grid grid-cols-3 gap-4">
+               <div>
+                 <label class="label"><span class="label-text font-semibold">Database</span></label>
+                 <input id="inputsDatabase" type="text" class="input input-bordered w-full" placeholder="db name" />
+               </div>
+               <div>
+                 <label class="label"><span class="label-text font-semibold">Scope</span></label>
+                 <input id="inputsScope" type="text" class="input input-bordered w-full" placeholder="scope" />
+               </div>
+               <div>
+                 <label class="label"><span class="label-text font-semibold">Collection</span></label>
+                 <input id="inputsCollection" type="text" class="input input-bordered w-full" placeholder="collection" />
+               </div>
+             </div>
+
+             <div class="divider text-sm opacity-60">Authentication</div>
+             <div class="grid grid-cols-3 gap-4">
+               <div>
+                 <label class="label"><span class="label-text font-semibold">Auth Method</span></label>
+                 <select id="inputsAuthMethod" class="select select-bordered w-full">
+                   <option value="basic">Basic</option>
+                   <option value="bearer">Bearer Token</option>
+                   <option value="none">None</option>
+                 </select>
+               </div>
+               <div>
+                 <label class="label"><span class="label-text font-semibold">Username</span></label>
+                 <input id="inputsAuthUser" type="text" class="input input-bordered w-full" />
+               </div>
+               <div>
+                 <label class="label"><span class="label-text font-semibold">Password</span></label>
+                 <input id="inputsAuthPass" type="password" class="input input-bordered w-full" />
+               </div>
+             </div>
+
+             <div class="flex gap-2 mt-6">
+               <button class="btn btn-success" onclick="inputsSave()">Save Input</button>
+               <button class="btn btn-ghost" onclick="inputsCancel()">Cancel</button>
+             </div>
+           </div>
+         </div>
        </div>
       </div>
 
@@ -4088,6 +4216,181 @@ function showToast(message, type) {
   toast.innerHTML = '<span>' + message + '</span>';
   container.appendChild(toast);
   setTimeout(function() { toast.remove(); }, 3000);
+}
+
+// ── Inputs Wizard (v2.0) ────────────────────────────────────
+function startInputsWizard() {
+  wizardMode = 'inputs';
+  document.getElementById('wizardLanding').classList.add('hidden');
+  document.getElementById('inputsWizard').classList.remove('hidden');
+  inputsLoadExisting();
+}
+
+function inputsLoadExisting() {
+  fetch('/api/inputs_changes')
+    .then(r => r.json())
+    .then(doc => {
+      var src = doc.src || [];
+      document.getElementById('inputsCount').textContent = src.length;
+      var tbody = document.getElementById('inputsTableBody');
+      tbody.innerHTML = src.map(function(input) {
+        return '<tr><td>' + esc(input.id) + '</td><td>' + esc(input.name || '–') + '</td><td>' + 
+               esc(input.source_type || '–') + '</td><td>' + esc(input.host || '–') + '</td>' +
+               '<td class="text-right"><button class="btn btn-xs btn-ghost" onclick="inputsEdit(\'' + 
+               esc(input.id) + '\')">Edit</button> ' +
+               '<button class="btn btn-xs btn-ghost text-error" onclick="inputsDelete(\'' + 
+               esc(input.id) + '\')">Delete</button></td></tr>';
+      }).join('');
+    })
+    .catch(e => console.error('Error loading inputs', e));
+}
+
+function inputsAddNew() {
+  document.getElementById('inputsId').value = '';
+  document.getElementById('inputsName').value = '';
+  document.getElementById('inputsSourceType').value = '';
+  document.getElementById('inputsHost').value = '';
+  document.getElementById('inputsDatabase').value = '';
+  document.getElementById('inputsScope').value = '';
+  document.getElementById('inputsCollection').value = '';
+  document.getElementById('inputsAuthMethod').value = 'basic';
+  document.getElementById('inputsAuthUser').value = '';
+  document.getElementById('inputsAuthPass').value = '';
+  document.getElementById('inputsFormCard').classList.remove('hidden');
+}
+
+function inputsCancel() {
+  document.getElementById('inputsFormCard').classList.add('hidden');
+}
+
+function inputsEdit(inputId) {
+  fetch('/api/inputs_changes')
+    .then(r => r.json())
+    .then(doc => {
+      var src = (doc.src || []).find(s => s.id === inputId);
+      if (!src) return;
+      document.getElementById('inputsId').value = src.id || '';
+      document.getElementById('inputsName').value = src.name || '';
+      document.getElementById('inputsSourceType').value = src.source_type || '';
+      document.getElementById('inputsHost').value = src.host || '';
+      document.getElementById('inputsDatabase').value = src.database || '';
+      document.getElementById('inputsScope').value = src.scope || '';
+      document.getElementById('inputsCollection').value = src.collection || '';
+      var auth = src.auth || {};
+      document.getElementById('inputsAuthMethod').value = auth.method || 'basic';
+      document.getElementById('inputsAuthUser').value = auth.username || '';
+      document.getElementById('inputsAuthPass').value = auth.password || '';
+      document.getElementById('inputsFormCard').classList.remove('hidden');
+    });
+}
+
+function inputsSave() {
+  var id = document.getElementById('inputsId').value.trim();
+  var name = document.getElementById('inputsName').value.trim();
+  var sourceType = document.getElementById('inputsSourceType').value;
+  var host = document.getElementById('inputsHost').value.trim();
+  var database = document.getElementById('inputsDatabase').value.trim();
+  var scope = document.getElementById('inputsScope').value.trim();
+  var collection = document.getElementById('inputsCollection').value.trim();
+  
+  if (!id || !sourceType || !host) {
+    alert('ID, Source Type, and Host are required');
+    return;
+  }
+  
+  fetch('/api/inputs_changes')
+    .then(r => r.json())
+    .then(doc => {
+      var src = doc.src || [];
+      var idx = src.findIndex(s => s.id === id);
+      var newEntry = {
+        id: id,
+        name: name,
+        enabled: true,
+        source_type: sourceType,
+        host: host,
+        database: database,
+        scope: scope,
+        collection: collection,
+        auth: {
+          method: document.getElementById('inputsAuthMethod').value,
+          username: document.getElementById('inputsAuthUser').value,
+          password: document.getElementById('inputsAuthPass').value
+        },
+        changes_feed: {
+          feed_type: 'longpoll',
+          poll_interval_seconds: 10,
+          active_only: true,
+          include_docs: false
+        }
+      };
+      
+      if (idx >= 0) {
+        src[idx] = newEntry;
+      } else {
+        src.push(newEntry);
+      }
+      
+      return fetch('/api/inputs_changes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'inputs_changes', src: src })
+      });
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        alert('Error: ' + data.error);
+      } else {
+        alert('Input saved!');
+        inputsCancel();
+        inputsLoadExisting();
+      }
+    })
+    .catch(e => {
+      console.error('Error saving input', e);
+      alert('Error saving input: ' + e.message);
+    });
+}
+
+function inputsDelete(inputId) {
+  if (!confirm('Delete input "' + inputId + '"?')) return;
+  
+  fetch('/api/inputs_changes')
+    .then(r => r.json())
+    .then(doc => {
+      var src = (doc.src || []).filter(s => s.id !== inputId);
+      return fetch('/api/inputs_changes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'inputs_changes', src: src })
+      });
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        alert('Error: ' + data.error);
+      } else {
+        inputsLoadExisting();
+      }
+    })
+    .catch(e => console.error('Error deleting input', e));
+}
+
+function inputsClearAll() {
+  if (!confirm('Delete all inputs?')) return;
+  fetch('/api/inputs_changes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'inputs_changes', src: [] })
+  })
+    .then(r => r.json())
+    .then(() => inputsLoadExisting())
+    .catch(e => console.error('Error clearing inputs', e));
+}
+
+function startOutputsWizard() {
+  alert('Outputs Wizard — coming in Phase 4');
 }
 
 // ── Init ─────────────────────────────────────────────────────
