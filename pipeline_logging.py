@@ -373,7 +373,8 @@ def configure_logging(cfg: dict) -> None:
 
     # Stop any previous background listener before reconfiguring.
     if _queue_listener is not None:
-        _queue_listener.stop()
+        if getattr(_queue_listener, "_thread", None) is not None:
+            _queue_listener.stop()
         _queue_listener = None
 
     root = logging.getLogger()
@@ -497,5 +498,10 @@ def _start_queue_logging(
     root.addHandler(QueueHandler(log_queue))
     listener = QueueListener(log_queue, *handlers, respect_handler_level=True)
     listener.start()
-    atexit.register(listener.stop)
+
+    def _safe_stop(ref=listener):
+        if getattr(ref, "_thread", None) is not None:
+            ref.stop()
+
+    atexit.register(_safe_stop)
     return listener
