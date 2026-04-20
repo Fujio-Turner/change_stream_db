@@ -73,6 +73,12 @@ logger = logging.getLogger("changes_worker")
 
 _db = None  # module-level singleton
 
+# ── Config cache ──────────────────────────────────────────────
+_config_cache: dict | None = None
+_config_cache_ts: float = 0.0
+_CONFIG_CACHE_TTL: float = 2.0  # seconds
+_config_cache_lock = threading.Lock()
+
 
 def _db_file_path() -> str:
     """Return the expected database file path."""
@@ -125,7 +131,7 @@ def get_db():
 
 def close_db():
     """Close the singleton CBL database handle."""
-    global _db
+    global _db, _config_cache, _config_cache_ts
     if _db is not None:
         ic("close_db: closing", CBL_DB_NAME)
         t0 = time.monotonic()
@@ -141,6 +147,8 @@ def close_db():
             duration_ms=round(elapsed, 1),
         )
         _collections.clear()
+        _config_cache = None
+        _config_cache_ts = 0.0
         _db = None
 
 
@@ -537,51 +545,71 @@ class CBLStore:
 
     # ── Config ────────────────────────────────────────────────
 
-    def load_config(self) -> dict | None:
-        ic("load_config: entry")
-        t0 = time.monotonic()
-        doc = _coll_get_doc(self.db, COLL_CONFIG, "config")
-        elapsed = (time.monotonic() - t0) * 1000
-        if not doc:
+    def load_config(self, force: bool = False) -> dict | None:
+        global _config_cache, _config_cache_ts
+        now = time.monotonic()
+        if (
+            not force
+            and _config_cache is not None
+            and (now - _config_cache_ts) < _CONFIG_CACHE_TTL
+        ):
+            return _config_cache
+
+        with _config_cache_lock:
+            # Double-check after acquiring lock
+            now = time.monotonic()
+            if (
+                not force
+                and _config_cache is not None
+                and (now - _config_cache_ts) < _CONFIG_CACHE_TTL
+            ):
+                return _config_cache
+
+            t0 = time.monotonic()
+            doc = _coll_get_doc(self.db, COLL_CONFIG, "config")
+            elapsed = (time.monotonic() - t0) * 1000
+            if not doc:
+                log_event(
+                    logger,
+                    "warn",
+                    "CBL",
+                    "config document not found",
+                    operation="SELECT",
+                    doc_id="config",
+                    doc_type="config",
+                    duration_ms=round(elapsed, 1),
+                )
+                return None
+            raw = doc.properties.get("data")
+            if raw:
+                cfg = json.loads(raw)
+                log_event(
+                    logger,
+                    "debug",
+                    "CBL",
+                    "config loaded",
+                    operation="SELECT",
+                    doc_id="config",
+                    doc_type="config",
+                    duration_ms=round(elapsed, 1),
+                )
+                _config_cache = cfg
+                _config_cache_ts = time.monotonic()
+                return cfg
             log_event(
                 logger,
                 "warn",
                 "CBL",
-                "config document not found",
+                "config document has no data field",
                 operation="SELECT",
                 doc_id="config",
                 doc_type="config",
-                duration_ms=round(elapsed, 1),
+                error_detail="missing 'data' property",
             )
             return None
-        raw = doc.properties.get("data")
-        if raw:
-            cfg = json.loads(raw)
-            log_event(
-                logger,
-                "debug",
-                "CBL",
-                "config loaded",
-                operation="SELECT",
-                doc_id="config",
-                doc_type="config",
-                duration_ms=round(elapsed, 1),
-            )
-            return cfg
-        log_event(
-            logger,
-            "warn",
-            "CBL",
-            "config document has no data field",
-            operation="SELECT",
-            doc_id="config",
-            doc_type="config",
-            error_detail="missing 'data' property",
-        )
-        return None
 
     def save_config(self, cfg: dict) -> None:
-        ic("save_config: entry")
+        global _config_cache, _config_cache_ts
         t0 = time.monotonic()
         doc = _coll_get_mutable_doc(self.db, COLL_CONFIG, "config")
         if not doc:
@@ -591,6 +619,8 @@ class CBLStore:
         doc["schema_version"] = "2.0"
         doc["updated_at"] = int(time.time())
         _coll_save_doc(self.db, COLL_CONFIG, doc)
+        _config_cache = cfg
+        _config_cache_ts = time.monotonic()
         elapsed = (time.monotonic() - t0) * 1000
         log_event(
             logger,
@@ -750,7 +780,6 @@ class CBLStore:
 
     def load_checkpoint(self, uuid: str) -> dict | None:
         doc_id = f"checkpoint:{uuid}"
-        ic("load_checkpoint: entry", uuid, doc_id)
         t0 = time.monotonic()
         doc = _coll_get_doc(self.db, COLL_CHECKPOINTS, doc_id)
         elapsed = (time.monotonic() - t0) * 1000
@@ -2053,13 +2082,12 @@ class CBLStore:
 
     def list_jobs(self) -> list[dict]:
         """List all jobs with their IDs and types."""
-        ic("list_jobs: entry")
         t0 = time.monotonic()
         query = f"""
-            SELECT _id, type, id, state, created_at, updated_at
-            FROM {CBL_SCOPE_Q}.{COLL_JOBS}
-            WHERE type = 'job'
-            ORDER BY updated_at DESC
+            SELECT META(d).id AS doc_id, d.type, d.id, d.state, d.created_at, d.updated_at
+            FROM {CBL_SCOPE_Q}.{COLL_JOBS} AS d
+            WHERE d.type = 'job'
+            ORDER BY d.updated_at DESC
         """
         results = _run_n1ql(self.db, query)
         elapsed = (time.monotonic() - t0) * 1000
@@ -2067,7 +2095,7 @@ class CBLStore:
         for row in results:
             jobs.append(
                 {
-                    "doc_id": row.get("_id"),
+                    "doc_id": row.get("doc_id"),
                     "type": row.get("type"),
                     "id": row.get("id"),
                     "state": row.get("state", {}),
@@ -2125,7 +2153,6 @@ class CBLStore:
     def load_checkpoint(self, job_id: str) -> dict | None:
         """Load checkpoint for a specific job."""
         doc_id = f"checkpoint::{job_id}"
-        ic("load_checkpoint: entry", job_id, doc_id)
         t0 = time.monotonic()
         doc = _coll_get_doc(self.db, COLL_CHECKPOINTS, doc_id)
         elapsed = (time.monotonic() - t0) * 1000

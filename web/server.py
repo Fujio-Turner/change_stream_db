@@ -606,21 +606,29 @@ async def get_jobs_status(request):
 
         result_jobs = []
         for job in jobs:
-            job_id = job.get("_id", "").replace("job:", "")
+            job_id = (
+                (job.get("doc_id") or job.get("_id") or "")
+                .replace("job::", "")
+                .replace("job:", "")
+            )
 
             # Load checkpoint for this job
             checkpoint = store.load_checkpoint(job_id) or {}
 
             # Build status entry
+            state = job.get("state", {})
             status_entry = {
                 "job_id": job_id,
-                "name": job.get("name", job_id),
-                "enabled": job.get("enabled", True),
-                "status": "idle",  # Could be enhanced with runtime status
+                "name": (job.get("id") or job_id or "")
+                .replace("job::", "")
+                .replace("job:", "")
+                or job_id,
+                "enabled": state.get("enabled", True),
+                "status": state.get("status", "idle"),
                 "last_sync_time": checkpoint.get("updated_at")
                 or checkpoint.get("timestamp"),
                 "docs_processed": checkpoint.get("seq", 0),
-                "errors": 0,  # Could be populated from metrics
+                "errors": 0,
             }
             result_jobs.append(status_entry)
 
