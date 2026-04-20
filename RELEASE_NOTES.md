@@ -2,6 +2,89 @@
 
 ---
 
+## v2.0.0 — 2026-04-20
+
+### ⚠️ Breaking Changes
+
+- **Job-centric config model** — The monolithic `config.json` is replaced by a composable document model stored in Couchbase Lite collections. Inputs, outputs, and jobs are now separate, reusable entities. A v1.x → v2.0 migration runs automatically on first startup.
+
+- **CBL schema redesign** — 15 collections in the `changes-worker` scope organized by concern: `inputs_changes`, `outputs_rdbms`, `outputs_http`, `outputs_cloud`, `outputs_stdout`, `jobs`, `checkpoints`, `dlq`, `data_quality`, `enrichments`, `config`, plus future-reserved `users`, `sessions`, `audit_log`, `notifications`.
+
+- **`cbl_store.py` API overhaul** — New CRUD methods for inputs, outputs (by type), and jobs. Legacy single-document methods still work for migration but are deprecated.
+
+- **Settings page slimmed** — Settings UI now only shows infrastructure config (logging, metrics, admin_ui, CBL, shutdown). Pipeline configuration has moved to the Wizard.
+
+### New Features
+
+- **Multi-job pipeline architecture** — Run multiple independent `_changes` feed pipelines concurrently. Each job connects one input to one output with its own schema mapping, checkpoint, and lifecycle.
+
+- **`PipelineManager`** (`pipeline_manager.py`) — Orchestrates all job threads. Loads enabled jobs from CBL at startup, enforces global `max_threads`, monitors threads for crashes with exponential-backoff restart, and provides graceful shutdown (drain → checkpoint → close).
+
+- **`Pipeline`** (`pipeline.py`) — Per-job thread wrapper with isolated `asyncio.run()` event loop, dedicated HTTP session, checkpoint state, output forwarder, and `ThreadPoolExecutor` for async middleware.
+
+- **Job control REST API** — 7 new endpoints for programmatic job management:
+  - `POST /api/jobs/{id}/start` — Start a single job
+  - `POST /api/jobs/{id}/stop` — Graceful stop
+  - `POST /api/jobs/{id}/restart` — Stop + start
+  - `GET /api/jobs/{id}/state` — Job status, uptime, error count
+  - `POST /api/_restart` — Restart all jobs
+  - `POST /api/_offline` — Stop all jobs (keep config)
+  - `POST /api/_online` — Resume all jobs after offline
+
+- **Inputs management API** (`rest/api_v2.py`) — CRUD endpoints for `_changes` feed source definitions (`GET/POST /api/inputs_changes`, `PUT/DELETE /api/inputs_changes/{id}`).
+
+- **Outputs management API** (`rest/api_v2.py`) — CRUD endpoints for each output type: `outputs_rdbms`, `outputs_http`, `outputs_cloud`, `outputs_stdout`.
+
+- **Jobs management API** (`rest/api_v2.py`) — Full CRUD for job documents (`GET/POST /api/jobs`, `GET/PUT/DELETE /api/jobs/{id}`). Each job references an input ID, output ID + type, and embeds its schema mapping.
+
+- **v1.x → v2.0 migration** — Automatic one-time migration converts legacy `config.json` into the new document model: creates input entries, output entries, a default job, and preserves the checkpoint.
+
+- **Multi-job dashboard** — Dashboard redesigned with per-job status table showing status indicator dots (green/yellow/red/gray), uptime, docs in/out, errors, checkpoint seq, and action buttons (start/stop/restart/kill/edit).
+
+- **Job filtering across UI** — Logs page and DLQ page now include a job filter dropdown populated from `/api/jobs`, allowing per-job log/DLQ views.
+
+- **Wizard overhaul** — Setup wizard updated for the new document model, creating inputs and outputs as reusable entities that can be composed into jobs.
+
+- **Help page** (`web/templates/help.html`) — New help/documentation page in the admin UI.
+
+### Changes
+
+- **Version bump** — All version references updated from v1.7.0 to v2.0.0.
+
+### New Files
+
+- `pipeline.py` — Per-job pipeline thread wrapper
+- `pipeline_manager.py` — Multi-job thread orchestrator
+- `rest/api_v2.py` — v2.0 REST API for inputs, outputs, and jobs CRUD
+- `rest/api_v2_jobs_control.py` — REST endpoints for job lifecycle control
+- `web/server.py` — Web server module
+- `web/templates/help.html` — Help page
+- `tests/test_api_v2_inputs.py` — Input API tests
+- `tests/test_api_v2_outputs.py` — Output API tests
+- `tests/test_api_v2_jobs.py` — Jobs API tests
+- `tests/test_cbl_store_v2.py` — CBL store v2 schema tests
+- `tests/test_migration_v1_to_v2.py` — Migration tests
+- `tests/test_phase_6_job_based_startup.py` — Job-based startup tests
+- `tests/test_phase_7_config_cleanup.py` — Config cleanup tests
+- `tests/test_phase_8_dashboard.py` — Dashboard tests
+- `tests/test_phase_10_threading.py` — Multi-job threading tests
+- `docs/DESIGN_2_0.md` — v2.0 architecture design document
+- `docs/UI_JOBS_MANAGEMENT.md` — Multi-job UI management design
+- `docs/JOBS.md` — Job document model reference
+
+### ⚠️ Rollback Notes
+
+Rolling back to v1.7.0 is safe — the v1.x `config.json` is not modified during migration. However, any jobs created in the v2.0 CBL schema will not be visible to v1.x. Checkpoints created by v2.0 jobs use `checkpoint::{job_uuid}` keys which v1.x will ignore (it will resume from its own checkpoint).
+
+### Documentation
+
+- `docs/DESIGN_2_0.md` — Full architecture redesign document with all 12 phases
+- `docs/UI_JOBS_MANAGEMENT.md` — Multi-job UI management design
+- `docs/JOBS.md` — Job document model and lifecycle
+- `UPDATE_SUMMARY.md` — HTML update summary for v2.0 UI changes
+
+---
+
 ## v1.7.0 — 2026-04-19
 
 ### New Features

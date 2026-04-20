@@ -55,13 +55,14 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov pytest-timeout
 
       - name: Syntax check all Python files
         run: python -m compileall -q . -x '(__pycache__|\.git|web/static)'
 
       - name: Run tests with coverage
-        run: pytest tests/ -v --tb=short --cov=. --cov-report=xml
+        timeout-minutes: 5
+        run: pytest tests/ -v --tb=short --cov=. --cov-report=xml --timeout=30
 
       - name: Upload coverage
         if: matrix.python-version == '3.12'
