@@ -219,3 +219,158 @@ def _parse_seq_number(seq) -> int:
 | 5 | Pre-compile `_parse_seq_number` regex | rest/changes_http.py | 🟡 Medium — zero regex compilation overhead |
 
 All 775 tests pass. Changes are backward-compatible.
+
+---
+
+# Round 3 — Stream Buffering, Single-Doc Fetch, orjson & Output Backpressure
+
+> Optimizations targeting the hot path: doc fetching, stream processing, JSON parsing, and output throttling.
+
+---
+
+## Optimization #6: Single-Doc `_bulk_get` Skip
+
+**File:** `rest/changes_http.py` (`fetch_docs`, line ~317)
+**Impact:** 🔴 High — Eliminates unnecessary `POST _bulk_get` for single-document batches
+
+### Problem
+When only 1 document needs fetching (common in continuous/websocket real-time mode), the worker was still issuing a `POST _bulk_get` request — a multi-document API designed for batch operations. The overhead of constructing the bulk request body, parsing the response envelope, and handling the multi-doc response format is wasted on a single document.
+
+### Change
+```python
+elif len(batch) == 1:
+    row = batch[0]
+    doc_id = row["id"]
+    rev = row["changes"][0]["rev"] if row.get("changes") else ""
+    doc = await _fetch_single_doc_with_retry(
+        http, base_url, doc_id, rev, auth, headers, metrics=metrics
+    )
+    results = [doc] if doc is not None else []
+```
+
+### Result
+- Single-doc fetches use `GET /{keyspace}/{doc_id}?rev={rev}` — simpler request, smaller response
+- Includes exponential backoff retry (up to 5 attempts)
+- Falls through to `_bulk_get` only when batch has 2+ documents
+- Particularly impactful during steady-state streaming when changes arrive one at a time
+
+---
+
+## Optimization #7: WebSocket Stream Buffering
+
+**File:** `rest/changes_http.py` (`_consume_websocket_stream`)
+**Impact:** 🔴 High — Reduces per-message processing overhead and enables batch doc fetches
+
+### Problem
+WebSocket mode processed each incoming message immediately — one change at a time. During catch-up or bursts, this meant:
+- 100 individual `_bulk_get` calls (or 100 individual GETs) instead of 1 batched request
+- 100 individual checkpoint saves instead of 1
+- 100 individual output forwards instead of batched processing
+
+The continuous stream mode already had buffering (collecting rows until `get_batch_number` or `stream_batch_timeout_ms`), but WebSocket did not.
+
+### Change
+Added identical buffering to `_consume_websocket_stream`:
+- Buffer collects incoming change rows
+- Flushes when `get_batch_number` rows accumulate (default 100) **or** `stream_batch_timeout_ms` elapses (default 100ms)
+- Uses the same `_flush_buffer` → `_process_changes_batch` → `_maybe_backpressure` pipeline as continuous mode
+- Buffer is flushed on `last_seq`, connection close, or error (no data loss)
+
+### Result
+- **Before:** 100 individual messages → 100 `_bulk_get` calls + 100 checkpoint saves
+- **After:** 100 messages buffered → 1 `_bulk_get` call + 1 checkpoint save
+- Matches continuous mode's performance characteristics
+- `stream_batch_timeout_ms` (default 100ms) ensures low latency even during quiet periods
+
+---
+
+## Optimization #8: orjson for Hot-Path JSON Parsing
+
+**File:** `rest/changes_http.py`, `rest/attachments.py`
+**Impact:** 🟡 Medium — 3–10× faster JSON deserialization on the critical path
+
+### Problem
+The worker parses JSON on every hot-path operation:
+- `_changes` response body (can be megabytes with thousands of rows)
+- `_bulk_get` response parsing (multi-document responses)
+- Individual doc fetches (`GET` responses)
+- Continuous/WebSocket stream lines (one JSON parse per row)
+
+Python's built-in `json.loads` is implemented in C but is still significantly slower than alternatives for large payloads.
+
+### Change
+```python
+try:
+    import orjson
+    _json_loads = orjson.loads
+except ImportError:
+    _json_loads = json.loads
+```
+
+[orjson](https://github.com/ijl/orjson) is a Rust-based JSON library:
+- **Deserialization:** 3–10× faster than `json.loads` depending on payload structure
+- **Memory:** Lower peak memory for large documents (no intermediate Python string)
+- **Compatibility:** Drop-in replacement for `json.loads` — accepts `bytes`, `str`, `bytearray`
+
+### Result
+- Automatic: uses orjson when installed, falls back to stdlib `json` transparently
+- Biggest impact on large `_changes` responses (initial sync) and high-throughput streaming
+- Listed in `requirements.txt` — always available in Docker builds
+
+---
+
+## Optimization #9: Output Backpressure Monitoring
+
+**File:** `rest/changes_http.py` (`_maybe_backpressure`)
+**Impact:** 🔴 High — Prevents overwhelming a struggling output endpoint
+
+### Problem
+When the output endpoint (database, REST API) slows down due to load, the worker continues sending requests at full speed. This can:
+- Compound the output's performance problems (more connections, more load)
+- Trigger cascading failures if the output has connection limits
+- Waste retries and DLQ writes that would succeed if the worker slowed down
+
+### Change
+Adaptive backpressure based on output response time:
+
+```python
+async def _maybe_backpressure(metrics, shutdown_event,
+                               backpressure_threshold=2.0, max_delay=5.0):
+    avg = metrics.get_output_latency_avg()
+    baseline = metrics._backpressure_baseline  # set after first 50 samples
+    ratio = avg / baseline
+    if ratio >= backpressure_threshold:
+        delay = min((ratio - 1.0) * baseline, max_delay)
+        await _sleep_or_shutdown(delay, shutdown_event)
+```
+
+### How it works
+1. First 50 output requests establish a baseline average latency
+2. Rolling average is compared: if `avg / baseline ≥ 2.0×`, throttle
+3. Delay is proportional: `(ratio - 1) × baseline`, capped at 5 seconds
+4. Automatically recovers when latency returns to normal
+
+### Prometheus Metrics
+| Metric | Type | Description |
+|---|---|---|
+| `backpressure_delays_total` | counter | Times backpressure throttled |
+| `backpressure_delay_seconds_total` | counter | Cumulative delay seconds |
+| `backpressure_active` | gauge | 1 when throttling, 0 when normal |
+
+### Result
+- Output endpoint gets breathing room during spikes
+- No manual configuration needed — fully adaptive
+- Integrates with Grafana: alert on `backpressure_active == 1`
+
+---
+
+## Round 3 Summary
+
+| # | Optimization | File | Impact |
+|---|---|---|---|
+| 6 | Single-doc `_bulk_get` skip | rest/changes_http.py | 🔴 High — skip bulk API for 1-doc batches |
+| 7 | WebSocket stream buffering | rest/changes_http.py | 🔴 High — batch messages like continuous mode |
+| 8 | orjson hot-path JSON parsing | rest/changes_http.py, rest/attachments.py | 🟡 Medium — 3–10× faster deserialization |
+| 9 | Output backpressure monitoring | rest/changes_http.py | 🔴 High — adaptive throttling prevents cascading failures |
+
+All changes are backward-compatible. Stream buffering and backpressure are automatic with no configuration required (defaults: `stream_batch_timeout_ms=100`, `backpressure_threshold=2.0×`, `max_delay=5s`).

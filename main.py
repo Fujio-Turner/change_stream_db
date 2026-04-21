@@ -77,6 +77,8 @@ from rest.changes_http import (
     _replay_dead_letter_queue,
     _sleep_or_shutdown,
     _chunked,
+    _json_loads,
+    _maybe_backpressure,
 )
 from rest import determine_method  # re-export for backward compat
 from cbl_store import (
@@ -1256,42 +1258,31 @@ async def _metrics_handler(request: aiohttp.web.Request) -> aiohttp.web.Response
 
 
 async def _restart_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
-    """POST /_restart — signal the changes feed to restart with fresh config."""
-    restart_event: asyncio.Event | None = request.app.get("restart_event")
-    if restart_event is None:
+    """POST /_restart — restart all jobs via PipelineManager."""
+    manager: PipelineManager | None = request.app.get("pipeline_manager")
+    if manager is None:
         return aiohttp.web.json_response({"error": "restart not supported"}, status=500)
-    # If offline, clear the offline flag so the restart loop resumes
-    offline_event: asyncio.Event | None = request.app.get("offline_event")
-    if offline_event is not None and offline_event.is_set():
-        offline_event.clear()
     log_event(logger, "info", "CONTROL", "restart requested via /_restart endpoint")
-    restart_event.set()
-    return aiohttp.web.json_response({"ok": True, "message": "restart signal sent"})
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, manager.restart_all)
+    states = await loop.run_in_executor(None, manager.list_job_states)
+    return aiohttp.web.json_response(
+        {"ok": True, "message": "restart signal sent", "jobs": states}
+    )
 
 
 async def _shutdown_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
-    """POST /_shutdown — graceful shutdown: stop feed, wait for in-flight
-    processing and outputs to finish, then respond.
+    """POST /_shutdown — graceful shutdown via PipelineManager.
 
-    CBL database close is handled by main()'s finally block after the
-    event loop finishes, ensuring all async generators (which may write
-    DLQ entries) complete before the database is closed.
-
-    Behaviour:
-      1. Set shutdown_event → _changes loops stop, RetryableHTTP aborts retries.
-      2. Wait up to ``drain_timeout_seconds`` for active tasks to finish.
-         - If tasks drain in time → checkpoint was NOT advanced past pending
-           work, so nothing is lost.
-         - If drain times out → remaining docs could not be delivered.
-           * If ``dlq_inflight_on_shutdown`` is true the batch handler already
-             wrote them to the dead-letter queue (CBL or .jsonl) so they can
-             be reprocessed later even if a newer revision arrives on the feed.
-           * If false the checkpoint was held back; the same docs will be
-             re-fetched on the next startup.
-      3. Return summary JSON.
+    Triggers PipelineManager.trigger_shutdown() which stops all job
+    pipelines, then schedules the main event loop to stop so the
+    process exits cleanly (CBL close, metrics cleanup, etc. happen
+    in main()'s finally block).
     """
-    shutdown_event: asyncio.Event | None = request.app.get("shutdown_event")
-    if shutdown_event is None:
+    manager: PipelineManager | None = request.app.get("pipeline_manager")
+    main_loop = request.app.get("main_loop")
+
+    if manager is None:
         return aiohttp.web.json_response(
             {"error": "shutdown not supported"}, status=500
         )
@@ -1300,104 +1291,53 @@ async def _shutdown_handler(request: aiohttp.web.Request) -> aiohttp.web.Respons
         logger, "info", "CONTROL", "graceful shutdown requested via /_shutdown endpoint"
     )
 
-    # Read shutdown config from the app (set by start_metrics_server)
-    shutdown_cfg: dict = request.app.get("shutdown_cfg", {})
-    drain_timeout = shutdown_cfg.get("drain_timeout_seconds", 60)
-    dlq_policy = shutdown_cfg.get("dlq_inflight_on_shutdown", False)
+    manager.trigger_shutdown()
 
-    # 1. Signal the _changes feed loops & retry loops to stop
-    shutdown_event.set()
+    # Schedule the main event loop to stop shortly after the response is sent
+    # so that main()'s finally block can do orderly cleanup.
+    if main_loop is not None:
+        threading.Timer(
+            0.2, lambda: main_loop.call_soon_threadsafe(main_loop.stop)
+        ).start()
 
-    # 2. Wait for all in-flight processing / output tasks to drain
-    metrics: MetricsCollector | None = request.app.get("metrics")
-    drained = True
-    tasks_remaining = 0
-    if metrics is not None:
-        t0 = time.monotonic()
-        while metrics.active_tasks > 0:
-            elapsed = time.monotonic() - t0
-            if elapsed > drain_timeout:
-                tasks_remaining = metrics.active_tasks
-                drained = False
-                log_event(
-                    logger,
-                    "warn",
-                    "CONTROL",
-                    "shutdown drain timed out after %ds with %d tasks still active"
-                    % (drain_timeout, tasks_remaining),
-                )
-                break
-            log_event(
-                logger,
-                "debug",
-                "CONTROL",
-                "waiting for %d active tasks to finish" % metrics.active_tasks,
-            )
-            await asyncio.sleep(0.5)
-        if drained:
-            log_event(logger, "info", "CONTROL", "all active tasks drained")
-
-    # 3. Build response summary
-    summary: dict = {
-        "ok": True,
-        "drained": drained,
-        "drain_timeout_seconds": drain_timeout,
-        "dlq_inflight_on_shutdown": dlq_policy,
-    }
-    if not drained:
-        summary["tasks_remaining"] = tasks_remaining
-        if dlq_policy:
-            summary["message"] = (
-                "shutdown complete – drain timed out, %d in-flight docs written to dead-letter queue, "
-                "checkpoint was NOT advanced past them" % tasks_remaining
-            )
-        else:
-            summary["message"] = (
-                "shutdown complete – drain timed out, %d in-flight docs NOT delivered, "
-                "checkpoint was NOT advanced – they will be re-fetched on next startup"
-                % tasks_remaining
-            )
-    else:
-        summary["message"] = (
-            "shutdown complete – feeds stopped, outputs drained, database closed"
-        )
-
-    log_event(
-        logger, "info", "CONTROL", "graceful shutdown complete: %s" % summary["message"]
+    return aiohttp.web.json_response(
+        {"ok": True, "message": "shutdown initiated"},
     )
-    return aiohttp.web.json_response(summary)
 
 
 async def _offline_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
-    """POST /_offline — pause the changes feed. Worker stays alive."""
-    offline_event: asyncio.Event | None = request.app.get("offline_event")
-    restart_event: asyncio.Event | None = request.app.get("restart_event")
-    if offline_event is None or restart_event is None:
+    """POST /_offline — pause all jobs. Worker stays alive."""
+    manager: PipelineManager | None = request.app.get("pipeline_manager")
+    if manager is None:
         return aiohttp.web.json_response({"error": "offline not supported"}, status=500)
-    if offline_event.is_set():
+    if manager.is_offline():
         return aiohttp.web.json_response({"ok": True, "message": "already offline"})
     log_event(logger, "info", "CONTROL", "offline requested via /_offline endpoint")
-    offline_event.set()
-    restart_event.set()  # break the current feed loop
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, manager.go_offline)
     return aiohttp.web.json_response({"ok": True, "message": "going offline"})
 
 
 async def _online_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
-    """POST /_online — resume the changes feed with current config."""
-    offline_event: asyncio.Event | None = request.app.get("offline_event")
-    if offline_event is None:
+    """POST /_online — resume all enabled jobs."""
+    manager: PipelineManager | None = request.app.get("pipeline_manager")
+    if manager is None:
         return aiohttp.web.json_response({"error": "online not supported"}, status=500)
-    if not offline_event.is_set():
+    if not manager.is_offline():
         return aiohttp.web.json_response({"ok": True, "message": "already online"})
     log_event(logger, "info", "CONTROL", "online requested via /_online endpoint")
-    offline_event.clear()
-    return aiohttp.web.json_response({"ok": True, "message": "going online"})
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, manager.go_online)
+    states = await loop.run_in_executor(None, manager.list_job_states)
+    return aiohttp.web.json_response(
+        {"ok": True, "message": "going online", "jobs": states}
+    )
 
 
 async def _status_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
     """GET /_status — return worker online/offline state."""
-    offline_event: asyncio.Event | None = request.app.get("offline_event")
-    is_offline = offline_event.is_set() if offline_event is not None else False
+    manager: PipelineManager | None = request.app.get("pipeline_manager")
+    is_offline = manager.is_offline() if manager is not None else False
     return aiohttp.web.json_response({"online": not is_offline})
 
 
@@ -2761,7 +2701,7 @@ async def poll_changes(
                         timeout=changes_http_timeout,
                     )
                     raw_body = await resp.read()
-                    body = json.loads(raw_body)
+                    body = _json_loads(raw_body)
                     if metrics:
                         metrics.inc("bytes_received_total", len(raw_body))
                         metrics.record_changes_request_time(
@@ -2804,6 +2744,9 @@ async def poll_changes(
                         feed_cfg.get("poll_interval_seconds", 10), stop_event
                     )
                     continue
+
+                # ── Output backpressure check ─────────────────────────
+                await _maybe_backpressure(metrics, stop_event)
 
                 # Check if optimized initial sync reached its target
                 reached_poll_target = (
@@ -3149,6 +3092,8 @@ def main() -> None:
             metrics_port = metrics_cfg.get("port", 9090)
 
             def _register_extra_routes(app: aiohttp.web.Application) -> None:
+                app["pipeline_manager"] = pipeline_manager
+                app["main_loop"] = loop
                 register_job_control_routes(app, pipeline_manager)
                 log_event(
                     logger,

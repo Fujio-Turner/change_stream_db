@@ -58,6 +58,7 @@ class PipelineManager:
         # Graceful shutdown signal
         self._shutdown_event = threading.Event()
         self._running = False
+        self._offline = False
 
         # Monitor thread for crash recovery
         self._monitor_thread: Optional[threading.Thread] = None
@@ -153,6 +154,7 @@ class PipelineManager:
         )
 
         self._running = False
+        self._shutdown_event.set()  # unblock start() if still waiting
 
         with self._lock:
             # Stop all pipelines
@@ -327,6 +329,76 @@ class PipelineManager:
 
         return states
 
+    def is_offline(self) -> bool:
+        """Return True if the manager is in offline (paused) mode."""
+        with self._lock:
+            return self._offline
+
+    def go_offline(self, timeout_seconds: float = 30) -> None:
+        """Pause all jobs. Manager stays alive and can be brought back online."""
+        log_event(
+            self.logger,
+            "info",
+            "OFFLINE",
+            "going offline — stopping all jobs",
+        )
+        with self._lock:
+            self._offline = True
+            job_ids = list(self._pipelines.keys())
+
+        for job_id in job_ids:
+            try:
+                self.stop_job(job_id, timeout_seconds=timeout_seconds)
+            except Exception as e:
+                log_event(
+                    self.logger,
+                    "error",
+                    "CHANGES",
+                    f"Error stopping job during offline: {e}",
+                    job_id=job_id,
+                )
+
+        log_event(self.logger, "info", "OFFLINE", "all jobs stopped — offline")
+
+    def go_online(self) -> None:
+        """Resume all enabled jobs after an offline pause."""
+        log_event(
+            self.logger,
+            "info",
+            "ONLINE",
+            "going online — starting enabled jobs",
+        )
+        with self._lock:
+            self._offline = False
+
+        jobs = self._load_enabled_jobs()
+        for job_doc in jobs:
+            job_id = (
+                job_doc.get("doc_id")
+                or job_doc.get("_id")
+                or job_doc.get("id")
+                or "unknown"
+            )
+            if job_id != "unknown" and not job_id.startswith("job::"):
+                job_id = f"job::{job_id}"
+            try:
+                self.start_job(job_id)
+            except Exception as e:
+                log_event(
+                    self.logger,
+                    "error",
+                    "CHANGES",
+                    f"Error starting job during online: {e}",
+                    job_id=job_id,
+                )
+
+        log_event(
+            self.logger,
+            "info",
+            "ONLINE",
+            f"online — {len(self._pipelines)} jobs running",
+        )
+
     def trigger_shutdown(self) -> None:
         """Trigger graceful shutdown (called by signal handler)."""
         log_event(
@@ -404,6 +476,10 @@ class PipelineManager:
         while self._running:
             try:
                 time.sleep(5)  # Check every 5 seconds
+
+                # Don't auto-restart jobs while offline
+                if self.is_offline():
+                    continue
 
                 with self._lock:
                     job_ids = list(self._pipelines.keys())

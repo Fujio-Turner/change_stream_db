@@ -346,6 +346,22 @@ In continuous and websocket modes the worker uses a two-phase approach:
 The catch-up phase re-uses the same chunked logic as the initial sync
 but with the user's `active_only` and `include_docs` settings.
 
+### Stream Buffering (Continuous & WebSocket)
+
+Both continuous and websocket streams use identical buffering logic.
+Incoming change rows are collected in a buffer and flushed when either
+condition is met:
+
+- **Batch size reached:** `get_batch_number` docs accumulate (default 100)
+- **Timeout elapsed:** `stream_batch_timeout_ms` elapses (default 100ms)
+
+This means individual change events — including single-doc websocket
+messages — are batched together for more efficient `_bulk_get` calls.
+
+> **History:** Previously, websocket mode processed each message
+> individually with no buffering, which caused excessive single-doc
+> fetches.  The unified buffering strategy eliminates this inefficiency.
+
 ---
 
 ## Document Fetching
@@ -358,6 +374,10 @@ worker must fetch full document bodies separately.
 - Eligible change rows are grouped into batches of `get_batch_number`
   (default 100).
 - Each batch is sent as a `POST _bulk_get` request.
+- **Single-doc optimization:** When a batch contains only one document,
+  the worker skips `_bulk_get` entirely and fetches the document directly
+  via `GET /{keyspace}/{doc_id}?rev={rev}`.  This avoids the overhead of
+  a `POST _bulk_get` request for a single document.
 - If the response is missing documents, the worker falls back to
   individual `GET` requests for the missing IDs.
 
@@ -443,7 +463,8 @@ two risks:
 |---|---|
 | **`throttle_feed`** (default 5,000) | Caps each `_changes` request to N rows.  The worker loops immediately for the next bite, so throughput stays high but memory per batch is bounded. |
 | **`continuous_catchup_limit`** (default 5,000) | Same cap for the catch-up phase of continuous/websocket mode. |
-| **Continuous mode streaming** | In Phase 2, changes are processed one-at-a-time from the HTTP stream.  TCP backpressure naturally slows the server.  Memory stays flat regardless of flood size. |
+| **Continuous mode buffered streaming** | In Phase 2, incoming changes are collected in a buffer and flushed when `get_batch_number` docs accumulate or `stream_batch_timeout_ms` elapses.  TCP backpressure naturally slows the server.  Memory stays flat regardless of flood size. |
+| **WebSocket mode buffered streaming** | Same buffering as continuous mode.  Incoming websocket messages are batched together before processing, preventing excessive single-doc fetches. |
 | **`every_n_docs` + `sequential`** | Sub-batch checkpointing limits replay on crash (e.g., `every_n_docs: 1000` means at most 1,000 docs replayed). |
 | **Checkpoint hold** | The checkpoint only advances after a batch is fully processed.  If the worker crashes or OOMs, it restarts from `since=<last_saved_seq>` — no data is lost. |
 
@@ -463,6 +484,35 @@ warning log:
 
 ```
 WARN  FLOOD  flood detected: 150000 changes in single batch (threshold=10000)
+```
+
+### Output Backpressure
+
+The `_maybe_backpressure()` mechanism monitors output endpoint latency to
+prevent overwhelming a struggling downstream service.
+
+**How it works:**
+
+1. The first **50 samples** of output response times establish a baseline
+   average.
+2. After the baseline is established, a rolling average of recent response
+   times is compared against the baseline.
+3. If the rolling average exceeds **2× the baseline**, the worker sleeps
+   proportionally to allow the output endpoint to recover (up to **5 seconds
+   max**).
+
+**Prometheus metrics:**
+
+| Metric (prefixed `changes_worker_`) | Type | Description |
+|---|---|---|
+| `backpressure_delays_total` | counter | Total number of backpressure delay events |
+| `backpressure_delay_seconds_total` | counter | Cumulative seconds spent in backpressure delays |
+| `backpressure_active` | gauge | `1` when the worker is actively throttling, `0` otherwise |
+
+**Log key:** `BACKPRESSURE`
+
+```
+WARN  BACKPRESSURE  output latency 2.3x baseline (460ms vs 200ms) – delaying 230ms
 ```
 
 ### Recommended Configuration
@@ -522,6 +572,7 @@ The following `config.json` fields control `_changes` processing:
     "http_timeout_seconds": 300,
     "throttle_feed": 5000,
     "flood_threshold": 10000,
+    "stream_batch_timeout_ms": 100,
     "channels": []
   },
   "processing": {
@@ -547,6 +598,7 @@ The following `config.json` fields control `_changes` processing:
 | `get_batch_number` | Batch size for `_bulk_get` requests (default 100) |
 | `active_only` | Forced to `true` during initial sync (Couchbase); ignored for CouchDB |
 | `flood_threshold` | Batch size above which a FLOOD warning is logged and `flood_batches_total` metric is incremented (default 10,000) |
+| `stream_batch_timeout_ms` | How long the stream buffer waits before flushing a partial batch in continuous/websocket mode (default 100ms) |
 | `include_docs` | Forced to `false` during initial sync |
 | `feed_type` | Overridden to `normal` during initial sync |
 

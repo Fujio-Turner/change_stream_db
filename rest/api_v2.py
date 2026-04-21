@@ -390,6 +390,11 @@ async def api_post_jobs(request: web.Request) -> web.Response:
         # Generate job ID
         job_id = str(uuid.uuid4())
 
+        # Merge changes_feed settings into the input entry
+        if "changes_feed" in data:
+            input_entry["changes_feed"] = input_entry.get("changes_feed", {})
+            input_entry["changes_feed"].update(data["changes_feed"])
+
         # Build job document
         job_doc = {
             "type": "job",
@@ -458,6 +463,11 @@ async def api_put_job(request: web.Request) -> web.Response:
             job["mapping"] = data["mapping"]
         if "state" in data:
             job["state"] = data["state"]
+        if "changes_feed" in data:
+            inputs = job.get("inputs", [])
+            if inputs:
+                inputs[0]["changes_feed"] = inputs[0].get("changes_feed", {})
+                inputs[0]["changes_feed"].update(data["changes_feed"])
 
         # Save
         store.save_job(job_id, job)

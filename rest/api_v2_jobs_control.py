@@ -217,9 +217,14 @@ async def api_offline_all(
     request: aiohttp.web.Request,
     manager: PipelineManager,
 ) -> aiohttp.web.Response:
-    """POST /api/_offline — Stop all jobs (offline mode)."""
+    """POST /api/_offline — Pause all jobs (offline mode). Manager stays alive."""
+    if manager.is_offline():
+        return aiohttp.web.json_response(
+            {"status": "already_offline"},
+            status=200,
+        )
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, manager.stop)
+    await loop.run_in_executor(None, manager.go_offline)
     return aiohttp.web.json_response(
         {"status": "offline"},
         status=200,
@@ -230,10 +235,16 @@ async def api_online_all(
     request: aiohttp.web.Request,
     manager: PipelineManager,
 ) -> aiohttp.web.Response:
-    """POST /api/_online — Start all jobs (online mode)."""
-    # This would need to be integrated with the main startup flow
-    # For now, just return success
+    """POST /api/_online — Resume all enabled jobs (online mode)."""
+    if not manager.is_offline():
+        return aiohttp.web.json_response(
+            {"status": "already_online"},
+            status=200,
+        )
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, manager.go_online)
+    states = await loop.run_in_executor(None, manager.list_job_states)
     return aiohttp.web.json_response(
-        {"status": "online"},
+        {"status": "online", "jobs": states},
         status=200,
     )

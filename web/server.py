@@ -77,7 +77,7 @@ async def favicon(request):
 
 
 async def page_index(request):
-    return web.FileResponse(WEB / "templates" / "index.html")
+    return web.FileResponse(WEB / "templates" / "index_classic.html")
 
 
 async def page_index_classic(request):

@@ -99,6 +99,32 @@ Docs are fetched in batches of `get_batch_number` (default 100) to avoid overwhe
 "get_batch_number": 100   // 950 docs = 10 batches (9×100 + 1×50)
 ```
 
+When a batch contains only 1 document, the worker skips `_bulk_get` entirely and fetches it directly via `GET /{keyspace}/{doc_id}?rev={rev}` with exponential backoff retry. This avoids the overhead of a `POST _bulk_get` request for a single document.
+
+### Stream Buffering (`stream_batch_timeout_ms`)
+
+Continuous and WebSocket modes buffer incoming change rows before processing them as a batch, reducing per-message overhead and enabling more efficient `_bulk_get` calls:
+
+- Rows accumulate in memory until either `get_batch_number` rows arrive (default 100) or `stream_batch_timeout_ms` elapses (default 100ms)
+- On flush, the batch is processed identically to a longpoll batch (filter → fetch docs → forward → checkpoint)
+- If only 1 doc is in the batch, it uses the single-doc GET optimization (no `_bulk_get`)
+
+This means WebSocket mode no longer fires a `_bulk_get` for every individual message — instead it collects nearby messages and fetches them in a single request.
+
+```jsonc
+"changes_feed": {
+  "stream_batch_timeout_ms": 100  // flush partial buffer after 100ms (default)
+}
+```
+
+### JSON Performance (`orjson`)
+
+The worker uses [orjson](https://github.com/ijl/orjson) for JSON parsing on the hot path (`_changes` response parsing, `_bulk_get` response parsing, individual doc fetches). orjson is a Rust-based JSON library that is significantly faster than Python's built-in `json` module — typically 3–10× faster for deserialization.
+
+- orjson is used automatically when installed (listed in `requirements.txt`)
+- Falls back gracefully to `json.loads` if orjson is not available
+- Used in: `rest/changes_http.py` (changes feed + doc fetching) and `rest/attachments.py` (attachment processing)
+
 ### Output Forwarding (`output.mode=http`)
 
 When `mode=http`, each processed doc is sent as a PUT, POST, or DELETE to `target_url/{doc_id}`:
@@ -119,6 +145,30 @@ When `mode=http`, each processed doc is sent as a PUT, POST, or DELETE to `targe
   - Logs the error, skips the failed doc, and continues
   - Failed docs are written to the dead letter queue (CBL or JSONL file)
   - ⚠️ Checkpoint still advances — failed docs are NOT retried automatically
+
+### Output Backpressure
+
+The worker monitors output endpoint response times and automatically throttles processing when the output is struggling:
+
+1. The first 50 output requests establish a baseline average latency
+2. After the baseline is set, if the rolling average exceeds **2× the baseline**, the worker inserts a proportional delay (capped at 5 seconds)
+3. The delay scales with how far over the threshold the latency is: `delay = (ratio - 1.0) × baseline` (capped at `max_delay`)
+4. When latency returns to normal, throttling stops automatically
+
+This prevents the worker from overwhelming a database or API that is under load, without any manual configuration.
+
+**Prometheus metrics:**
+
+| Metric | Type | Description |
+|---|---|---|
+| `backpressure_delays_total` | counter | Total number of times backpressure throttling activated |
+| `backpressure_delay_seconds_total` | counter | Cumulative seconds spent in backpressure delays |
+| `backpressure_active` | gauge | `1` when currently throttling, `0` otherwise |
+
+**Log output:**
+```
+WARN  BACKPRESSURE  output latency 3.2× baseline (156.0ms vs 49.0ms) – delaying 107ms
+```
 
 ### Custom Request Options (`output.request_options`)
 

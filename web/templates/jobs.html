@@ -333,8 +333,16 @@
               <div>
                 <label class="label label-text text-xs font-semibold">Feed Type</label>
                 <select id="jbFeedType" class="select select-bordered select-sm w-full">
-                  <option value="longpoll">Long Poll</option>
-                  <option value="continuous">Continuous</option>
+                  <optgroup label="Polling">
+                    <option value="longpoll">Long Poll</option>
+                    <option value="normal">Normal</option>
+                  </optgroup>
+                  <optgroup label="Continuous">
+                    <option value="continuous">Continuous</option>
+                    <option value="websocket">WebSocket (SG / App Services)</option>
+                    <option value="sse">SSE (Edge Server)</option>
+                    <option value="eventsource">EventSource (CouchDB)</option>
+                  </optgroup>
                 </select>
               </div>
               <div>
@@ -1090,6 +1098,21 @@
       var threads = parseInt(document.getElementById('jbThreads').value, 10) || 4;
       var attachmentsEnabled = currentJobBuilder.processType === 'DA';
 
+      var changesFeed = {
+        feed_type: document.getElementById('jbFeedType').value,
+        poll_interval_seconds: parseInt(document.getElementById('jbPollInterval').value, 10) || 10,
+        heartbeat_ms: parseInt(document.getElementById('jbHeartbeat').value, 10) || 30000,
+        timeout_ms: parseInt(document.getElementById('jbTimeout').value, 10) || 60000,
+        http_timeout_seconds: parseInt(document.getElementById('jbHttpTimeout').value, 10) || 300,
+        throttle_feed: parseInt(document.getElementById('jbThrottleFeed').value, 10) || 0,
+        limit: parseInt(document.getElementById('jbLimit').value, 10) || 0,
+        flood_threshold: parseInt(document.getElementById('jbFloodThreshold').value, 10) || 10000,
+        continuous_catchup_limit: parseInt(document.getElementById('jbCatchupLimit').value, 10) || 10000,
+        active_only: document.getElementById('jbActiveOnly').checked,
+        include_docs: document.getElementById('jbIncludeDocs').checked,
+        optimize_initial_sync: document.getElementById('jbOptimizeSync').checked
+      };
+
       var payload = {
         name: jobName,
         input_id: currentJobBuilder.sourceId,
@@ -1097,6 +1120,7 @@
         output_id: currentJobBuilder.outputId,
         output_type: currentJobBuilder.outputType,
         mapping_id: mappingId,
+        changes_feed: changesFeed,
         system: {
           threads: threads,
           attachments_enabled: attachmentsEnabled
