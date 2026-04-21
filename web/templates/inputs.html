@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inputs — Change Stream DB</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
+  <script src="/static/js/tailwind.js"></script>
+  <script>
+    (function(){
+      var t = localStorage.getItem('cw_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+</head>
+
+<body class="min-h-screen bg-base-200">
+  <div id="sidebar-root"></div>
+
+  <div class="sidebar-main">
+    <main class="w-full mx-auto p-6 space-y-6">
+      <!-- ===== CARD 1: INPUTS TABLE ===== -->
+      <div class="card bg-base-100 shadow rounded-2xl">
+        <div class="card-body p-4">
+          <div class="flex items-center gap-2 mb-3">
+            <h3 class="text-sm font-semibold">Inputs</h3>
+            <span id="inputCount" class="badge badge-ghost badge-sm">0</span>
+            <div class="tooltip tooltip-right" data-tip="All configured input sources for pipeline jobs.">
+              <span class="badge badge-ghost badge-sm cursor-help">?</span>
+            </div>
+            <button class="btn btn-primary btn-sm ml-auto" onclick="showInputForm(null)">+ New Input</button>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="table table-sm table-zebra w-full">
+              <thead>
+                <tr class="bg-base-200">
+                  <th class="text-xs font-semibold">Status</th>
+                  <th class="text-xs font-semibold">Name</th>
+                  <th class="text-xs font-semibold">Source Type</th>
+                  <th class="text-xs font-semibold">Host</th>
+                  <th class="text-xs font-semibold">Database</th>
+                  <th class="text-xs font-semibold">Scope / Collection</th>
+                  <th class="text-xs font-semibold">Used By</th>
+                  <th class="text-xs font-semibold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="inputsTableBody">
+                <!-- dynamic rows -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== CARD 2: INPUT FORM (hidden by default) ===== -->
+      <div id="inputFormContainer" class="hidden">
+        <div class="card bg-base-100 shadow-sm rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-3">
+              <h3 id="inputFormTitle" class="text-sm font-semibold">New Input</h3>
+            </div>
+
+            <!-- Row 1: ID + Name -->
+            <div class="grid grid-cols-2 gap-4 mb-3">
+              <div>
+                <label class="label label-text text-xs font-semibold">Input ID</label>
+                <input id="inputId" type="text" class="input input-bordered input-sm w-full" placeholder="e.g. sg-us-prices" required />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Name</label>
+                <input id="inputName" type="text" class="input input-bordered input-sm w-full" placeholder="Display name" />
+              </div>
+            </div>
+
+            <!-- Row 2: Source Type + Host -->
+            <div class="grid grid-cols-2 gap-4 mb-3">
+              <div>
+                <label class="label label-text text-xs font-semibold">Source Type</label>
+                <select id="inputSourceType" class="select select-bordered select-sm w-full" required>
+                  <option value="sync_gateway">Sync Gateway</option>
+                  <option value="app_services">App Services</option>
+                  <option value="edge_server">Edge Server</option>
+                  <option value="couchdb">CouchDB</option>
+                </select>
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Host</label>
+                <input id="inputHost" type="url" class="input input-bordered input-sm w-full" placeholder="http://localhost:4984" required />
+              </div>
+            </div>
+
+            <!-- Row 3: Database + Scope + Collection -->
+            <div class="grid grid-cols-3 gap-4 mb-3">
+              <div>
+                <label class="label label-text text-xs font-semibold">Database</label>
+                <input id="inputDatabase" type="text" class="input input-bordered input-sm w-full" required />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Scope</label>
+                <input id="inputScope" type="text" class="input input-bordered input-sm w-full" placeholder="_default" />
+              </div>
+              <div>
+                <label class="label label-text text-xs font-semibold">Collection</label>
+                <input id="inputCollection" type="text" class="input input-bordered input-sm w-full" placeholder="_default" />
+              </div>
+            </div>
+
+            <div class="divider text-xs opacity-60">Authentication</div>
+
+            <!-- Row 4: Auth Method + Username + Password -->
+            <div class="grid grid-cols-3 gap-4 mb-3">
+              <div>
+                <label class="label label-text text-xs font-semibold">Auth Method</label>
+                <select id="inputAuthMethod" class="select select-bordered select-sm w-full" onchange="toggleAuthFields()">
+                  <option value="basic">basic</option>
+                  <option value="bearer">bearer</option>
+                  <option value="session">session</option>
+                  <option value="none">none</option>
+                </select>
+              </div>
+              <div id="authUsernameWrap">
+                <label class="label label-text text-xs font-semibold">Username</label>
+                <input id="inputAuthUsername" type="text" class="input input-bordered input-sm w-full" />
+              </div>
+              <div id="authPasswordWrap">
+                <label class="label label-text text-xs font-semibold">Password</label>
+                <input id="inputAuthPassword" type="password" class="input input-bordered input-sm w-full" />
+              </div>
+            </div>
+
+            <!-- Bearer field (hidden by default) -->
+            <div id="authBearerWrap" class="hidden mb-3">
+              <label class="label label-text text-xs font-semibold">Bearer Token</label>
+              <input id="inputAuthBearerToken" type="text" class="input input-bordered input-sm w-full" />
+            </div>
+
+            <!-- Session field (hidden by default) -->
+            <div id="authSessionWrap" class="hidden mb-3">
+              <label class="label label-text text-xs font-semibold">Session Cookie</label>
+              <input id="inputAuthSessionCookie" type="text" class="input input-bordered input-sm w-full" />
+            </div>
+
+            <div class="divider text-xs opacity-60">Connection Options</div>
+
+            <!-- Row 5: Self-signed certs + Compress -->
+            <div class="grid grid-cols-2 gap-4 mb-3">
+              <label class="label cursor-pointer gap-2">
+                <span class="label-text text-xs font-semibold">Accept Self-Signed Certs</span>
+                <input id="inputSelfSignedCerts" type="checkbox" class="checkbox checkbox-sm" />
+              </label>
+              <label class="label cursor-pointer gap-2">
+                <span class="label-text text-xs font-semibold">Compress</span>
+                <input id="inputCompress" type="checkbox" class="checkbox checkbox-sm" />
+              </label>
+            </div>
+
+            <!-- Buttons -->
+            <div class="flex items-center gap-3 mt-4">
+              <button class="btn btn-success btn-sm" onclick="saveInput()">Save Input</button>
+              <button class="btn btn-primary btn-sm" onclick="testInputConnection()">Test Connection</button>
+              <button class="btn btn-ghost btn-sm" onclick="hideInputForm()">Cancel</button>
+              <span id="inputFormStatus" class="text-sm opacity-60"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toastContainer" class="toast toast-end toast-bottom z-50"></div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script>
+    var allInputs = [];
+    var allJobs = [];
+    var editingInputId = null;
+
+    // ===== Helpers =====
+    function escHtml(s) {
+      var d = document.createElement('div');
+      d.textContent = s || '';
+      return d.innerHTML;
+    }
+
+    function showToast(message, type) {
+      var container = document.getElementById('toastContainer');
+      var alertClass = type === 'success' ? 'alert-success' : 'alert-error';
+      var toast = document.createElement('div');
+      toast.className = 'alert ' + alertClass;
+      toast.innerHTML = '<span>' + message + '</span>';
+      container.appendChild(toast);
+      setTimeout(function() { toast.remove(); }, 3000);
+    }
+
+    // ===== Toggle Auth Fields =====
+    function toggleAuthFields() {
+      var method = document.getElementById('inputAuthMethod').value;
+      document.getElementById('authUsernameWrap').classList.toggle('hidden', method !== 'basic');
+      document.getElementById('authPasswordWrap').classList.toggle('hidden', method !== 'basic');
+      document.getElementById('authBearerWrap').classList.toggle('hidden', method !== 'bearer');
+      document.getElementById('authSessionWrap').classList.toggle('hidden', method !== 'session');
+    }
+
+    // ===== Load Jobs (for "Used By" column) =====
+    function loadJobs() {
+      return fetch('/api/jobs/status')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          allJobs = data.jobs || [];
+        })
+        .catch(function(err) {
+          console.error('Failed to load jobs:', err);
+          allJobs = [];
+        });
+    }
+
+    // ===== Load Inputs =====
+    function loadInputs() {
+      return fetch('/api/inputs_changes')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          allInputs = data.src || [];
+          document.getElementById('inputCount').textContent = allInputs.length;
+
+          var tbody = document.getElementById('inputsTableBody');
+          tbody.innerHTML = '';
+
+          allInputs.forEach(function(inp) {
+            var row = document.createElement('tr');
+
+            // Status badge
+            var statusBadge = inp.enabled !== false
+              ? '<span class="badge badge-success badge-sm">Enabled</span>'
+              : '<span class="badge badge-ghost badge-sm">Disabled</span>';
+
+            // Source type badge
+            var typeBadge = '<span class="badge badge-info badge-sm">' + escHtml(inp.source_type || '—') + '</span>';
+
+            // Scope / Collection
+            var scopeCol = escHtml(inp.scope || '_default') + ' / ' + escHtml(inp.collection || '_default');
+
+            // Used By — find jobs referencing this input
+            var usedByJobs = allJobs.filter(function(job) {
+              return job.input_id === inp.id || (job.inputs && job.inputs.some(function(i) { return i.id === inp.id; }));
+            });
+            var usedByHtml = usedByJobs.length === 0
+              ? '<span class="opacity-40">—</span>'
+              : usedByJobs.map(function(j) { return '<span class="badge badge-sm badge-ghost">' + escHtml(j.name || j.job_id || j.id) + '</span>'; }).join(' ');
+
+            // Check if any referencing job is running
+            var hasRunningJob = usedByJobs.some(function(j) {
+              var st = (j.status || '').toLowerCase();
+              return st === 'running' || st === 'starting' || st === 'restarting';
+            });
+
+            var inputId = escHtml(inp.id || '');
+
+            // Delete button: disabled if a running job uses this input
+            var deleteBtn = hasRunningJob
+              ? '<div class="tooltip tooltip-left" data-tip="Stop job before deleting"><button class="btn btn-ghost btn-xs text-error" disabled>Delete</button></div>'
+              : '<button class="btn btn-ghost btn-xs text-error" onclick="deleteInput(\'' + inputId + '\')">Delete</button>';
+
+            row.innerHTML =
+              '<td>' + statusBadge + '</td>' +
+              '<td class="font-semibold">' + escHtml(inp.name || inp.id || '—') + '</td>' +
+              '<td>' + typeBadge + '</td>' +
+              '<td class="text-xs">' + escHtml(inp.host || '—') + '</td>' +
+              '<td>' + escHtml(inp.database || '—') + '</td>' +
+              '<td class="text-xs">' + scopeCol + '</td>' +
+              '<td>' + usedByHtml + '</td>' +
+              '<td class="text-right">' +
+                '<div class="flex gap-1 justify-end">' +
+                  '<button class="btn btn-ghost btn-xs" onclick="testInputConnectionById(\'' + inputId + '\')" title="Test Connection">Test</button>' +
+                  '<button class="btn btn-ghost btn-xs" onclick="showInputForm(\'' + inputId + '\')" title="Edit">Edit</button>' +
+                  deleteBtn +
+                '</div>' +
+              '</td>';
+
+            tbody.appendChild(row);
+          });
+        })
+        .catch(function(err) {
+          console.error('Failed to load inputs:', err);
+        });
+    }
+
+    // ===== Show / Hide Input Form =====
+    function showInputForm(inputId) {
+      editingInputId = inputId;
+      var container = document.getElementById('inputFormContainer');
+      container.classList.remove('hidden');
+
+      // Reset form
+      document.getElementById('inputId').value = '';
+      document.getElementById('inputId').disabled = false;
+      document.getElementById('inputName').value = '';
+      document.getElementById('inputSourceType').value = 'sync_gateway';
+      document.getElementById('inputHost').value = '';
+      document.getElementById('inputDatabase').value = '';
+      document.getElementById('inputScope').value = '';
+      document.getElementById('inputCollection').value = '';
+      document.getElementById('inputAuthMethod').value = 'basic';
+      document.getElementById('inputAuthUsername').value = '';
+      document.getElementById('inputAuthPassword').value = '';
+      document.getElementById('inputAuthBearerToken').value = '';
+      document.getElementById('inputAuthSessionCookie').value = '';
+      document.getElementById('inputSelfSignedCerts').checked = false;
+      document.getElementById('inputCompress').checked = false;
+      document.getElementById('inputFormStatus').textContent = '';
+      toggleAuthFields();
+
+      if (inputId) {
+        // Edit mode — populate from existing data
+        document.getElementById('inputFormTitle').textContent = 'Edit Input: ' + inputId;
+        document.getElementById('inputId').value = inputId;
+        document.getElementById('inputId').disabled = true;
+
+        var inp = allInputs.find(function(i) { return i.id === inputId; });
+        if (inp) {
+          document.getElementById('inputName').value = inp.name || '';
+          document.getElementById('inputSourceType').value = inp.source_type || 'sync_gateway';
+          document.getElementById('inputHost').value = inp.host || '';
+          document.getElementById('inputDatabase').value = inp.database || '';
+          document.getElementById('inputScope').value = inp.scope || '';
+          document.getElementById('inputCollection').value = inp.collection || '';
+          document.getElementById('inputSelfSignedCerts').checked = !!inp.accept_self_signed_certs;
+          document.getElementById('inputCompress').checked = !!inp.compress;
+
+          var auth = inp.auth || {};
+          document.getElementById('inputAuthMethod').value = auth.method || 'basic';
+          document.getElementById('inputAuthUsername').value = auth.username || '';
+          document.getElementById('inputAuthPassword').value = auth.password || '';
+          document.getElementById('inputAuthBearerToken').value = auth.bearer_token || '';
+          document.getElementById('inputAuthSessionCookie').value = auth.session_cookie || '';
+          toggleAuthFields();
+        }
+      } else {
+        document.getElementById('inputFormTitle').textContent = 'New Input';
+      }
+
+      container.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function hideInputForm() {
+      editingInputId = null;
+      document.getElementById('inputFormContainer').classList.add('hidden');
+    }
+
+    // ===== Build entry object from form =====
+    function buildInputEntry() {
+      var authMethod = document.getElementById('inputAuthMethod').value;
+      var auth = { method: authMethod };
+      if (authMethod === 'basic') {
+        auth.username = document.getElementById('inputAuthUsername').value;
+        auth.password = document.getElementById('inputAuthPassword').value;
+      } else if (authMethod === 'bearer') {
+        auth.bearer_token = document.getElementById('inputAuthBearerToken').value;
+      } else if (authMethod === 'session') {
+        auth.session_cookie = document.getElementById('inputAuthSessionCookie').value;
+      }
+
+      return {
+        id: document.getElementById('inputId').value.trim(),
+        name: document.getElementById('inputName').value.trim(),
+        enabled: true,
+        source_type: document.getElementById('inputSourceType').value,
+        host: document.getElementById('inputHost').value.trim(),
+        database: document.getElementById('inputDatabase').value.trim(),
+        scope: document.getElementById('inputScope').value.trim() || '_default',
+        collection: document.getElementById('inputCollection').value.trim() || '_default',
+        accept_self_signed_certs: document.getElementById('inputSelfSignedCerts').checked,
+        compress: document.getElementById('inputCompress').checked,
+        auth: auth,
+        changes_feed: {
+          feed_type: 'longpoll',
+          poll_interval_seconds: 10,
+          active_only: true,
+          include_docs: false
+        }
+      };
+    }
+
+    // ===== Save Input =====
+    function saveInput() {
+      var entry = buildInputEntry();
+      if (!entry.id) {
+        alert('Input ID is required.');
+        return;
+      }
+
+      document.getElementById('inputFormStatus').textContent = 'Saving…';
+
+      if (editingInputId) {
+        // Edit mode — PUT single entry
+        fetch('/api/inputs_changes/' + encodeURIComponent(editingInputId), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(entry)
+        })
+        .then(function(r) {
+          if (r.ok) {
+            showToast('✓ Input updated!', 'success');
+            hideInputForm();
+            loadInputs();
+          } else {
+            return r.text().then(function(t) { alert('Failed to update input: ' + t); });
+          }
+        })
+        .catch(function(err) { alert('Error updating input: ' + err.message); })
+        .finally(function() { document.getElementById('inputFormStatus').textContent = ''; });
+      } else {
+        // New mode — GET doc, push to src array, POST full doc back
+        fetch('/api/inputs_changes')
+          .then(function(r) { return r.json(); })
+          .then(function(doc) {
+            var src = doc.src || [];
+            // Check for duplicate ID
+            var exists = src.some(function(s) { return s.id === entry.id; });
+            if (exists) {
+              alert('An input with ID "' + entry.id + '" already exists.');
+              document.getElementById('inputFormStatus').textContent = '';
+              return;
+            }
+            src.push(entry);
+            doc.src = src;
+            return fetch('/api/inputs_changes', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(doc)
+            });
+          })
+          .then(function(r) {
+            if (!r) return;
+            if (r.ok) {
+              showToast('✓ Input created!', 'success');
+              hideInputForm();
+              loadInputs();
+            } else {
+              return r.text().then(function(t) { alert('Failed to save input: ' + t); });
+            }
+          })
+          .catch(function(err) { alert('Error saving input: ' + err.message); })
+          .finally(function() { document.getElementById('inputFormStatus').textContent = ''; });
+      }
+    }
+
+    // ===== Test Connection =====
+    function testInputConnection() {
+      var entry = buildInputEntry();
+      var payload = {
+        gateway: {
+          url: entry.host,
+          database: entry.database,
+          scope: entry.scope,
+          collection: entry.collection,
+          src: entry.source_type,
+          accept_self_signed_certs: entry.accept_self_signed_certs,
+          compress: entry.compress
+        },
+        auth: entry.auth
+      };
+
+      document.getElementById('inputFormStatus').textContent = 'Testing…';
+
+      fetch('/api/wizard/test-source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+      .then(function(res) {
+        if (res.ok && res.data.success) {
+          showToast('✓ Connection successful!', 'success');
+        } else {
+          alert('Connection failed: ' + (res.data.error || res.data.message || 'Unknown error'));
+        }
+      })
+      .catch(function(err) { alert('Test failed: ' + err.message); })
+      .finally(function() { document.getElementById('inputFormStatus').textContent = ''; });
+    }
+
+    // ===== Test from table row =====
+    function testInputConnectionById(inputId) {
+      var inp = allInputs.find(function(i) { return i.id === inputId; });
+      if (!inp) { alert('Input not found'); return; }
+
+      var payload = {
+        gateway: {
+          url: inp.host,
+          database: inp.database,
+          scope: inp.scope || '_default',
+          collection: inp.collection || '_default',
+          src: inp.source_type,
+          accept_self_signed_certs: !!inp.accept_self_signed_certs,
+          compress: !!inp.compress
+        },
+        auth: inp.auth || { method: 'none' }
+      };
+
+      fetch('/api/wizard/test-source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+      .then(function(res) {
+        if (res.ok && res.data.success) {
+          showToast('✓ ' + inputId + ': Connection OK', 'success');
+        } else {
+          showToast('✗ ' + inputId + ': ' + (res.data.error || res.data.message || 'Failed'), 'error');
+        }
+      })
+      .catch(function(err) { showToast('✗ Test error: ' + err.message, 'error'); });
+    }
+
+    // ===== Delete Input =====
+    function deleteInput(inputId) {
+      if (!confirm('Delete input "' + inputId + '"? This cannot be undone.')) return;
+
+      fetch('/api/inputs_changes/' + encodeURIComponent(inputId), { method: 'DELETE' })
+        .then(function(r) {
+          if (r.ok) {
+            showToast('✓ Input deleted', 'success');
+            loadInputs();
+          } else {
+            return r.text().then(function(t) { alert('Failed to delete input: ' + t); });
+          }
+        })
+        .catch(function(err) { alert('Error deleting input: ' + err.message); });
+    }
+
+    // ===== Init =====
+    document.addEventListener('DOMContentLoaded', function() {
+      loadJobs().then(function() {
+        loadInputs();
+
+        // Auto-open editor if ?edit=inputId in URL
+        var params = new URLSearchParams(window.location.search);
+        var editId = params.get('edit');
+        if (editId) {
+          setTimeout(function(){ showInputForm(editId); }, 300);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

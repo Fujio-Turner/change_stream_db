@@ -13,9 +13,13 @@
     { type: 'section', label: 'Overview' },
     { href: '/',           label: 'Dashboard',       icon: '/static/icons/dashboard.svg' },
 
-    { type: 'section', label: 'Tools' },
+    { type: 'section', label: 'Pipeline' },
     { href: '/jobs',       label: 'Job Builder',      icon: '/static/icons/jobs.svg'     },
+    { href: '/inputs',     label: 'Inputs',           icon: '/static/icons/inputs.svg'   },
+    { href: '/outputs',    label: 'Outputs',          icon: '/static/icons/outputs.svg'  },
     { href: '/schema',     label: 'Schema Mapping',   icon: '/static/icons/schema.svg'   },
+
+    { type: 'section', label: 'Guided' },
     { href: '/wizard',     label: 'Wizards',          icon: '/static/icons/wizard.svg'   },
 
     { type: 'divider' },

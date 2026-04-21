@@ -102,6 +102,14 @@ async def page_jobs(request):
     return web.FileResponse(WEB / "templates" / "jobs.html")
 
 
+async def page_inputs(request):
+    return web.FileResponse(WEB / "templates" / "inputs.html")
+
+
+async def page_outputs(request):
+    return web.FileResponse(WEB / "templates" / "outputs.html")
+
+
 async def page_help(request):
     return web.FileResponse(WEB / "templates" / "help.html")
 
@@ -2176,6 +2184,8 @@ def create_app():
     app.router.add_get("/", page_index)
     app.router.add_get("/settings", page_config)
     app.router.add_get("/jobs", page_jobs)
+    app.router.add_get("/inputs", page_inputs)
+    app.router.add_get("/outputs", page_outputs)
     app.router.add_get("/schema", page_schema)
     app.router.add_get("/glossary", page_transforms)
     app.router.add_get("/wizard", page_wizard)

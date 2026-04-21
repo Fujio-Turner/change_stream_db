@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Outputs — Change Stream DB</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
+  <script src="/static/js/tailwind.js"></script>
+  <script>
+    (function(){
+      var t = localStorage.getItem('cw_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+</head>
+<body class="min-h-screen bg-base-200">
+  <div id="sidebar-root"></div>
+
+  <div class="sidebar-main">
+    <main class="w-full mx-auto p-6 space-y-6">
+
+      <!-- Header -->
+      <div class="card bg-base-100 shadow rounded-2xl">
+        <div class="card-body p-4">
+          <h1 class="text-xl font-bold">📤 Output Destinations</h1>
+          <p class="text-sm opacity-60">Manage where processed documents are sent. Each output can be wired to a job in the Job Builder.</p>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs tabs-boxed bg-base-100 p-1 rounded-2xl shadow-sm">
+        <a class="tab tab-active" id="tabRdbms" onclick="switchTab('rdbms')">🗄️ RDBMS <span class="badge badge-sm ml-1" id="tabCountRdbms">0</span></a>
+        <a class="tab" id="tabHttp" onclick="switchTab('http')">📡 HTTP <span class="badge badge-sm ml-1" id="tabCountHttp">0</span></a>
+        <a class="tab" id="tabCloud" onclick="switchTab('cloud')">☁️ Cloud <span class="badge badge-sm ml-1" id="tabCountCloud">0</span></a>
+        <a class="tab" id="tabStdout" onclick="switchTab('stdout')">📺 Stdout <span class="badge badge-sm ml-1" id="tabCountStdout">0</span></a>
+      </div>
+
+      <!-- ═══════ RDBMS Panel ═══════ -->
+      <div id="panelRdbms">
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-3">
+              <h3 class="text-sm font-semibold">RDBMS Outputs</h3>
+              <button class="btn btn-primary btn-sm ml-auto" onclick="showOutputForm('rdbms')">+ New RDBMS</button>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="table table-sm table-zebra w-full">
+                <thead><tr class="bg-base-200">
+                  <th class="text-xs font-semibold">Status</th>
+                  <th class="text-xs font-semibold">Name</th>
+                  <th class="text-xs font-semibold">Engine</th>
+                  <th class="text-xs font-semibold">Host:Port</th>
+                  <th class="text-xs font-semibold">Database</th>
+                  <th class="text-xs font-semibold">Schema</th>
+                  <th class="text-xs font-semibold">Pool</th>
+                  <th class="text-xs font-semibold">Used By</th>
+                  <th class="text-xs font-semibold text-right">Actions</th>
+                </tr></thead>
+                <tbody id="tableRdbms"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- RDBMS Form -->
+        <div id="formRdbms" class="hidden card bg-base-100 shadow-sm rounded-2xl mt-4">
+          <div class="card-body p-4">
+            <h3 class="text-sm font-bold mb-3" id="formRdbmsTitle">New RDBMS Output</h3>
+            <div class="space-y-4">
+              <div class="grid grid-cols-2 gap-4">
+                <div><label class="label label-text text-xs font-semibold">Output ID</label>
+                  <input id="rdbmsId" type="text" class="input input-bordered input-sm w-full" placeholder="e.g. pg-prod" /></div>
+                <div><label class="label label-text text-xs font-semibold">Name</label>
+                  <input id="rdbmsName" type="text" class="input input-bordered input-sm w-full" placeholder="Display name" /></div>
+              </div>
+              <div class="grid grid-cols-3 gap-4">
+                <div><label class="label label-text text-xs font-semibold">Engine</label>
+                  <select id="rdbmsEngine" class="select select-bordered select-sm w-full">
+                    <option value="">Choose...</option><option value="postgres">PostgreSQL</option>
+                    <option value="mysql">MySQL</option><option value="mssql">MSSQL</option><option value="oracle">Oracle</option>
+                  </select></div>
+                <div><label class="label label-text text-xs font-semibold">Host</label>
+                  <input id="rdbmsHost" type="text" class="input input-bordered input-sm w-full" placeholder="localhost" /></div>
+                <div><label class="label label-text text-xs font-semibold">Port</label>
+                  <input id="rdbmsPort" type="number" class="input input-bordered input-sm w-full" value="5432" /></div>
+              </div>
+              <div class="grid grid-cols-3 gap-4">
+                <div><label class="label label-text text-xs font-semibold">Database</label>
+                  <input id="rdbmsDatabase" type="text" class="input input-bordered input-sm w-full" /></div>
+                <div><label class="label label-text text-xs font-semibold">Username</label>
+                  <input id="rdbmsUser" type="text" class="input input-bordered input-sm w-full" /></div>
+                <div><label class="label label-text text-xs font-semibold">Password</label>
+                  <input id="rdbmsPass" type="password" class="input input-bordered input-sm w-full" /></div>
+              </div>
+              <div class="grid grid-cols-3 gap-4">
+                <div><label class="label label-text text-xs font-semibold">Schema</label>
+                  <input id="rdbmsSchema" type="text" class="input input-bordered input-sm w-full" value="public" /></div>
+                <div><label class="label label-text text-xs font-semibold">Pool Min</label>
+                  <input id="rdbmsPoolMin" type="number" class="input input-bordered input-sm w-full" value="2" /></div>
+                <div><label class="label label-text text-xs font-semibold">Pool Max</label>
+                  <input id="rdbmsPoolMax" type="number" class="input input-bordered input-sm w-full" value="10" /></div>
+              </div>
+              <div class="flex gap-6">
+                <label class="label cursor-pointer gap-2"><span class="label-text text-xs font-semibold">SSL</span>
+                  <input id="rdbmsSsl" type="checkbox" class="toggle toggle-sm toggle-success" /></label>
+                <label class="label cursor-pointer gap-2"><span class="label-text text-xs font-semibold">Enabled</span>
+                  <input id="rdbmsEnabled" type="checkbox" class="toggle toggle-sm toggle-success" checked /></label>
+              </div>
+              <div class="divider text-xs opacity-60">Data Validation &amp; Coercion</div>
+              <label class="label cursor-pointer justify-start gap-4">
+                <span class="label-text text-xs font-semibold">Auto-Validate Against Table Schema</span>
+                <input id="rdbmsValEnabled" type="checkbox" class="toggle toggle-sm toggle-success" onchange="document.getElementById('rdbmsValOpts').classList.toggle('hidden',!this.checked)" />
+              </label>
+              <div id="rdbmsValOpts" class="hidden pl-4 border-l-2 border-primary space-y-2">
+                <label class="label cursor-pointer justify-start gap-3"><span class="label-text text-xs">Strict Mode</span>
+                  <input id="rdbmsValStrict" type="checkbox" class="toggle toggle-xs" /></label>
+                <label class="label cursor-pointer justify-start gap-3"><span class="label-text text-xs">Track Originals</span>
+                  <input id="rdbmsValTrack" type="checkbox" class="toggle toggle-xs" checked /></label>
+                <label class="label cursor-pointer justify-start gap-3"><span class="label-text text-xs">DLQ on Error</span>
+                  <input id="rdbmsValDlq" type="checkbox" class="toggle toggle-xs" checked /></label>
+              </div>
+              <div class="flex gap-2 mt-2">
+                <button class="btn btn-success btn-sm" onclick="saveOutput('rdbms')">Save Output</button>
+                <button class="btn btn-primary btn-sm" onclick="testOutput('rdbms')">Test Connection</button>
+                <button class="btn btn-ghost btn-sm" onclick="hideOutputForm('rdbms')">Cancel</button>
+                <span id="formRdbmsStatus" class="text-sm opacity-60 self-center"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════ HTTP Panel ═══════ -->
+      <div id="panelHttp" class="hidden">
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-3">
+              <h3 class="text-sm font-semibold">HTTP Outputs</h3>
+              <button class="btn btn-primary btn-sm ml-auto" onclick="showOutputForm('http')">+ New HTTP</button>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="table table-sm table-zebra w-full">
+                <thead><tr class="bg-base-200">
+                  <th class="text-xs font-semibold">Status</th>
+                  <th class="text-xs font-semibold">Name</th>
+                  <th class="text-xs font-semibold">Target URL</th>
+                  <th class="text-xs font-semibold">Method</th>
+                  <th class="text-xs font-semibold">Timeout</th>
+                  <th class="text-xs font-semibold">Retries</th>
+                  <th class="text-xs font-semibold">Used By</th>
+                  <th class="text-xs font-semibold text-right">Actions</th>
+                </tr></thead>
+                <tbody id="tableHttp"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="formHttp" class="hidden card bg-base-100 shadow-sm rounded-2xl mt-4">
+          <div class="card-body p-4">
+            <h3 class="text-sm font-bold mb-3" id="formHttpTitle">New HTTP Output</h3>
+            <div class="space-y-4">
+              <div class="grid grid-cols-2 gap-4">
+                <div><label class="label label-text text-xs font-semibold">Output ID</label>
+                  <input id="httpId" type="text" class="input input-bordered input-sm w-full" placeholder="e.g. webhook-prod" /></div>
+                <div><label class="label label-text text-xs font-semibold">Name</label>
+                  <input id="httpName" type="text" class="input input-bordered input-sm w-full" placeholder="Display name" /></div>
+              </div>
+              <div><label class="label label-text text-xs font-semibold">Target URL</label>
+                <input id="httpUrl" type="text" class="input input-bordered input-sm w-full" placeholder="https://api.example.com/webhook" /></div>
+              <div class="grid grid-cols-3 gap-4">
+                <div><label class="label label-text text-xs font-semibold">Write Method</label>
+                  <select id="httpMethod" class="select select-bordered select-sm w-full">
+                    <option value="POST">POST</option><option value="PUT">PUT</option><option value="PATCH">PATCH</option>
+                  </select></div>
+                <div><label class="label label-text text-xs font-semibold">Timeout (sec)</label>
+                  <input id="httpTimeout" type="number" class="input input-bordered input-sm w-full" value="30" /></div>
+                <div><label class="label label-text text-xs font-semibold">Retry Count</label>
+                  <input id="httpRetry" type="number" class="input input-bordered input-sm w-full" value="3" /></div>
+              </div>
+              <label class="label cursor-pointer justify-start gap-2"><span class="label-text text-xs font-semibold">Enabled</span>
+                <input id="httpEnabled" type="checkbox" class="toggle toggle-sm toggle-success" checked /></label>
+              <div class="flex gap-2 mt-2">
+                <button class="btn btn-success btn-sm" onclick="saveOutput('http')">Save Output</button>
+                <button class="btn btn-primary btn-sm" onclick="testOutput('http')">Test Connection</button>
+                <button class="btn btn-ghost btn-sm" onclick="hideOutputForm('http')">Cancel</button>
+                <span id="formHttpStatus" class="text-sm opacity-60 self-center"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════ Cloud Panel ═══════ -->
+      <div id="panelCloud" class="hidden">
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-3">
+              <h3 class="text-sm font-semibold">Cloud Storage Outputs</h3>
+              <button class="btn btn-primary btn-sm ml-auto" onclick="showOutputForm('cloud')">+ New Cloud</button>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="table table-sm table-zebra w-full">
+                <thead><tr class="bg-base-200">
+                  <th class="text-xs font-semibold">Status</th>
+                  <th class="text-xs font-semibold">Name</th>
+                  <th class="text-xs font-semibold">Provider</th>
+                  <th class="text-xs font-semibold">Region</th>
+                  <th class="text-xs font-semibold">Bucket</th>
+                  <th class="text-xs font-semibold">Prefix</th>
+                  <th class="text-xs font-semibold">Used By</th>
+                  <th class="text-xs font-semibold text-right">Actions</th>
+                </tr></thead>
+                <tbody id="tableCloud"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="formCloud" class="hidden card bg-base-100 shadow-sm rounded-2xl mt-4">
+          <div class="card-body p-4">
+            <h3 class="text-sm font-bold mb-3" id="formCloudTitle">New Cloud Output</h3>
+            <div class="space-y-4">
+              <div class="grid grid-cols-2 gap-4">
+                <div><label class="label label-text text-xs font-semibold">Output ID</label>
+                  <input id="cloudId" type="text" class="input input-bordered input-sm w-full" placeholder="e.g. s3-prod" /></div>
+                <div><label class="label label-text text-xs font-semibold">Name</label>
+                  <input id="cloudName" type="text" class="input input-bordered input-sm w-full" placeholder="Display name" /></div>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div><label class="label label-text text-xs font-semibold">Provider</label>
+                  <select id="cloudProvider" class="select select-bordered select-sm w-full">
+                    <option value="s3">Amazon S3</option><option value="gcs">Google Cloud Storage</option><option value="azure">Azure Blob</option>
+                  </select></div>
+                <div><label class="label label-text text-xs font-semibold">Region</label>
+                  <input id="cloudRegion" type="text" class="input input-bordered input-sm w-full" placeholder="us-east-1" /></div>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div><label class="label label-text text-xs font-semibold">Bucket</label>
+                  <input id="cloudBucket" type="text" class="input input-bordered input-sm w-full" placeholder="my-bucket" /></div>
+                <div><label class="label label-text text-xs font-semibold">Prefix</label>
+                  <input id="cloudPrefix" type="text" class="input input-bordered input-sm w-full" placeholder="changes/" /></div>
+              </div>
+              <label class="label cursor-pointer justify-start gap-2"><span class="label-text text-xs font-semibold">Enabled</span>
+                <input id="cloudEnabled" type="checkbox" class="toggle toggle-sm toggle-success" checked /></label>
+              <div class="flex gap-2 mt-2">
+                <button class="btn btn-success btn-sm" onclick="saveOutput('cloud')">Save Output</button>
+                <button class="btn btn-ghost btn-sm" onclick="hideOutputForm('cloud')">Cancel</button>
+                <span id="formCloudStatus" class="text-sm opacity-60 self-center"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════ Stdout Panel ═══════ -->
+      <div id="panelStdout" class="hidden">
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-3">
+              <h3 class="text-sm font-semibold">Stdout Outputs</h3>
+              <button class="btn btn-primary btn-sm ml-auto" onclick="showOutputForm('stdout')">+ New Stdout</button>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="table table-sm table-zebra w-full">
+                <thead><tr class="bg-base-200">
+                  <th class="text-xs font-semibold">Status</th>
+                  <th class="text-xs font-semibold">Name</th>
+                  <th class="text-xs font-semibold">Format</th>
+                  <th class="text-xs font-semibold">Used By</th>
+                  <th class="text-xs font-semibold text-right">Actions</th>
+                </tr></thead>
+                <tbody id="tableStdout"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="formStdout" class="hidden card bg-base-100 shadow-sm rounded-2xl mt-4">
+          <div class="card-body p-4">
+            <h3 class="text-sm font-bold mb-3" id="formStdoutTitle">New Stdout Output</h3>
+            <div class="space-y-4">
+              <div class="grid grid-cols-2 gap-4">
+                <div><label class="label label-text text-xs font-semibold">Output ID</label>
+                  <input id="stdoutId" type="text" class="input input-bordered input-sm w-full" placeholder="e.g. stdout-dev" /></div>
+                <div><label class="label label-text text-xs font-semibold">Name</label>
+                  <input id="stdoutName" type="text" class="input input-bordered input-sm w-full" placeholder="Display name" /></div>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div><label class="label label-text text-xs font-semibold">Format</label>
+                  <select id="stdoutFormat" class="select select-bordered select-sm w-full">
+                    <option value="json">JSON (pretty)</option><option value="json-compact">JSON (compact)</option><option value="text">Text</option>
+                  </select></div>
+                <div><label class="label cursor-pointer justify-start gap-2 mt-6"><span class="label-text text-xs font-semibold">Enabled</span>
+                  <input id="stdoutEnabled" type="checkbox" class="toggle toggle-sm toggle-success" checked /></label></div>
+              </div>
+              <div class="flex gap-2 mt-2">
+                <button class="btn btn-success btn-sm" onclick="saveOutput('stdout')">Save Output</button>
+                <button class="btn btn-ghost btn-sm" onclick="hideOutputForm('stdout')">Cancel</button>
+                <span id="formStdoutStatus" class="text-sm opacity-60 self-center"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+    <div id="toastContainer" class="toast toast-end toast-bottom z-50"></div>
+  </div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script>
+    var allJobs = [];
+    var activeTab = 'rdbms';
+    var editingId = {};  // per-type: { rdbms: null, http: null, ... }
+
+    function escHtml(s) {
+      var d = document.createElement('div');
+      d.textContent = s || '';
+      return d.innerHTML;
+    }
+
+    function showToast(message, type) {
+      var container = document.getElementById('toastContainer');
+      var alertClass = type === 'success' ? 'alert-success' : 'alert-error';
+      var el = document.createElement('div');
+      el.className = 'alert ' + alertClass;
+      el.innerHTML = '<span>' + message + '</span>';
+      container.appendChild(el);
+      setTimeout(function(){ el.remove(); }, 3000);
+    }
+
+    // ===== Tab Switching =====
+    function switchTab(type) {
+      var types = ['rdbms', 'http', 'cloud', 'stdout'];
+      activeTab = type;
+      types.forEach(function(t) {
+        var tab = document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1));
+        var panel = document.getElementById('panel' + t.charAt(0).toUpperCase() + t.slice(1));
+        if (t === type) {
+          if (tab) tab.classList.add('tab-active');
+          if (panel) panel.classList.remove('hidden');
+        } else {
+          if (tab) tab.classList.remove('tab-active');
+          if (panel) panel.classList.add('hidden');
+        }
+      });
+      loadOutputs(type);
+    }
+
+    // ===== Load Jobs (for "Used By" column) =====
+    function loadJobs() {
+      return fetch('/api/jobs/status')
+        .then(function(r){ return r.json(); })
+        .then(function(data){ allJobs = data.jobs || []; })
+        .catch(function(){ allJobs = []; });
+    }
+
+    function findJobsUsing(outputId) {
+      var matches = [];
+      allJobs.forEach(function(j) {
+        if (j.output_id === outputId || j.output_name === outputId) {
+          matches.push(j);
+        }
+      });
+      return matches;
+    }
+
+    function usedByHtml(outputId) {
+      var jobs = findJobsUsing(outputId);
+      if (jobs.length === 0) return '<span class="opacity-40">—</span>';
+      return jobs.map(function(j) {
+        var st = (j.status || '').toLowerCase();
+        var cls = (st === 'running' || st === 'starting') ? 'badge-success' : 'badge-ghost';
+        return '<span class="badge ' + cls + ' badge-xs">' + escHtml(j.name || j.job_id) + '</span>';
+      }).join(' ');
+    }
+
+    function isInRunningJob(outputId) {
+      var jobs = findJobsUsing(outputId);
+      for (var i = 0; i < jobs.length; i++) {
+        var st = (jobs[i].status || '').toLowerCase();
+        if (st === 'running' || st === 'starting' || st === 'restarting') return true;
+      }
+      return false;
+    }
+
+    // ===== Load Outputs =====
+    function loadOutputs(type) {
+      fetch('/api/outputs_' + type)
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          var src = data.src || [];
+          document.getElementById('tabCount' + type.charAt(0).toUpperCase() + type.slice(1)).textContent = src.length;
+          var tbody = document.getElementById('table' + type.charAt(0).toUpperCase() + type.slice(1));
+          tbody.innerHTML = '';
+
+          if (src.length === 0) {
+            var cols = type === 'rdbms' ? 9 : type === 'http' ? 8 : type === 'cloud' ? 8 : 5;
+            tbody.innerHTML = '<tr><td colspan="' + cols + '" class="text-center opacity-50 py-6">No ' + type.toUpperCase() + ' outputs configured yet.</td></tr>';
+            return;
+          }
+
+          src.forEach(function(out) {
+            var row = document.createElement('tr');
+            var oid = escHtml(out.id || '');
+            var oname = escHtml(out.name || out.id || '');
+            var enabled = out.enabled !== false;
+            var statusBadge = enabled
+              ? '<span class="badge badge-success badge-xs">● On</span>'
+              : '<span class="badge badge-ghost badge-xs">● Off</span>';
+            var running = isInRunningJob(out.id);
+            var delBtn = running
+              ? '<div class="tooltip tooltip-left" data-tip="Stop job first"><button class="btn btn-ghost btn-xs text-error" disabled>Delete</button></div>'
+              : '<button class="btn btn-ghost btn-xs text-error" onclick="deleteOutput(\'' + oid + '\',\'' + type + '\')">Delete</button>';
+
+            if (type === 'rdbms') {
+              row.innerHTML = '<td>' + statusBadge + '</td>' +
+                '<td class="font-semibold">' + oname + '</td>' +
+                '<td><span class="badge badge-info badge-xs">' + escHtml(out.engine || '—') + '</span></td>' +
+                '<td class="font-mono text-xs">' + escHtml(out.host || '') + ':' + (out.port || '') + '</td>' +
+                '<td>' + escHtml(out.database || '—') + '</td>' +
+                '<td class="opacity-60">' + escHtml(out.schema || 'public') + '</td>' +
+                '<td class="opacity-60">' + (out.pool_min || 2) + '-' + (out.pool_max || 10) + '</td>' +
+                '<td>' + usedByHtml(out.id) + '</td>' +
+                '<td class="text-right"><div class="flex gap-1 justify-end">' +
+                  '<button class="btn btn-ghost btn-xs" onclick="testOutput(\'rdbms\',\'' + oid + '\')">Test</button>' +
+                  '<button class="btn btn-ghost btn-xs" onclick="showOutputForm(\'rdbms\',\'' + oid + '\')">Edit</button>' +
+                  delBtn + '</div></td>';
+            } else if (type === 'http') {
+              row.innerHTML = '<td>' + statusBadge + '</td>' +
+                '<td class="font-semibold">' + oname + '</td>' +
+                '<td class="font-mono text-xs">' + escHtml(out.target_url || '—') + '</td>' +
+                '<td><span class="badge badge-info badge-xs">' + escHtml(out.write_method || 'POST') + '</span></td>' +
+                '<td>' + (out.timeout_seconds || 30) + 's</td>' +
+                '<td>' + (out.retry_count || 3) + '</td>' +
+                '<td>' + usedByHtml(out.id) + '</td>' +
+                '<td class="text-right"><div class="flex gap-1 justify-end">' +
+                  '<button class="btn btn-ghost btn-xs" onclick="testOutput(\'http\',\'' + oid + '\')">Test</button>' +
+                  '<button class="btn btn-ghost btn-xs" onclick="showOutputForm(\'http\',\'' + oid + '\')">Edit</button>' +
+                  delBtn + '</div></td>';
+            } else if (type === 'cloud') {
+              row.innerHTML = '<td>' + statusBadge + '</td>' +
+                '<td class="font-semibold">' + oname + '</td>' +
+                '<td><span class="badge badge-warning badge-xs">' + escHtml(out.provider || 's3') + '</span></td>' +
+                '<td>' + escHtml(out.region || '—') + '</td>' +
+                '<td class="font-mono text-xs">' + escHtml(out.bucket || '—') + '</td>' +
+                '<td class="opacity-60">' + escHtml(out.prefix || '—') + '</td>' +
+                '<td>' + usedByHtml(out.id) + '</td>' +
+                '<td class="text-right"><div class="flex gap-1 justify-end">' +
+                  '<button class="btn btn-ghost btn-xs" onclick="showOutputForm(\'cloud\',\'' + oid + '\')">Edit</button>' +
+                  delBtn + '</div></td>';
+            } else if (type === 'stdout') {
+              var fmt = out.pretty_print ? 'JSON' : (out.format || 'text');
+              row.innerHTML = '<td>' + statusBadge + '</td>' +
+                '<td class="font-semibold">' + oname + '</td>' +
+                '<td><span class="badge badge-ghost badge-xs">' + escHtml(fmt) + '</span></td>' +
+                '<td>' + usedByHtml(out.id) + '</td>' +
+                '<td class="text-right"><div class="flex gap-1 justify-end">' +
+                  '<button class="btn btn-ghost btn-xs" onclick="showOutputForm(\'stdout\',\'' + oid + '\')">Edit</button>' +
+                  delBtn + '</div></td>';
+            }
+            tbody.appendChild(row);
+          });
+        })
+        .catch(function(err){ console.error('Failed to load outputs:', err); });
+    }
+
+    // ===== Load all tab counts =====
+    function loadAllCounts() {
+      var types = ['rdbms', 'http', 'cloud', 'stdout'];
+      types.forEach(function(t) {
+        fetch('/api/outputs_' + t)
+          .then(function(r){ return r.json(); })
+          .then(function(data){
+            document.getElementById('tabCount' + t.charAt(0).toUpperCase() + t.slice(1)).textContent = (data.src || []).length;
+          })
+          .catch(function(){});
+      });
+    }
+
+    // ===== Show/Hide Form =====
+    function showOutputForm(type, outputId) {
+      var formEl = document.getElementById('form' + type.charAt(0).toUpperCase() + type.slice(1));
+      var titleEl = document.getElementById('form' + type.charAt(0).toUpperCase() + type.slice(1) + 'Title');
+      var idField = document.getElementById(type === 'rdbms' ? 'rdbmsId' : type === 'http' ? 'httpId' : type === 'cloud' ? 'cloudId' : 'stdoutId');
+
+      if (outputId) {
+        editingId[type] = outputId;
+        titleEl.textContent = 'Edit ' + type.toUpperCase() + ' Output';
+        idField.disabled = true;
+        // Fetch and populate
+        fetch('/api/outputs_' + type)
+          .then(function(r){ return r.json(); })
+          .then(function(data){
+            var entry = (data.src || []).find(function(s){ return s.id === outputId; });
+            if (!entry) return;
+            populateForm(type, entry);
+            formEl.classList.remove('hidden');
+            formEl.scrollIntoView({ behavior: 'smooth' });
+          });
+      } else {
+        editingId[type] = null;
+        titleEl.textContent = 'New ' + type.toUpperCase() + ' Output';
+        idField.disabled = false;
+        clearForm(type);
+        formEl.classList.remove('hidden');
+        formEl.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+
+    function hideOutputForm(type) {
+      editingId[type] = null;
+      document.getElementById('form' + type.charAt(0).toUpperCase() + type.slice(1)).classList.add('hidden');
+    }
+
+    function clearForm(type) {
+      if (type === 'rdbms') {
+        document.getElementById('rdbmsId').value = '';
+        document.getElementById('rdbmsName').value = '';
+        document.getElementById('rdbmsEngine').value = '';
+        document.getElementById('rdbmsHost').value = '';
+        document.getElementById('rdbmsPort').value = '5432';
+        document.getElementById('rdbmsDatabase').value = '';
+        document.getElementById('rdbmsUser').value = '';
+        document.getElementById('rdbmsPass').value = '';
+        document.getElementById('rdbmsSchema').value = 'public';
+        document.getElementById('rdbmsPoolMin').value = '2';
+        document.getElementById('rdbmsPoolMax').value = '10';
+        document.getElementById('rdbmsSsl').checked = false;
+        document.getElementById('rdbmsEnabled').checked = true;
+        document.getElementById('rdbmsValEnabled').checked = false;
+        document.getElementById('rdbmsValStrict').checked = false;
+        document.getElementById('rdbmsValTrack').checked = true;
+        document.getElementById('rdbmsValDlq').checked = true;
+        document.getElementById('rdbmsValOpts').classList.add('hidden');
+      } else if (type === 'http') {
+        document.getElementById('httpId').value = '';
+        document.getElementById('httpName').value = '';
+        document.getElementById('httpUrl').value = '';
+        document.getElementById('httpMethod').value = 'POST';
+        document.getElementById('httpTimeout').value = '30';
+        document.getElementById('httpRetry').value = '3';
+        document.getElementById('httpEnabled').checked = true;
+      } else if (type === 'cloud') {
+        document.getElementById('cloudId').value = '';
+        document.getElementById('cloudName').value = '';
+        document.getElementById('cloudProvider').value = 's3';
+        document.getElementById('cloudRegion').value = '';
+        document.getElementById('cloudBucket').value = '';
+        document.getElementById('cloudPrefix').value = '';
+        document.getElementById('cloudEnabled').checked = true;
+      } else if (type === 'stdout') {
+        document.getElementById('stdoutId').value = '';
+        document.getElementById('stdoutName').value = '';
+        document.getElementById('stdoutFormat').value = 'json';
+        document.getElementById('stdoutEnabled').checked = true;
+      }
+    }
+
+    function populateForm(type, entry) {
+      if (type === 'rdbms') {
+        document.getElementById('rdbmsId').value = entry.id || '';
+        document.getElementById('rdbmsName').value = entry.name || '';
+        document.getElementById('rdbmsEngine').value = entry.engine || '';
+        document.getElementById('rdbmsHost').value = entry.host || '';
+        document.getElementById('rdbmsPort').value = entry.port || 5432;
+        document.getElementById('rdbmsDatabase').value = entry.database || '';
+        document.getElementById('rdbmsUser').value = entry.username || '';
+        document.getElementById('rdbmsPass').value = entry.password || '';
+        document.getElementById('rdbmsSchema').value = entry.schema || 'public';
+        document.getElementById('rdbmsPoolMin').value = entry.pool_min || 2;
+        document.getElementById('rdbmsPoolMax').value = entry.pool_max || 10;
+        document.getElementById('rdbmsSsl').checked = !!entry.ssl;
+        document.getElementById('rdbmsEnabled').checked = entry.enabled !== false;
+        var v = entry.validation || {};
+        document.getElementById('rdbmsValEnabled').checked = !!v.enabled;
+        document.getElementById('rdbmsValStrict').checked = !!v.strict;
+        document.getElementById('rdbmsValTrack').checked = v.track_originals !== false;
+        document.getElementById('rdbmsValDlq').checked = v.dlq_on_error !== false;
+        document.getElementById('rdbmsValOpts').classList.toggle('hidden', !v.enabled);
+      } else if (type === 'http') {
+        document.getElementById('httpId').value = entry.id || '';
+        document.getElementById('httpName').value = entry.name || '';
+        document.getElementById('httpUrl').value = entry.target_url || '';
+        document.getElementById('httpMethod').value = entry.write_method || 'POST';
+        document.getElementById('httpTimeout').value = entry.timeout_seconds || 30;
+        document.getElementById('httpRetry').value = entry.retry_count || 3;
+        document.getElementById('httpEnabled').checked = entry.enabled !== false;
+      } else if (type === 'cloud') {
+        document.getElementById('cloudId').value = entry.id || '';
+        document.getElementById('cloudName').value = entry.name || '';
+        document.getElementById('cloudProvider').value = entry.provider || 's3';
+        document.getElementById('cloudRegion').value = entry.region || '';
+        document.getElementById('cloudBucket').value = entry.bucket || '';
+        document.getElementById('cloudPrefix').value = entry.prefix || '';
+        document.getElementById('cloudEnabled').checked = entry.enabled !== false;
+      } else if (type === 'stdout') {
+        document.getElementById('stdoutId').value = entry.id || '';
+        document.getElementById('stdoutName').value = entry.name || '';
+        document.getElementById('stdoutFormat').value = entry.pretty_print ? 'json' : (entry.format || 'text');
+        document.getElementById('stdoutEnabled').checked = entry.enabled !== false;
+      }
+    }
+
+    // ===== Collect Form Data =====
+    function collectFormData(type) {
+      if (type === 'rdbms') {
+        var engine = document.getElementById('rdbmsEngine').value;
+        return {
+          id: document.getElementById('rdbmsId').value.trim(),
+          name: document.getElementById('rdbmsName').value.trim(),
+          enabled: document.getElementById('rdbmsEnabled').checked,
+          mode: engine, engine: engine,
+          host: document.getElementById('rdbmsHost').value.trim(),
+          port: parseInt(document.getElementById('rdbmsPort').value) || 5432,
+          database: document.getElementById('rdbmsDatabase').value.trim(),
+          username: document.getElementById('rdbmsUser').value.trim(),
+          password: document.getElementById('rdbmsPass').value,
+          schema: document.getElementById('rdbmsSchema').value.trim() || 'public',
+          pool_min: parseInt(document.getElementById('rdbmsPoolMin').value) || 2,
+          pool_max: parseInt(document.getElementById('rdbmsPoolMax').value) || 10,
+          ssl: document.getElementById('rdbmsSsl').checked,
+          validation: {
+            enabled: document.getElementById('rdbmsValEnabled').checked,
+            strict: document.getElementById('rdbmsValStrict').checked,
+            track_originals: document.getElementById('rdbmsValTrack').checked,
+            dlq_on_error: document.getElementById('rdbmsValDlq').checked
+          }
+        };
+      } else if (type === 'http') {
+        return {
+          id: document.getElementById('httpId').value.trim(),
+          name: document.getElementById('httpName').value.trim(),
+          enabled: document.getElementById('httpEnabled').checked,
+          target_url: document.getElementById('httpUrl').value.trim(),
+          write_method: document.getElementById('httpMethod').value,
+          timeout_seconds: parseInt(document.getElementById('httpTimeout').value) || 30,
+          retry_count: parseInt(document.getElementById('httpRetry').value) || 3
+        };
+      } else if (type === 'cloud') {
+        return {
+          id: document.getElementById('cloudId').value.trim(),
+          name: document.getElementById('cloudName').value.trim(),
+          enabled: document.getElementById('cloudEnabled').checked,
+          provider: document.getElementById('cloudProvider').value,
+          region: document.getElementById('cloudRegion').value.trim(),
+          bucket: document.getElementById('cloudBucket').value.trim(),
+          prefix: document.getElementById('cloudPrefix').value.trim()
+        };
+      } else if (type === 'stdout') {
+        var fmt = document.getElementById('stdoutFormat').value;
+        return {
+          id: document.getElementById('stdoutId').value.trim(),
+          name: document.getElementById('stdoutName').value.trim(),
+          enabled: document.getElementById('stdoutEnabled').checked,
+          pretty_print: (fmt === 'json'),
+          format: fmt
+        };
+      }
+    }
+
+    // ===== Save Output =====
+    function saveOutput(type) {
+      var entry = collectFormData(type);
+      if (!entry.id) { alert('Output ID is required'); return; }
+
+      if (type === 'rdbms' && (!entry.engine || !entry.host)) { alert('Engine and Host are required'); return; }
+      if (type === 'http' && !entry.target_url) { alert('Target URL is required'); return; }
+      if (type === 'cloud' && !entry.bucket) { alert('Bucket is required'); return; }
+
+      if (editingId[type]) {
+        // PUT single entry
+        fetch('/api/outputs_' + type + '/' + encodeURIComponent(editingId[type]), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(entry)
+        })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          if (data.error) { alert('Error: ' + data.error); return; }
+          showToast('✓ Output updated!', 'success');
+          hideOutputForm(type);
+          loadOutputs(type);
+          loadAllCounts();
+        })
+        .catch(function(err){ alert('Error: ' + err.message); });
+      } else {
+        // GET existing, append, POST full doc
+        fetch('/api/outputs_' + type)
+          .then(function(r){ return r.json(); })
+          .then(function(doc){
+            var src = doc.src || [];
+            var existing = src.findIndex(function(s){ return s.id === entry.id; });
+            if (existing >= 0) { alert('Output ID "' + entry.id + '" already exists. Use a different ID or edit the existing one.'); return; }
+            src.push(entry);
+            return fetch('/api/outputs_' + type, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: 'outputs_' + type, src: src })
+            });
+          })
+          .then(function(r){ if (r) return r.json(); })
+          .then(function(data){
+            if (!data) return;
+            if (data.error) { alert('Error: ' + data.error); return; }
+            showToast('✓ Output created!', 'success');
+            hideOutputForm(type);
+            loadOutputs(type);
+            loadAllCounts();
+          })
+          .catch(function(err){ alert('Error: ' + err.message); });
+      }
+    }
+
+    // ===== Test Connection =====
+    function testOutput(type, outputId) {
+      var entry;
+      if (outputId) {
+        // Test from table row — need to fetch
+        fetch('/api/outputs_' + type)
+          .then(function(r){ return r.json(); })
+          .then(function(data){
+            entry = (data.src || []).find(function(s){ return s.id === outputId; });
+            if (!entry) { alert('Output not found'); return; }
+            doTest(type, entry);
+          });
+      } else {
+        // Test from form
+        entry = collectFormData(type);
+        doTest(type, entry);
+      }
+    }
+
+    function doTest(type, entry) {
+      if (type === 'rdbms') {
+        fetch('/api/db/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            engine: entry.engine, host: entry.host, port: entry.port,
+            database: entry.database, username: entry.username, password: entry.password, ssl: entry.ssl
+          })
+        })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          if (data.ok || data.success) { alert('✓ RDBMS connection successful!\n\n' + (data.version || '')); }
+          else { alert('✕ Connection failed: ' + (data.error || 'Unknown error')); }
+        })
+        .catch(function(err){ alert('Test error: ' + err.message); });
+      } else if (type === 'http') {
+        fetch('/api/wizard/test-output', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target_url: entry.target_url })
+        })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          if (data.ok) { alert('✓ HTTP endpoint reachable!\nStatus: ' + data.status); }
+          else { alert('✕ Connection failed: ' + (data.error || 'Unknown error')); }
+        })
+        .catch(function(err){ alert('Test error: ' + err.message); });
+      }
+    }
+
+    // ===== Delete Output =====
+    function deleteOutput(outputId, type) {
+      if (!confirm('Delete output "' + outputId + '"? This cannot be undone.')) return;
+      fetch('/api/outputs_' + type + '/' + encodeURIComponent(outputId), { method: 'DELETE' })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          if (data.error) { alert('Error: ' + data.error); return; }
+          showToast('✓ Output deleted', 'success');
+          loadOutputs(type);
+          loadAllCounts();
+        })
+        .catch(function(err){ alert('Delete failed: ' + err.message); });
+    }
+
+    // ===== Init =====
+    document.addEventListener('DOMContentLoaded', function(){
+      var params = new URLSearchParams(window.location.search);
+      var tab = params.get('tab');
+      var editId = params.get('edit');
+      var startTab = (tab && ['rdbms','http','cloud','stdout'].indexOf(tab) >= 0) ? tab : 'rdbms';
+
+      loadJobs().then(function(){
+        switchTab(startTab);
+        loadAllCounts();
+
+        // Auto-open editor if ?edit=outputId in URL
+        if (editId) {
+          setTimeout(function(){ showOutputForm(startTab, editId); }, 300);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

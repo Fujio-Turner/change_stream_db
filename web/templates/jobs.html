@@ -736,7 +736,7 @@
     }
 
     function jbAddNewSource() {
-      window.open('/wizard', '_blank');
+      window.open('/inputs', '_blank');
     }
 
     function jbTestSourceConn(inputId) {
@@ -782,7 +782,7 @@
     }
 
     function jbEditSource(inputId) {
-      window.open('/wizard', '_blank');
+      window.open('/inputs?edit=' + encodeURIComponent(inputId), '_blank');
     }
 
     function jbDeleteSource(inputId) {
@@ -974,7 +974,8 @@
     }
 
     function jbAddNewOutput() {
-      window.open('/wizard', '_blank');
+      var type = currentDrillOutputType || 'rdbms';
+      window.open('/outputs?tab=' + type, '_blank');
     }
 
     function jbTestOutputConn(outputId, outputType) {
@@ -995,7 +996,8 @@
     }
 
     function jbEditOutput(outputId) {
-      window.open('/wizard', '_blank');
+      var type = currentDrillOutputType || 'rdbms';
+      window.open('/outputs?tab=' + type + '&edit=' + encodeURIComponent(outputId), '_blank');
     }
 
     function jbDeleteOutput(outputId, outputType) {
