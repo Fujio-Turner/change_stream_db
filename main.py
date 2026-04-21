@@ -1272,17 +1272,28 @@ async def _restart_handler(request: aiohttp.web.Request) -> aiohttp.web.Response
 
 
 async def _shutdown_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
-    """POST /_shutdown — graceful shutdown via PipelineManager.
+    """POST /_shutdown — graceful shutdown: stop feed, wait for in-flight
+    processing and outputs to finish, then respond.
 
-    Triggers PipelineManager.trigger_shutdown() which stops all job
-    pipelines, then schedules the main event loop to stop so the
-    process exits cleanly (CBL close, metrics cleanup, etc. happen
-    in main()'s finally block).
+    CBL database close is handled by main()'s finally block after the
+    event loop finishes, ensuring all async generators (which may write
+    DLQ entries) complete before the database is closed.
+
+    Behaviour:
+      1. Set shutdown_event → _changes loops stop, RetryableHTTP aborts retries.
+      2. Wait up to ``drain_timeout_seconds`` for active tasks to finish.
+         - If tasks drain in time → checkpoint was NOT advanced past pending
+           work, so nothing is lost.
+         - If drain times out → remaining docs could not be delivered.
+           * If ``dlq_inflight_on_shutdown`` is true the batch handler already
+             wrote them to the dead-letter queue (CBL or .jsonl) so they can
+             be reprocessed later even if a newer revision arrives on the feed.
+           * If false the checkpoint was held back; the same docs will be
+             re-fetched on the next startup.
+      3. Return summary JSON.
     """
-    manager: PipelineManager | None = request.app.get("pipeline_manager")
-    main_loop = request.app.get("main_loop")
-
-    if manager is None:
+    shutdown_event: asyncio.Event | None = request.app.get("shutdown_event")
+    if shutdown_event is None:
         return aiohttp.web.json_response(
             {"error": "shutdown not supported"}, status=500
         )
@@ -1291,18 +1302,72 @@ async def _shutdown_handler(request: aiohttp.web.Request) -> aiohttp.web.Respons
         logger, "info", "CONTROL", "graceful shutdown requested via /_shutdown endpoint"
     )
 
-    manager.trigger_shutdown()
+    # Read shutdown config from the app (set by start_metrics_server)
+    shutdown_cfg: dict = request.app.get("shutdown_cfg", {})
+    drain_timeout = shutdown_cfg.get("drain_timeout_seconds", 60)
+    dlq_policy = shutdown_cfg.get("dlq_inflight_on_shutdown", False)
 
-    # Schedule the main event loop to stop shortly after the response is sent
-    # so that main()'s finally block can do orderly cleanup.
-    if main_loop is not None:
-        threading.Timer(
-            0.2, lambda: main_loop.call_soon_threadsafe(main_loop.stop)
-        ).start()
+    # 1. Signal the _changes feed loops & retry loops to stop
+    shutdown_event.set()
 
-    return aiohttp.web.json_response(
-        {"ok": True, "message": "shutdown initiated"},
+    # 2. Wait for all in-flight processing / output tasks to drain
+    metrics: MetricsCollector | None = request.app.get("metrics")
+    drained = True
+    tasks_remaining = 0
+    if metrics is not None:
+        t0 = time.monotonic()
+        while metrics.active_tasks > 0:
+            elapsed = time.monotonic() - t0
+            if elapsed > drain_timeout:
+                tasks_remaining = metrics.active_tasks
+                drained = False
+                log_event(
+                    logger,
+                    "warn",
+                    "CONTROL",
+                    "shutdown drain timed out after %ds with %d tasks still active"
+                    % (drain_timeout, tasks_remaining),
+                )
+                break
+            log_event(
+                logger,
+                "debug",
+                "CONTROL",
+                "waiting for %d active tasks to finish" % metrics.active_tasks,
+            )
+            await asyncio.sleep(0.5)
+        if drained:
+            log_event(logger, "info", "CONTROL", "all active tasks drained")
+
+    # 3. Build response summary
+    summary: dict = {
+        "ok": True,
+        "drained": drained,
+        "drain_timeout_seconds": drain_timeout,
+        "dlq_inflight_on_shutdown": dlq_policy,
+    }
+    if not drained:
+        summary["tasks_remaining"] = tasks_remaining
+        if dlq_policy:
+            summary["message"] = (
+                "shutdown complete – drain timed out, %d in-flight docs written to dead-letter queue, "
+                "checkpoint was NOT advanced past them" % tasks_remaining
+            )
+        else:
+            summary["message"] = (
+                "shutdown complete – drain timed out, %d in-flight docs NOT delivered, "
+                "checkpoint was NOT advanced – they will be re-fetched on next startup"
+                % tasks_remaining
+            )
+    else:
+        summary["message"] = (
+            "shutdown complete – feeds stopped, outputs drained, database closed"
+        )
+
+    log_event(
+        logger, "info", "CONTROL", "graceful shutdown complete: %s" % summary["message"]
     )
+    return aiohttp.web.json_response(summary)
 
 
 async def _offline_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
