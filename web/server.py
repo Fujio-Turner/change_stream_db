@@ -82,10 +82,6 @@ async def page_index(request):
     return web.FileResponse(WEB / "templates" / "index.html")
 
 
-async def page_index_classic(request):
-    return web.FileResponse(WEB / "templates" / "index_classic.html")
-
-
 async def page_config(request):
     return web.FileResponse(WEB / "templates" / "settings.html")
 
@@ -2151,7 +2147,6 @@ def create_app():
     # Pages
     app.router.add_get("/favicon.ico", favicon)
     app.router.add_get("/", page_index)
-    app.router.add_get("/classic", page_index_classic)
     app.router.add_get("/settings", page_config)
     app.router.add_get("/jobs", page_jobs)
     app.router.add_get("/schema", page_schema)

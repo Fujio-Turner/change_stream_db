@@ -248,31 +248,58 @@
       </div>
     </div>
 
-    <!-- Activity Timeline (bottleneck detector) -->
-    <div class="card bg-base-100 shadow rounded-2xl">
-      <div class="card-body p-4">
-        <div class="flex items-center justify-between mb-1">
-          <div class="flex items-center gap-2">
-            <h3 class="text-sm font-semibold opacity-70">Activity Timeline</h3>
-            <div class="dropdown dropdown-hover dropdown-right" style="z-index:9999;">
-              <label tabindex="0">
-                <svg class="opacity-40 cursor-help" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
-              </label>
-              <div tabindex="0" class="dropdown-content rounded-xl shadow-lg p-4 w-72 text-xs leading-relaxed border border-base-content/10" style="background:oklch(var(--b1));">
-                <p class="font-bold mb-2">How to read this chart</p>
-                <p class="mb-1"><span style="color:#7c3aed;">--</span> <strong>Pending</strong> = docs received minus docs output. Your backlog.</p>
-                <p class="mb-1"><span style="color:#f87272;">- -</span> <strong>In/Out</strong> = received / output ratio. 1.0x = balanced, &gt;1x = backlog growing.</p>
-                <hr class="my-2 border-base-content/10"/>
-                <p class="mb-1"><strong>Pending flat at 0</strong> -- healthy, every doc processed</p>
-                <p class="mb-1"><strong>Pending rising + In/Out &gt; 1x</strong> -- input outpacing output</p>
-                <p class="mb-1"><strong>In/Out &lt; 1x</strong> -- catching up on backlog</p>
-                <p><strong>In/Out = 1x + Pending flat</strong> -- steady state</p>
+    <!-- Traffic + Activity Timeline -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- Network Traffic (Source ↑ / Output ↓) -->
+      <div class="card bg-base-100 shadow rounded-2xl">
+        <div class="card-body p-4">
+          <div class="flex items-center justify-between mb-1">
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-semibold opacity-70">Network Traffic</h3>
+              <div class="dropdown dropdown-hover dropdown-right" style="z-index:9999;">
+                <label tabindex="0">
+                  <svg class="opacity-40 cursor-help" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+                </label>
+                <div tabindex="0" class="dropdown-content bg-base-100 rounded-xl shadow-lg p-4 w-72 text-xs leading-relaxed border border-base-content/10">
+                  <p class="font-bold mb-2">How to read this chart</p>
+                  <p class="mb-1"><span style="color:#36d399;">▲</span> <strong>Source</strong> (positive) = bytes/s received from the changes feed.</p>
+                  <p class="mb-1"><span style="color:#3abff8;">▼</span> <strong>Output</strong> (negative) = bytes/s sent to destination.</p>
+                  <hr class="my-2 border-base-content/10"/>
+                  <p class="mb-1"><strong>Balanced</strong> → top and bottom roughly mirror each other</p>
+                  <p><strong>Top larger than bottom</strong> → incoming faster than outgoing</p>
+                </div>
               </div>
             </div>
           </div>
-          <button class="btn btn-xs btn-outline font-mono" id="btnScaleToggle" onclick="toggleYScale()">Y: Linear</button>
+          <div id="chartTraffic" style="width:100%;height:240px"></div>
         </div>
-        <div id="chartActivity" style="width:100%;height:240px"></div>
+      </div>
+      <!-- Activity Timeline (bottleneck detector) -->
+      <div class="card bg-base-100 shadow rounded-2xl">
+        <div class="card-body p-4">
+          <div class="flex items-center justify-between mb-1">
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-semibold opacity-70">Activity Timeline</h3>
+              <div class="dropdown dropdown-hover dropdown-right" style="z-index:9999;">
+                <label tabindex="0">
+                  <svg class="opacity-40 cursor-help" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+                </label>
+                <div tabindex="0" class="dropdown-content bg-base-100 rounded-xl shadow-lg p-4 w-72 text-xs leading-relaxed border border-base-content/10">
+                  <p class="font-bold mb-2">How to read this chart</p>
+                  <p class="mb-1"><span style="color:#7c3aed;">--</span> <strong>Pending</strong> = docs received minus docs output. Your backlog.</p>
+                  <p class="mb-1"><span style="color:#f87272;">- -</span> <strong>In/Out</strong> = received / output ratio. 1.0x = balanced, &gt;1x = backlog growing.</p>
+                  <hr class="my-2 border-base-content/10"/>
+                  <p class="mb-1"><strong>Pending flat at 0</strong> -- healthy, every doc processed</p>
+                  <p class="mb-1"><strong>Pending rising + In/Out &gt; 1x</strong> -- input outpacing output</p>
+                  <p class="mb-1"><strong>In/Out &lt; 1x</strong> -- catching up on backlog</p>
+                  <p><strong>In/Out = 1x + Pending flat</strong> -- steady state</p>
+                </div>
+              </div>
+            </div>
+            <button class="btn btn-xs btn-outline font-mono" id="btnScaleToggle" onclick="toggleYScale()">Y: Linear</button>
+          </div>
+          <div id="chartActivity" style="width:100%;height:240px"></div>
+        </div>
       </div>
     </div>
 
@@ -524,7 +551,11 @@ var chartHistory = {
   // Activity Timeline
   pending: [],
   failRate: [],
-  throughputRate: []
+  throughputRate: [],
+  skippedRate: [],
+  // Network Traffic (bytes/s)
+  bytesIn: [],
+  bytesOut: []
 };
 // Track previous totals so we can compute deltas
 var prev = {};
@@ -550,6 +581,21 @@ function pushHistory(m) {
   ];
   for (var i = 0; i < keys.length; i++) {
     var hk = keys[i][0], mk = keys[i][1];
+    var cur = m[mk] || 0;
+    var delta = (prev[mk] != null) ? Math.max(0, cur - prev[mk]) : 0;
+    prev[mk] = cur;
+    var rate = (dt > 0) ? parseFloat((delta / dt).toFixed(2)) : 0;
+    chartHistory[hk].push(rate);
+    if (chartHistory[hk].length > MAX_POINTS) chartHistory[hk].shift();
+  }
+
+  // Network Traffic: bytes/s in and out
+  var byteKeys = [
+    ['bytesIn',  'changes_worker_bytes_received_total'],
+    ['bytesOut', 'changes_worker_bytes_output_total']
+  ];
+  for (var i = 0; i < byteKeys.length; i++) {
+    var hk = byteKeys[i][0], mk = byteKeys[i][1];
     var cur = m[mk] || 0;
     var delta = (prev[mk] != null) ? Math.max(0, cur - prev[mk]) : 0;
     prev[mk] = cur;
@@ -594,14 +640,18 @@ function pushHistory(m) {
   var failPct = totalOut > 0 ? parseFloat(((totalOutErr / totalOut) * 100).toFixed(2)) : 0;
   chartHistory.failRate.push(failPct);
   if (chartHistory.failRate.length > MAX_POINTS) chartHistory.failRate.shift();
-  var thruPct = totalReceived > 0 ? parseFloat(((totalOutOk / totalReceived) * 100).toFixed(2)) : 0;
+  var totalAttempted = totalOutOk + totalOutErr;
+  var thruPct = totalAttempted > 0 ? parseFloat(((totalOutOk / totalAttempted) * 100).toFixed(2)) : 0;
   chartHistory.throughputRate.push(thruPct);
   if (chartHistory.throughputRate.length > MAX_POINTS) chartHistory.throughputRate.shift();
+  var skippedPct = totalReceived > 0 ? parseFloat(((totalSkipped / totalReceived) * 100).toFixed(2)) : 0;
+  chartHistory.skippedRate.push(skippedPct);
+  if (chartHistory.skippedRate.length > MAX_POINTS) chartHistory.skippedRate.shift();
 }
 
 // ── ECharts ──────────────────────────────────────────────────
 var yAxisLog = false;
-var cFeed, cProcess, cOutput, cFeedAvg, cProcessAvg, cOutputAvg, cActivity;
+var cFeed, cProcess, cOutput, cFeedAvg, cProcessAvg, cOutputAvg, cActivity, cTraffic;
 
 function chartColors() {
   var dark = document.documentElement.getAttribute('data-theme') === 'dark';
@@ -618,6 +668,7 @@ function makeChart(el) {
 
 function rebuildCharts() {
   if (cActivity) cActivity.dispose();
+  if (cTraffic) cTraffic.dispose();
   if (cFeed) cFeed.dispose();
   if (cProcess) cProcess.dispose();
   if (cOutput) cOutput.dispose();
@@ -625,6 +676,7 @@ function rebuildCharts() {
   if (cProcessAvg) cProcessAvg.dispose();
   if (cOutputAvg) cOutputAvg.dispose();
   cActivity   = makeChart(document.getElementById('chartActivity'));
+  cTraffic    = makeChart(document.getElementById('chartTraffic'));
   cFeed       = makeChart(document.getElementById('chartFeed'));
   cProcess    = makeChart(document.getElementById('chartProcess'));
   cOutput     = makeChart(document.getElementById('chartOutput'));
@@ -635,7 +687,7 @@ function rebuildCharts() {
   drawArchArrows();
 
   // Sync crosshair across all charts
-  echarts.connect([cActivity, cFeed, cProcess, cOutput, cFeedAvg, cProcessAvg, cOutputAvg]);
+  echarts.connect([cTraffic, cActivity, cFeed, cProcess, cOutput, cFeedAvg, cProcessAvg, cOutputAvg]);
 }
 
 function toggleYScale() {
@@ -1222,7 +1274,7 @@ function renderCharts() {
           for (var i = 0; i < params.length; i++) {
             var p = params[i];
             tip += '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + p.color + ';margin-right:4px"></span>';
-            if (p.seriesName === 'Fail %' || p.seriesName === 'Thru %') {
+            if (p.seriesName === 'Fail %' || p.seriesName === 'Thru %' || p.seriesName === 'Skipped %') {
               tip += p.seriesName + ': <b>' + (p.value != null ? p.value.toFixed(2) + '%' : '--') + '</b><br/>';
             } else if (p.seriesName === 'Pending') {
               tip += p.seriesName + ': <b>' + fmt(p.value) + '</b><br/>';
@@ -1248,7 +1300,56 @@ function renderCharts() {
         { name: 'Output', type: 'line', smooth: true, symbol: 'none', data: chartHistory.outSuccess, lineStyle: { width: 1.5, color: '#3abff8' }, itemStyle: { color: '#3abff8' } },
         { name: 'Pending', type: 'line', smooth: true, symbol: 'none', data: chartHistory.pending, lineStyle: { width: 2, color: '#7c3aed' }, itemStyle: { color: '#7c3aed' }, areaStyle: { opacity: 0.08, color: '#7c3aed' } },
         { name: 'Fail %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.failRate, lineStyle: { width: 2, color: '#f87272', type: 'dashed' }, itemStyle: { color: '#f87272' }, yAxisIndex: 1 },
-        { name: 'Thru %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.throughputRate, lineStyle: { width: 2, color: '#36d399', type: 'dashed' }, itemStyle: { color: '#36d399' }, yAxisIndex: 1 }
+        { name: 'Thru %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.throughputRate, lineStyle: { width: 2, color: '#36d399', type: 'dashed' }, itemStyle: { color: '#36d399' }, yAxisIndex: 1 },
+        { name: 'Skipped %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.skippedRate, lineStyle: { width: 2, color: '#3b82f6', type: 'dotted' }, itemStyle: { color: '#3b82f6' }, yAxisIndex: 1 }
+      ]
+    }, true);
+  }
+  // Network Traffic chart (bytes/s: Source positive, Output negative)
+  if (cTraffic) {
+    var outNeg = chartHistory.bytesOut.map(function(v) { return v != null ? -v : null; });
+    cTraffic.setOption({
+      backgroundColor: 'transparent',
+      textStyle: { color: c.text, fontSize: 10 },
+      tooltip: { trigger: 'axis', textStyle: { fontSize: 11 },
+        axisPointer: { type: 'cross', crossStyle: { color: '#666' }, lineStyle: { color: '#666' } },
+        formatter: function(params) {
+          var tip = params[0].axisValueLabel + '<br/>';
+          for (var i = 0; i < params.length; i++) {
+            var p = params[i];
+            var val = Math.abs(p.value || 0);
+            tip += '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + p.color + ';margin-right:4px"></span>';
+            tip += p.seriesName + ': <b>' + fmtBytes(val) + '/s</b><br/>';
+          }
+          return tip;
+        }
+      },
+      legend: { bottom: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+      grid: { top: 12, left: 55, right: 20, bottom: 30 },
+      xAxis: {
+        type: 'category', data: chartHistory.labels, boundaryGap: false,
+        axisLabel: { show: false }, axisLine: { lineStyle: { color: c.split } }, axisTick: { show: false }
+      },
+      yAxis: {
+        type: 'value', axisLine: { show: false },
+        axisLabel: { fontSize: 9, color: c.text, formatter: function(v) { return fmtBytes(Math.abs(v)); } },
+        splitLine: { lineStyle: { color: c.split } }
+      },
+      series: [
+        { name: 'Source', type: 'line', smooth: true, symbol: 'none', data: chartHistory.bytesIn,
+          lineStyle: { width: 2, color: '#36d399' }, itemStyle: { color: '#36d399' },
+          areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(54,211,153,0.35)' },
+            { offset: 1, color: 'rgba(54,211,153,0.05)' }
+          ]) }
+        },
+        { name: 'Output', type: 'line', smooth: true, symbol: 'none', data: outNeg,
+          lineStyle: { width: 2, color: '#3abff8' }, itemStyle: { color: '#3abff8' },
+          areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(58,191,248,0.05)' },
+            { offset: 1, color: 'rgba(58,191,248,0.35)' }
+          ]) }
+        }
       ]
     }, true);
   }
@@ -1291,6 +1392,7 @@ function renderCharts() {
 
 window.addEventListener('resize', function() {
   if (cActivity) cActivity.resize();
+  if (cTraffic) cTraffic.resize();
   if (cFeed) cFeed.resize();
   if (cProcess) cProcess.resize();
   if (cOutput) cOutput.resize();

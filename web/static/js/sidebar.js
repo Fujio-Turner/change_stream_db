@@ -12,7 +12,6 @@
   var NAV = [
     { type: 'section', label: 'Overview' },
     { href: '/',           label: 'Dashboard',       icon: '/static/icons/dashboard.svg' },
-    { href: '/classic',    label: 'Dashboard Classic', icon: '/static/icons/dashboard.svg' },
 
     { type: 'section', label: 'Tools' },
     { href: '/jobs',       label: 'Job Builder',      icon: '/static/icons/jobs.svg'     },

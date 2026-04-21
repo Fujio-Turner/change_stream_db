@@ -703,6 +703,17 @@ class BaseOutputForwarder(abc.ABC):
                     self._metrics.inc("output_success_total")
                     self._metrics.inc("mapper_ops_total", len(ops))
                     self._metrics.record_output_response_time(elapsed_ms / 1000)
+                    # Estimate bytes sent to the database
+                    body_len = 0
+                    for op in ops:
+                        sql, params = op.to_sql()
+                        body_len += len(sql.encode("utf-8"))
+                        for p in params:
+                            body_len += (
+                                len(str(p).encode("utf-8")) if p is not None else 0
+                            )
+                    if self._metrics_global:
+                        self._metrics_global.inc("bytes_output_total", body_len)
 
                 doc_rev = doc.get("_rev", doc.get("rev", "?"))
                 ic("send: OK", doc_id, len(ops), round(elapsed_ms, 1))
