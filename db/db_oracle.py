@@ -14,7 +14,7 @@ Oracle-specific SQL:
 import asyncio
 import logging
 
-from db.db_base import BaseOutputForwarder
+from db.db_base import BaseOutputForwarder, group_insert_ops, _MultiRowInsert
 from pipeline_logging import log_event
 
 try:
@@ -87,6 +87,8 @@ class OracleOutputForwarder(BaseOutputForwarder):
         self._schema = ora_cfg.get("schema", "")
         self._pool_min = ora_cfg.get("pool_min", 2)
         self._pool_max = ora_cfg.get("pool_max", 10)
+        self._sync_commit = ora_cfg.get("sync_commit", False)
+        self._prepared_statements = ora_cfg.get("prepared_statements", True)
 
         # Build DSN
         self._dsn = ora_cfg.get("dsn", "")
@@ -192,25 +194,57 @@ class OracleOutputForwarder(BaseOutputForwarder):
 
     # ── SQL execution ───────────────────────────────────────────────────
 
+    @staticmethod
+    def _multi_row_insert_sql(mri: _MultiRowInsert) -> tuple[str, list]:
+        """Build INSERT ALL … SELECT FROM DUAL for Oracle :N bind placeholders."""
+        col_list = ", ".join(f'"{c}"' for c in mri.columns)
+        parts: list[str] = []
+        params: list = []
+        idx = 1
+        for row in mri.rows:
+            val_list = ", ".join(f":{idx + i}" for i in range(len(row)))
+            parts.append(f'INTO "{mri.table}" ({col_list}) VALUES ({val_list})')
+            params.extend(row)
+            idx += len(row)
+        sql = "INSERT ALL " + " ".join(parts) + " SELECT 1 FROM DUAL"
+        return sql, params
+
     async def _execute_ops(self, ops: list) -> None:
         pool = self._pool
         if pool is None:
             raise ConnectionError("Oracle pool is not connected")
-        ic("_execute_ops", len(ops))
+        grouped = group_insert_ops(ops)
+        ic("_execute_ops", len(ops), "grouped", len(grouped))
         async with pool.acquire() as conn:
             try:
                 async with conn.cursor() as cur:
-                    for op in ops:
-                        sql, params = self._op_to_oracle_sql(op)
-                        log_event(
-                            logger,
-                            "debug",
-                            "OUTPUT",
-                            "executing SQL",
-                            operation=op.op_type,
-                            mode="db",
+                    if not self._sync_commit:
+                        await cur.execute(
+                            "ALTER SESSION SET COMMIT_WRITE = 'BATCH, NOWAIT'"
                         )
-                        await cur.execute(sql, params)
+                    for op in grouped:
+                        if isinstance(op, _MultiRowInsert):
+                            sql, params = self._multi_row_insert_sql(op)
+                            log_event(
+                                logger,
+                                "debug",
+                                "OUTPUT",
+                                "SQL exec (multi-row INSERT, %d rows)" % len(op.rows),
+                                operation="INSERT",
+                                mode="db",
+                            )
+                            await cur.execute(sql, params)
+                        else:
+                            sql, params = self._op_to_oracle_sql(op)
+                            log_event(
+                                logger,
+                                "debug",
+                                "OUTPUT",
+                                "executing SQL",
+                                operation=op.op_type,
+                                mode="db",
+                            )
+                            await cur.execute(sql, params)
                 await conn.commit()
             except Exception:
                 await conn.rollback()

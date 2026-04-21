@@ -77,6 +77,8 @@ from rest.changes_http import (
     _replay_dead_letter_queue,
     _sleep_or_shutdown,
     _chunked,
+    _json_loads,
+    _maybe_backpressure,
 )
 from rest import determine_method  # re-export for backward compat
 from cbl_store import (
@@ -1256,17 +1258,17 @@ async def _metrics_handler(request: aiohttp.web.Request) -> aiohttp.web.Response
 
 
 async def _restart_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
-    """POST /_restart — signal the changes feed to restart with fresh config."""
-    restart_event: asyncio.Event | None = request.app.get("restart_event")
-    if restart_event is None:
+    """POST /_restart — restart all jobs via PipelineManager."""
+    manager: PipelineManager | None = request.app.get("pipeline_manager")
+    if manager is None:
         return aiohttp.web.json_response({"error": "restart not supported"}, status=500)
-    # If offline, clear the offline flag so the restart loop resumes
-    offline_event: asyncio.Event | None = request.app.get("offline_event")
-    if offline_event is not None and offline_event.is_set():
-        offline_event.clear()
     log_event(logger, "info", "CONTROL", "restart requested via /_restart endpoint")
-    restart_event.set()
-    return aiohttp.web.json_response({"ok": True, "message": "restart signal sent"})
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, manager.restart_all)
+    states = await loop.run_in_executor(None, manager.list_job_states)
+    return aiohttp.web.json_response(
+        {"ok": True, "message": "restart signal sent", "jobs": states}
+    )
 
 
 async def _shutdown_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
@@ -1369,35 +1371,38 @@ async def _shutdown_handler(request: aiohttp.web.Request) -> aiohttp.web.Respons
 
 
 async def _offline_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
-    """POST /_offline — pause the changes feed. Worker stays alive."""
-    offline_event: asyncio.Event | None = request.app.get("offline_event")
-    restart_event: asyncio.Event | None = request.app.get("restart_event")
-    if offline_event is None or restart_event is None:
+    """POST /_offline — pause all jobs. Worker stays alive."""
+    manager: PipelineManager | None = request.app.get("pipeline_manager")
+    if manager is None:
         return aiohttp.web.json_response({"error": "offline not supported"}, status=500)
-    if offline_event.is_set():
+    if manager.is_offline():
         return aiohttp.web.json_response({"ok": True, "message": "already offline"})
     log_event(logger, "info", "CONTROL", "offline requested via /_offline endpoint")
-    offline_event.set()
-    restart_event.set()  # break the current feed loop
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, manager.go_offline)
     return aiohttp.web.json_response({"ok": True, "message": "going offline"})
 
 
 async def _online_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
-    """POST /_online — resume the changes feed with current config."""
-    offline_event: asyncio.Event | None = request.app.get("offline_event")
-    if offline_event is None:
+    """POST /_online — resume all enabled jobs."""
+    manager: PipelineManager | None = request.app.get("pipeline_manager")
+    if manager is None:
         return aiohttp.web.json_response({"error": "online not supported"}, status=500)
-    if not offline_event.is_set():
+    if not manager.is_offline():
         return aiohttp.web.json_response({"ok": True, "message": "already online"})
     log_event(logger, "info", "CONTROL", "online requested via /_online endpoint")
-    offline_event.clear()
-    return aiohttp.web.json_response({"ok": True, "message": "going online"})
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, manager.go_online)
+    states = await loop.run_in_executor(None, manager.list_job_states)
+    return aiohttp.web.json_response(
+        {"ok": True, "message": "going online", "jobs": states}
+    )
 
 
 async def _status_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
     """GET /_status — return worker online/offline state."""
-    offline_event: asyncio.Event | None = request.app.get("offline_event")
-    is_offline = offline_event.is_set() if offline_event is not None else False
+    manager: PipelineManager | None = request.app.get("pipeline_manager")
+    is_offline = manager.is_offline() if manager is not None else False
     return aiohttp.web.json_response({"online": not is_offline})
 
 
@@ -2346,6 +2351,7 @@ async def poll_changes(
     metrics: MetricsCollector | None = None,
     restart_event: asyncio.Event | None = None,
     job_id: str | None = None,  # Phase 6: job-specific identifier
+    map_executor=None,  # ThreadPoolExecutor for CPU-bound schema mapping
 ) -> None:
     gw = cfg.get(
         "gateway", cfg.get("inputs", [{}])[0]
@@ -2449,6 +2455,8 @@ async def poll_changes(
                 output = OracleOutputForwarder(out_cfg, dry_run, metrics=metrics)
             else:
                 raise ValueError(f"Unsupported db engine: {db_engine}")
+            if map_executor is not None:
+                output.set_map_executor(map_executor)
             await output.connect()
             db_output = output
             log_event(
@@ -2761,7 +2769,7 @@ async def poll_changes(
                         timeout=changes_http_timeout,
                     )
                     raw_body = await resp.read()
-                    body = json.loads(raw_body)
+                    body = _json_loads(raw_body)
                     if metrics:
                         metrics.inc("bytes_received_total", len(raw_body))
                         metrics.record_changes_request_time(
@@ -2804,6 +2812,9 @@ async def poll_changes(
                         feed_cfg.get("poll_interval_seconds", 10), stop_event
                     )
                     continue
+
+                # ── Output backpressure check ─────────────────────────
+                await _maybe_backpressure(metrics, stop_event)
 
                 # Check if optimized initial sync reached its target
                 reached_poll_target = (
@@ -3149,6 +3160,8 @@ def main() -> None:
             metrics_port = metrics_cfg.get("port", 9090)
 
             def _register_extra_routes(app: aiohttp.web.Application) -> None:
+                app["pipeline_manager"] = pipeline_manager
+                app["main_loop"] = loop
                 register_job_control_routes(app, pipeline_manager)
                 log_event(
                     logger,

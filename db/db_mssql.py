@@ -13,7 +13,7 @@ MSSQL-specific SQL:
 import asyncio
 import logging
 
-from db.db_base import BaseOutputForwarder
+from db.db_base import BaseOutputForwarder, group_insert_ops, _MultiRowInsert
 from pipeline_logging import log_event
 
 try:
@@ -85,6 +85,8 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
         self._pool_min = ms_cfg.get("pool_min", 2)
         self._pool_max = ms_cfg.get("pool_max", 10)
         self._trust_cert = ms_cfg.get("trust_server_certificate", True)
+        self._sync_commit = ms_cfg.get("sync_commit", False)
+        self._prepared_statements = ms_cfg.get("prepared_statements", True)
 
         self._dsn = self._build_dsn()
         self._pool: "aioodbc.Pool | None" = None
@@ -197,24 +199,50 @@ class MSSQLOutputForwarder(BaseOutputForwarder):
 
     # ── SQL execution ───────────────────────────────────────────────────
 
+    @staticmethod
+    def _multi_row_insert_sql(mri: _MultiRowInsert) -> tuple[str, list]:
+        """Build a single INSERT … VALUES (…),(…),… for MSSQL ? placeholders."""
+        col_list = ", ".join(f"[{c}]" for c in mri.columns)
+        row_ph = "(%s)" % ", ".join("?" for _ in mri.columns)
+        values_clause = ", ".join(row_ph for _ in mri.rows)
+        params: list = []
+        for row in mri.rows:
+            params.extend(row)
+        sql = f"INSERT INTO [{mri.table}] ({col_list}) VALUES {values_clause}"
+        return sql, params
+
     async def _execute_ops(self, ops: list) -> None:
-        ic("_execute_ops", len(ops))
         pool = self._pool
         if pool is None:
             raise ConnectionError("MSSQL pool is not connected")
+        grouped = group_insert_ops(ops)
+        ic("_execute_ops", len(ops), "grouped", len(grouped))
         async with pool.acquire() as conn:
             try:
                 async with conn.cursor() as cur:
-                    for op in ops:
-                        sql, params = self._op_to_mssql_sql(op)
-                        log_event(
-                            logger,
-                            "debug",
-                            "OUTPUT",
-                            "SQL exec",
-                            operation=op.op_type,
-                        )
-                        await cur.execute(sql, *params)
+                    if not self._sync_commit:
+                        await cur.execute("SET DELAYED_DURABILITY = ON")
+                    for op in grouped:
+                        if isinstance(op, _MultiRowInsert):
+                            sql, params = self._multi_row_insert_sql(op)
+                            log_event(
+                                logger,
+                                "debug",
+                                "OUTPUT",
+                                "SQL exec (multi-row INSERT, %d rows)" % len(op.rows),
+                                operation="INSERT",
+                            )
+                            await cur.execute(sql, *params)
+                        else:
+                            sql, params = self._op_to_mssql_sql(op)
+                            log_event(
+                                logger,
+                                "debug",
+                                "OUTPUT",
+                                "SQL exec",
+                                operation=op.op_type,
+                            )
+                            await cur.execute(sql, *params)
                 await conn.commit()
             except Exception:
                 await conn.rollback()

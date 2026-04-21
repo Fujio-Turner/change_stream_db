@@ -115,6 +115,7 @@ class Pipeline:
                         shutdown_event=self._shutdown_event,
                         metrics=self.metrics,
                         job_id=self.job_id,
+                        map_executor=self.middleware_executor,
                     )
                 )
             finally:

@@ -29,6 +29,74 @@ logger = logging.getLogger("changes_worker")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
 
+# ---------------------------------------------------------------------------
+# Multi-row INSERT grouping  (Level 1 batching)
+# ---------------------------------------------------------------------------
+# Consecutive INSERT ops targeting the same table with the same column set
+# are collapsed into a single ``_MultiRowInsert`` that each engine can
+# render as one ``INSERT … VALUES (…),(…),(…)`` round-trip.
+
+
+class _MultiRowInsert:
+    """A group of INSERT ops collapsed into one multi-row statement.
+
+    Attributes:
+        table:   Target table name.
+        columns: Ordered list of column names (identical across all rows).
+        rows:    List of per-row param lists.
+    """
+
+    __slots__ = ("table", "columns", "rows")
+
+    def __init__(self, table: str, columns: list[str], rows: list[list]):
+        self.table = table
+        self.columns = columns
+        self.rows = rows
+
+
+def group_insert_ops(ops: list) -> list:
+    """Return a new op list with consecutive same-table INSERTs merged.
+
+    Non-INSERT ops (DELETE, UPSERT) and INSERTs that change column sets
+    are emitted as-is, preserving original ordering.
+    """
+    grouped: list = []
+    i = 0
+    while i < len(ops):
+        op = ops[i]
+        if op.op_type != "INSERT":
+            grouped.append(op)
+            i += 1
+            continue
+
+        # Start a new multi-row group
+        data = op.data or {}
+        cols = list(data.keys())
+        col_key = tuple(cols)
+        table = op.table
+        rows = [[data[c] for c in cols]]
+
+        j = i + 1
+        while j < len(ops):
+            nxt = ops[j]
+            if nxt.op_type != "INSERT" or nxt.table != table:
+                break
+            nxt_data = nxt.data or {}
+            if tuple(nxt_data.keys()) != col_key:
+                break
+            rows.append([nxt_data[c] for c in cols])
+            j += 1
+
+        if len(rows) == 1:
+            # Single INSERT — keep original op (no overhead)
+            grouped.append(op)
+        else:
+            grouped.append(_MultiRowInsert(table, cols, rows))
+
+        i = j
+    return grouped
+
+
 def validate_identifier(name: str, context: str = "identifier") -> str:
     """Validate a SQL identifier and return it unchanged.
 
@@ -209,6 +277,8 @@ class BaseOutputForwarder(abc.ABC):
         self._max_retries = engine_cfg.get("max_retries", 3)
         self._backoff_base = engine_cfg.get("backoff_base_seconds", 0.5)
         self._backoff_max = engine_cfg.get("backoff_max_seconds", 10)
+        self._sync_commit = engine_cfg.get("sync_commit", False)
+        self._prepared_statements = engine_cfg.get("prepared_statements", True)
 
         # Mapping config
         self._mappers: list = []
@@ -222,6 +292,9 @@ class BaseOutputForwarder(abc.ABC):
         # Per-engine/per-job metrics proxy (created after subclass sets _engine)
         # Subclass __init__ MUST call _init_metrics() at the end.
         self._metrics: DbMetrics | None = None
+
+        # Thread pool for offloading CPU-bound schema mapping
+        self._map_executor = None  # set via set_map_executor()
 
         # Response time tracking (local to this forwarder)
         self._resp_times: deque[float] = deque(maxlen=10_000)
@@ -249,6 +322,10 @@ class BaseOutputForwarder(abc.ABC):
     @abc.abstractmethod
     def _get_engine_cfg(self, out_cfg: dict) -> dict:
         """Extract the engine-specific config dict from out_cfg."""
+
+    def set_map_executor(self, executor) -> None:
+        """Set a ThreadPoolExecutor for offloading CPU-bound schema mapping."""
+        self._map_executor = executor
 
     # ── Mapping loading (engine-agnostic) ───────────────────────────────
 
@@ -522,27 +599,23 @@ class BaseOutputForwarder(abc.ABC):
                 "error_class": "config",
             }
 
-        # Find the first matching mapper
-        mapper = None
-        for m in self._mappers:
-            if m.matches(doc):
-                mapper = m
-                break
-        if not mapper:
-            log_event(
-                logger,
-                "debug",
-                "MAPPING",
-                "doc does not match any mapping filter – skipping",
-                doc_id=doc_id,
-            )
-            if self._metrics:
-                self._metrics.inc("output_skipped_total")
-                self._metrics.inc("mapper_skipped_total")
-            return {"ok": True, "doc_id": doc_id, "skipped": True}
+        # Find the first matching mapper and map the document.
+        # This is CPU-bound (JSONPath extraction + transforms), so offload
+        # to the map_executor thread pool when available.
+        def _match_and_map():
+            for m in self._mappers:
+                if m.matches(doc):
+                    return m, m.map_document(doc, is_delete=is_delete)
+            return None, None
 
         try:
-            ops, diag = mapper.map_document(doc, is_delete=is_delete)
+            if self._map_executor is not None:
+                loop = asyncio.get_event_loop()
+                mapper, map_result = await loop.run_in_executor(
+                    self._map_executor, _match_and_map
+                )
+            else:
+                mapper, map_result = _match_and_map()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -567,6 +640,21 @@ class BaseOutputForwarder(abc.ABC):
                 "retryable": False,
                 "error_class": "mapping",
             }
+
+        if not mapper:
+            log_event(
+                logger,
+                "debug",
+                "MAPPING",
+                "doc does not match any mapping filter – skipping",
+                doc_id=doc_id,
+            )
+            if self._metrics:
+                self._metrics.inc("output_skipped_total")
+                self._metrics.inc("mapper_skipped_total")
+            return {"ok": True, "doc_id": doc_id, "skipped": True}
+
+        ops, diag = map_result
 
         if diag.has_issues:
             doc_rev = doc.get("_rev", doc.get("rev", "?"))
@@ -615,6 +703,17 @@ class BaseOutputForwarder(abc.ABC):
                     self._metrics.inc("output_success_total")
                     self._metrics.inc("mapper_ops_total", len(ops))
                     self._metrics.record_output_response_time(elapsed_ms / 1000)
+                    # Estimate bytes sent to the database
+                    body_len = 0
+                    for op in ops:
+                        sql, params = op.to_sql()
+                        body_len += len(sql.encode("utf-8"))
+                        for p in params:
+                            body_len += (
+                                len(str(p).encode("utf-8")) if p is not None else 0
+                            )
+                    if self._metrics_global:
+                        self._metrics_global.inc("bytes_output_total", body_len)
 
                 doc_rev = doc.get("_rev", doc.get("rev", "?"))
                 ic("send: OK", doc_id, len(ops), round(elapsed_ms, 1))

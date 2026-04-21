@@ -582,7 +582,7 @@ changes_worker_process_memory_rss_bytes > 1024 * 1024 * 1024
 
 1. **Checkpoint safety:** The checkpoint only advances after a batch is fully processed. If the worker crashes or OOMs mid-batch, it restarts from `since=<last_saved_seq>` — no data is lost.
 2. **Throttle (`throttle_feed`):** Set this to a reasonable limit (e.g., 5000–10000) to cap each `_changes` request. The worker loops immediately for the next bite, so throughput stays high but memory per batch is bounded.
-3. **Continuous mode:** Already flood-resilient — changes are processed one-at-a-time from the stream. TCP backpressure naturally slows the server. Memory stays flat.
+3. **Continuous & WebSocket buffering:** Both modes buffer incoming changes (up to `get_batch_number` rows or `stream_batch_timeout_ms` timeout, default 100ms) before processing as a single batch. This reduces per-message overhead while keeping memory bounded. TCP backpressure still naturally slows the server during processing.
 4. **`every_n_docs` + `sequential`:** For longpoll mode, sub-batch checkpointing limits replay on crash (e.g., `every_n_docs: 1000` means at most 1000 docs replayed).
 
 **Recommended flood-safe configuration:**
@@ -592,7 +592,8 @@ changes_worker_process_memory_rss_bytes > 1024 * 1024 * 1024
   "changes_feed": {
     "feed_type": "continuous",        // or use longpoll + throttle_feed
     "throttle_feed": 5000,            // cap batch size (longpoll only)
-    "continuous_catchup_limit": 5000  // cap catch-up batches
+    "continuous_catchup_limit": 5000, // cap catch-up batches
+    "stream_batch_timeout_ms": 100    // buffer window for continuous/websocket
   },
   "processing": {
     "sequential": true,               // predictable memory usage
@@ -602,6 +603,38 @@ changes_worker_process_memory_rss_bytes > 1024 * 1024 * 1024
     "every_n_docs": 1000              // sub-batch checkpoint (sequential only)
   }
 }
+```
+
+### Output Backpressure
+
+The worker monitors the output endpoint's response time and automatically throttles the processing rate when the output is struggling.  This prevents overwhelming a database or API that is under load.
+
+**How it works:**
+
+1. The first 50 output requests establish a **baseline** average latency.
+2. After baseline is set, the rolling average is compared against `backpressure_threshold × baseline` (default 2.0×).
+3. If exceeded, the worker sleeps for `(ratio - 1.0) × baseline` seconds (capped at 5s).
+4. When latency returns to normal, throttling stops automatically.
+
+**Metrics (prefixed `changes_worker_`):**
+
+| Metric | Type | What it tells you |
+|---|---|---|
+| `backpressure_delays_total` | counter | Number of times the worker throttled due to output latency |
+| `backpressure_delay_seconds_total` | counter | Cumulative seconds spent in backpressure delays |
+| `backpressure_active` | gauge | `1` when currently throttling, `0` when normal |
+
+**Example Grafana alerts:**
+
+```promql
+# Output endpoint degraded — backpressure active
+changes_worker_backpressure_active == 1
+
+# Significant time lost to backpressure in last hour
+increase(changes_worker_backpressure_delay_seconds_total[1h]) > 60
+
+# Backpressure firing frequently
+increase(changes_worker_backpressure_delays_total[5m]) > 10
 ```
 
 ---

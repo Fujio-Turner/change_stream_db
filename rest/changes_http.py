@@ -633,7 +633,7 @@ async def _fetch_docs_individually(
                 raw_bytes = await resp.read()
                 if metrics:
                     metrics.inc("bytes_received_total", len(raw_bytes))
-                doc = json.loads(raw_bytes)
+                doc = _json_loads(raw_bytes)
                 resp.release()
                 log_event(
                     logger,
@@ -725,7 +725,7 @@ async def fetch_db_update_seq(
             auth=basic_auth,
             headers=auth_headers,
         )
-        body = json.loads(await resp.read())
+        body = _json_loads(await resp.read())
         resp.release()
         raw_seq = body.get("update_seq")
         # Edge Server database-level response: update_seq is nested
@@ -873,6 +873,13 @@ async def _process_changes_batch(
     """
     batch_t0 = time.monotonic()
     sequential = proc_cfg.get("sequential", False)
+    include_docs = feed_cfg.get("include_docs", False)
+    ignore_delete = proc_cfg.get("ignore_delete", False)
+    ignore_remove = proc_cfg.get("ignore_remove", False)
+    write_method = getattr(output, "_write_method", "PUT")
+    delete_method = getattr(output, "_delete_method", "DELETE")
+    has_attachments = attachment_processor is not None
+    log_trace = logger.isEnabledFor(logging.DEBUG)
 
     if metrics:
         metrics.inc("poll_cycles_total")
@@ -931,29 +938,37 @@ async def _process_changes_batch(
     # During initial sync for CouchDB (no active_only), force-skip
     # deleted/removed changes to replicate active_only behaviour.
     force_skip_deletes = initial_sync and src == "couchdb"
+    skip_deletes = ignore_delete or force_skip_deletes
+    skip_removes = ignore_remove or force_skip_deletes
     filtered: list[dict] = []
     deleted_count = 0
     removed_count = 0
     feed_deletes = 0
     feed_removes = 0
-    for change in results:
-        if change.get("deleted"):
-            feed_deletes += 1
-        if change.get("removed"):
-            feed_removes += 1
-        if (proc_cfg.get("ignore_delete") or force_skip_deletes) and change.get(
-            "deleted"
-        ):
-            ic("ignoring deleted", change.get("id"))
-            deleted_count += 1
-            continue
-        if (proc_cfg.get("ignore_remove") or force_skip_deletes) and change.get(
-            "removed"
-        ):
-            ic("ignoring removed", change.get("id"))
-            removed_count += 1
-            continue
-        filtered.append(change)
+
+    if not skip_deletes and not skip_removes:
+        # Fast path: no filtering needed — avoid per-change branching
+        filtered = results
+        for change in results:
+            if change.get("deleted"):
+                feed_deletes += 1
+            if change.get("removed"):
+                feed_removes += 1
+    else:
+        for change in results:
+            is_deleted = change.get("deleted")
+            is_removed = change.get("removed")
+            if is_deleted:
+                feed_deletes += 1
+            if is_removed:
+                feed_removes += 1
+            if skip_deletes and is_deleted:
+                deleted_count += 1
+                continue
+            if skip_removes and is_removed:
+                removed_count += 1
+                continue
+            filtered.append(change)
 
     if metrics:
         if feed_deletes:
@@ -1006,12 +1021,12 @@ async def _process_changes_batch(
                 metrics.inc("active_tasks")
             try:
                 doc_id = change.get("id", "")
-                if feed_cfg.get("include_docs"):
+                if include_docs:
                     doc = change.get("doc", change)
                 else:
                     doc = docs_by_id.get(doc_id, change)
                 # ── ATTACHMENT stage (between MIDDLE and RIGHT) ──
-                if attachment_processor is not None:
+                if has_attachments:
                     try:
                         doc, _skip = await attachment_processor.process(
                             doc, base_url, http, basic_auth, auth_headers, src
@@ -1026,42 +1041,38 @@ async def _process_changes_batch(
                         )
                         raise
 
-                method = determine_method(
-                    change,
-                    write_method=getattr(output, "_write_method", "PUT"),
-                    delete_method=getattr(output, "_delete_method", "DELETE"),
-                )
-                op = infer_operation(change=change, doc=doc, method=method)
-                log_event(
-                    logger,
-                    "trace",
-                    "OUTPUT",
-                    "sending document",
-                    operation=op,
-                    doc_id=doc_id,
-                    mode=output._mode,
-                    http_method=method,
-                )
+                method = delete_method if change.get("deleted") else write_method
+                if log_trace:
+                    op = infer_operation(change=change, doc=doc, method=method)
+                    log_event(
+                        logger,
+                        "trace",
+                        "OUTPUT",
+                        "sending document",
+                        operation=op,
+                        doc_id=doc_id,
+                        mode=output._mode,
+                        http_method=method,
+                    )
                 result = await output.send(doc, method)
                 result["_change"] = change
                 result["_doc"] = doc
                 if result.get("ok"):
-                    log_event(
-                        logger,
-                        "debug",
-                        "OUTPUT",
-                        "document forwarded",
-                        operation=op,
-                        doc_id=doc_id,
-                        status=result.get("status"),
-                    )
+                    if log_trace:
+                        log_event(
+                            logger,
+                            "debug",
+                            "OUTPUT",
+                            "document forwarded",
+                            doc_id=doc_id,
+                            status=result.get("status"),
+                        )
                 else:
                     log_event(
                         logger,
                         "warn",
                         "OUTPUT",
                         "document delivery failed",
-                        operation=op,
                         doc_id=doc_id,
                         status=result.get("status"),
                     )
@@ -1421,7 +1432,7 @@ async def _catch_up_normal(
                 timeout=changes_http_timeout,
             )
             raw_body = await resp.read()
-            body = json.loads(raw_body)
+            body = _json_loads(raw_body)
             if metrics:
                 metrics.inc("bytes_received_total", len(raw_body))
                 metrics.record_changes_request_time(time.monotonic() - t0_changes)
@@ -1840,19 +1851,80 @@ async def _consume_websocket_stream(
             else:
                 ws_idle_timeout = max(timeout_ms * 2 / 1000.0, 300.0)
 
+            # Buffering: collect rows for up to stream_batch_timeout_ms or
+            # batch_max docs before processing as one batch (same as continuous).
+            batch_max = proc_cfg.get("get_batch_number", 100)
+            batch_timeout = feed_cfg.get("stream_batch_timeout_ms", 100) / 1000.0
+            buffer: list[dict] = []
+            buffer_last_seq = since
+
+            async def _flush_ws_buffer() -> tuple[str, bool]:
+                nonlocal buffer, buffer_last_seq, since
+                if not buffer:
+                    return since, False
+                rows_to_process = buffer
+                seq_to_process = buffer_last_seq
+                buffer = []
+                ic("websocket flush", len(rows_to_process), seq_to_process)
+                log_event(
+                    logger,
+                    "debug",
+                    "CHANGES",
+                    "websocket stream: flushing %d buffered rows"
+                    % len(rows_to_process),
+                    batch_size=len(rows_to_process),
+                )
+                result = await _process_changes_batch(
+                    rows_to_process,
+                    seq_to_process,
+                    since,
+                    feed_cfg=feed_cfg,
+                    proc_cfg=proc_cfg,
+                    output=output,
+                    dlq=dlq,
+                    checkpoint=checkpoint,
+                    http=http,
+                    base_url=base_url,
+                    basic_auth=basic_auth,
+                    auth_headers=auth_headers,
+                    semaphore=semaphore,
+                    src=src,
+                    metrics=metrics,
+                    every_n_docs=every_n_docs,
+                    max_concurrent=max_concurrent,
+                    shutdown_cfg=shutdown_cfg,
+                    attachment_processor=attachment_processor,
+                )
+                await _maybe_backpressure(metrics, shutdown_event)
+                return result
+
             while not shutdown_event.is_set():
+                # If buffer has rows, use batch_timeout; otherwise use idle timeout
+                read_timeout = batch_timeout if buffer else ws_idle_timeout
                 try:
-                    msg = await asyncio.wait_for(ws.receive(), timeout=ws_idle_timeout)
+                    msg = await asyncio.wait_for(ws.receive(), timeout=read_timeout)
                 except asyncio.TimeoutError:
-                    failure_count += 1
-                    logger.warning(
-                        "WebSocket idle timeout (%.0fs) – reconnecting (failure #%d)",
-                        ws_idle_timeout,
-                        failure_count,
-                    )
-                    if metrics:
-                        metrics.inc("poll_errors_total")
-                    break
+                    if buffer:
+                        # Batch timeout reached – flush what we have
+                        since, output_failed = await _flush_ws_buffer()
+                        payload["since"] = since
+                        if output_failed:
+                            logger.warning(
+                                "Output failed during WebSocket stream – reconnecting"
+                            )
+                            break
+                        continue
+                    else:
+                        # Idle timeout – no data at all
+                        failure_count += 1
+                        logger.warning(
+                            "WebSocket idle timeout (%.0fs) – reconnecting (failure #%d)",
+                            ws_idle_timeout,
+                            failure_count,
+                        )
+                        if metrics:
+                            metrics.inc("poll_errors_total")
+                        break
 
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     # SG sends empty frames as heartbeats – skip them
@@ -1863,10 +1935,10 @@ async def _consume_websocket_stream(
                         metrics.inc("bytes_received_total", len(msg.data))
 
                     try:
-                        parsed = json.loads(msg.data)
+                        parsed = _json_loads(msg.data)
                         if metrics:
                             metrics.inc("stream_messages_total")
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, ValueError):
                         logger.warning(
                             "WebSocket: unparseable message (length=%d)", len(msg.data)
                         )
@@ -1883,6 +1955,9 @@ async def _consume_websocket_stream(
                         and "last_seq" in parsed
                         and "id" not in parsed
                     ):
+                        # Flush remaining buffer before closing
+                        if buffer:
+                            await _flush_ws_buffer()
                         since = str(parsed["last_seq"])
                         ic(since, "websocket last_seq received")
                         payload["since"] = since
@@ -1893,54 +1968,27 @@ async def _consume_websocket_stream(
                     if not change_rows:
                         continue
 
-                    last_seq = str(change_rows[-1].get("seq", since))
-                    ic(
-                        len(change_rows),
-                        last_seq,
-                        "websocket batch",
-                        [
-                            {
-                                k: r.get(k)
-                                for k in ("_id", "_rev", "_deleted", "_removed", "seq")
-                                if k in r
-                            }
-                            for r in change_rows
-                        ],
-                    )
+                    buffer.extend(change_rows)
+                    buffer_last_seq = str(change_rows[-1].get("seq", since))
 
-                    since, output_failed = await _process_changes_batch(
-                        change_rows,
-                        last_seq,
-                        since,
-                        feed_cfg=feed_cfg,
-                        proc_cfg=proc_cfg,
-                        output=output,
-                        dlq=dlq,
-                        checkpoint=checkpoint,
-                        http=http,
-                        base_url=base_url,
-                        basic_auth=basic_auth,
-                        auth_headers=auth_headers,
-                        semaphore=semaphore,
-                        src=src,
-                        metrics=metrics,
-                        every_n_docs=every_n_docs,
-                        max_concurrent=max_concurrent,
-                        shutdown_cfg=shutdown_cfg,
-                        attachment_processor=attachment_processor,
-                    )
-                    payload["since"] = since
-
-                    if output_failed:
-                        logger.warning(
-                            "Output failed during WebSocket stream – reconnecting"
-                        )
-                        break
+                    # Flush if buffer is full
+                    if len(buffer) >= batch_max:
+                        since, output_failed = await _flush_ws_buffer()
+                        payload["since"] = since
+                        if output_failed:
+                            logger.warning(
+                                "Output failed during WebSocket stream – reconnecting"
+                            )
+                            break
 
                 elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSING):
+                    if buffer:
+                        await _flush_ws_buffer()
                     logger.warning("WebSocket stream closed by server")
                     break
                 elif msg.type == aiohttp.WSMsgType.ERROR:
+                    if buffer:
+                        await _flush_ws_buffer()
                     logger.warning("WebSocket stream error: %s", ws.exception())
                     break
 

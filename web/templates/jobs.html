@@ -8,6 +8,8 @@
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/tagify.css" rel="stylesheet" type="text/css" />
+  <script src="/static/js/tagify.min.js"></script>
   <script src="/static/js/tailwind.js"></script>
   <script>
     (function(){
@@ -333,8 +335,16 @@
               <div>
                 <label class="label label-text text-xs font-semibold">Feed Type</label>
                 <select id="jbFeedType" class="select select-bordered select-sm w-full">
-                  <option value="longpoll">Long Poll</option>
-                  <option value="continuous">Continuous</option>
+                  <optgroup label="Polling">
+                    <option value="longpoll">Long Poll</option>
+                    <option value="normal">Normal</option>
+                  </optgroup>
+                  <optgroup label="Continuous">
+                    <option value="continuous">Continuous</option>
+                    <option value="websocket">WebSocket (SG / App Services)</option>
+                    <option value="sse">SSE (Edge Server)</option>
+                    <option value="eventsource">EventSource (CouchDB)</option>
+                  </optgroup>
                 </select>
               </div>
               <div>
@@ -387,6 +397,16 @@
                 <span class="label-text text-xs font-semibold">Optimize Initial Sync</span>
                 <input id="jbOptimizeSync" type="checkbox" class="checkbox checkbox-sm" />
               </label>
+            </div>
+            <!-- Channel Filter (CouchDB, App Services, Sync Gateway only) -->
+            <div id="jbChannelFilterWrap" class="hidden mt-3">
+              <label class="label label-text text-xs font-semibold flex items-center gap-2">
+                Filter by Channel(s)
+                <div class="tooltip tooltip-right" data-tip="Server-side filter for the _changes feed. Only documents belonging to the listed channels are returned. Leave empty to receive all changes. CouchDB, App Services, and Sync Gateway only.">
+                  <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                </div>
+              </label>
+              <input type="text" id="jbChannels" class="input input-bordered input-sm w-full" placeholder="Type a channel and press Enter" />
             </div>
           </div>
         </div>
@@ -604,6 +624,9 @@
       document.getElementById('jbSourceSelected').classList.add('hidden');
       document.getElementById('jbProcessSelected').classList.add('hidden');
       document.getElementById('jbOutputSelected').classList.add('hidden');
+      // Reset channel filter
+      jbChannelsTagify.removeAllTags();
+      document.getElementById('jbChannelFilterWrap').classList.add('hidden');
       // Reset drilldowns
       jbBackToSourceTypes();
       jbBackToOutputTypes();
@@ -705,6 +728,7 @@
       document.getElementById('jbSourceSelected').classList.remove('hidden');
       updateStepIndicators();
       jbBackToSourceTypes();
+      jbUpdateChannelFilterVisibility();
     }
 
     function jbAddNewSource() {
@@ -1090,6 +1114,22 @@
       var threads = parseInt(document.getElementById('jbThreads').value, 10) || 4;
       var attachmentsEnabled = currentJobBuilder.processType === 'DA';
 
+      var changesFeed = {
+        feed_type: document.getElementById('jbFeedType').value,
+        poll_interval_seconds: parseInt(document.getElementById('jbPollInterval').value, 10) || 10,
+        heartbeat_ms: parseInt(document.getElementById('jbHeartbeat').value, 10) || 30000,
+        timeout_ms: parseInt(document.getElementById('jbTimeout').value, 10) || 60000,
+        http_timeout_seconds: parseInt(document.getElementById('jbHttpTimeout').value, 10) || 300,
+        throttle_feed: parseInt(document.getElementById('jbThrottleFeed').value, 10) || 0,
+        limit: parseInt(document.getElementById('jbLimit').value, 10) || 0,
+        flood_threshold: parseInt(document.getElementById('jbFloodThreshold').value, 10) || 10000,
+        continuous_catchup_limit: parseInt(document.getElementById('jbCatchupLimit').value, 10) || 10000,
+        active_only: document.getElementById('jbActiveOnly').checked,
+        include_docs: document.getElementById('jbIncludeDocs').checked,
+        optimize_initial_sync: document.getElementById('jbOptimizeSync').checked,
+        channels: jbChannelsTagify.value.map(function(t) { return t.value; })
+      };
+
       var payload = {
         name: jobName,
         input_id: currentJobBuilder.sourceId,
@@ -1097,6 +1137,7 @@
         output_id: currentJobBuilder.outputId,
         output_type: currentJobBuilder.outputType,
         mapping_id: mappingId,
+        changes_feed: changesFeed,
         system: {
           threads: threads,
           attachments_enabled: attachmentsEnabled
@@ -1244,6 +1285,11 @@
           document.getElementById('jbIncludeDocs').checked = !!cf.include_docs;
           document.getElementById('jbOptimizeSync').checked = !!cf.optimize_initial_sync;
 
+          // Populate channels and show/hide filter
+          jbChannelsTagify.removeAllTags();
+          jbChannelsTagify.addTags(cf.channels || []);
+          jbUpdateChannelFilterVisibility();
+
           // Populate output from job.outputs[0]
           var out = (job.outputs && job.outputs[0]) || {};
           currentJobBuilder.outputId = out.id || null;
@@ -1293,6 +1339,21 @@
         .then(function(r){ return r.json(); })
         .then(function(){ showToast('Job deleted', 'success'); loadJobs(); })
         .catch(function(err){ alert('Failed to delete job: ' + err.message); });
+    }
+
+    // ===== Channel Filter (Tagify) =====
+    var jbChannelsTagify = new Tagify(document.getElementById('jbChannels'), {
+      delimiters: ',| |Enter',
+      trim: true,
+      duplicates: false,
+      placeholder: 'Type a channel and press Enter'
+    });
+
+    var channelFilterTypes = ['couchdb', 'app_services', 'sync_gateway'];
+
+    function jbUpdateChannelFilterVisibility() {
+      var show = channelFilterTypes.indexOf(currentJobBuilder.sourceType) !== -1;
+      document.getElementById('jbChannelFilterWrap').classList.toggle('hidden', !show);
     }
 
     // ===== Init =====

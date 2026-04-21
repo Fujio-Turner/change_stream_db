@@ -2225,6 +2225,9 @@ async function validateMapping() {
       '<span class="badge ' + (data.matches ? 'badge-success' : 'badge-error') + '">' + (data.matches ? '✓ Matches' : '✗ No Match') + '</span>';
     if (data.ops && data.ops.length) {
       html += '<span class="text-sm opacity-60">' + data.ops.length + ' SQL operation(s)</span>';
+      if (data.original_op_count && data.grouped_op_count && data.original_op_count !== data.grouped_op_count) {
+        html += '<span class="badge badge-accent badge-sm">batched ' + data.original_op_count + ' → ' + data.grouped_op_count + ' statements</span>';
+      }
       if (explainOk === true) {
         html += '<span class="badge badge-success badge-sm">EXPLAIN ✓ All Valid</span>';
       } else if (explainOk === false) {
@@ -2247,6 +2250,7 @@ async function validateMapping() {
         var ex = op.explain || {};
         var stepOk = ex.ok;
         var opColor = op.type === 'DELETE' ? 'error' : (op.type === 'UPSERT' ? 'info' : 'primary');
+        var multiRowBadge = op.multi_row ? ' <span class="badge badge-accent badge-xs">' + op.multi_row + ' rows batched</span>' : '';
         var stepBorderClass = stepOk === false ? ' border-error' : (stepOk === true ? ' border-success/30' : '');
         var explainHtml = '';
         if (stepOk === true && ex.plan) {
@@ -2264,7 +2268,7 @@ async function validateMapping() {
         html += '<li><hr class="' + lineColor + '"/>' +
           '<div class="timeline-middle"><span class="badge badge-' + (stepOk === false ? 'error' : opColor) + ' badge-sm font-bold">#' + (i+1) + '</span></div>' +
           '<div class="timeline-end timeline-box' + stepBorderClass + '">' +
-            '<div class="text-xs font-semibold opacity-70 mb-1">' + escapeHtml(op.type) + ' → ' + escapeHtml(op.table) +
+            '<div class="text-xs font-semibold opacity-70 mb-1">' + escapeHtml(op.type) + ' → ' + escapeHtml(op.table) + multiRowBadge +
               (stepOk === true ? ' <span class="badge badge-success badge-xs">✓</span>' : '') +
               (stepOk === false ? ' <span class="badge badge-error badge-xs">✗</span>' : '') +
             '</div>' +

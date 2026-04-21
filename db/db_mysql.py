@@ -18,7 +18,7 @@ try:
 except ImportError:
     ic = lambda *a, **kw: None  # noqa: E731
 
-from db.db_base import BaseOutputForwarder
+from db.db_base import BaseOutputForwarder, group_insert_ops, _MultiRowInsert
 from pipeline_logging import log_event
 
 logger = logging.getLogger("changes_worker")
@@ -76,6 +76,8 @@ class MySQLOutputForwarder(BaseOutputForwarder):
         self._pool_min = my_cfg.get("pool_min", 2)
         self._pool_max = my_cfg.get("pool_max", 10)
         self._ssl = my_cfg.get("ssl", False)
+        self._sync_commit = my_cfg.get("sync_commit", False)
+        self._prepared_statements = my_cfg.get("prepared_statements", True)
 
         self._pool: "aiomysql.Pool | None" = None
         self._pool_lock = asyncio.Lock()
@@ -177,24 +179,50 @@ class MySQLOutputForwarder(BaseOutputForwarder):
 
     # ── SQL execution ───────────────────────────────────────────────────
 
+    @staticmethod
+    def _multi_row_insert_sql(mri: _MultiRowInsert) -> tuple[str, list]:
+        """Build a single INSERT … VALUES (…),(…),… for MySQL %s placeholders."""
+        col_list = ", ".join(f"`{c}`" for c in mri.columns)
+        row_ph = "(%s)" % ", ".join("%s" for _ in mri.columns)
+        values_clause = ", ".join(row_ph for _ in mri.rows)
+        params: list = []
+        for row in mri.rows:
+            params.extend(row)
+        sql = f"INSERT INTO `{mri.table}` ({col_list}) VALUES {values_clause}"
+        return sql, params
+
     async def _execute_ops(self, ops: list) -> None:
         pool = self._pool
         if pool is None:
             raise ConnectionError("MySQL pool is not connected")
-        ic("_execute_ops", len(ops))
+        grouped = group_insert_ops(ops)
+        ic("_execute_ops", len(ops), "grouped", len(grouped))
         async with pool.acquire() as conn:
             try:
                 async with conn.cursor() as cur:
-                    for op in ops:
-                        sql, params = self._op_to_mysql_sql(op)
-                        log_event(
-                            logger,
-                            "debug",
-                            "OUTPUT",
-                            "SQL exec",
-                            operation=op.op_type,
-                        )
-                        await cur.execute(sql, params)
+                    if not self._sync_commit:
+                        await cur.execute("SET innodb_flush_log_at_trx_commit = 2")
+                    for op in grouped:
+                        if isinstance(op, _MultiRowInsert):
+                            sql, params = self._multi_row_insert_sql(op)
+                            log_event(
+                                logger,
+                                "debug",
+                                "OUTPUT",
+                                "SQL exec (multi-row INSERT, %d rows)" % len(op.rows),
+                                operation="INSERT",
+                            )
+                            await cur.execute(sql, params)
+                        else:
+                            sql, params = self._op_to_mysql_sql(op)
+                            log_event(
+                                logger,
+                                "debug",
+                                "OUTPUT",
+                                "SQL exec",
+                                operation=op.op_type,
+                            )
+                            await cur.execute(sql, params)
                 await conn.commit()
             except Exception:
                 await conn.rollback()
