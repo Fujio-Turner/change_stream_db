@@ -260,6 +260,50 @@ COMMIT;
 
 Adding a new array is just another child table entry in the mapping JSON — no code changes needed. The mapper generates the DELETE + INSERT operations for each child table that has `replace_strategy: "delete_insert"` and a `source_array` path.
 
+### Multi-Row INSERT Batching
+
+When a single document produces multiple INSERT operations for the same child table (e.g., 4 order items), the engine automatically batches them into a **single multi-row INSERT statement**. This is handled by `group_insert_ops()` in `db/db_base.py` — consecutive INSERT ops targeting the same table with the same column set are collapsed into one round-trip to the database.
+
+**Before (6 round-trips):**
+
+```sql
+BEGIN;
+INSERT INTO orders (...) VALUES (...) ON CONFLICT ...;    -- 1 round-trip
+DELETE FROM order_items WHERE order_doc_id = $1;           -- 1 round-trip
+INSERT INTO order_items (...) VALUES ($1,$2,$3,$4);        -- 1 round-trip
+INSERT INTO order_items (...) VALUES ($1,$2,$3,$4);        -- 1 round-trip
+INSERT INTO order_items (...) VALUES ($1,$2,$3,$4);        -- 1 round-trip
+INSERT INTO order_items (...) VALUES ($1,$2,$3,$4);        -- 1 round-trip
+COMMIT;
+```
+
+**After (3 round-trips):**
+
+```sql
+BEGIN;
+INSERT INTO orders (...) VALUES (...) ON CONFLICT ...;    -- 1 round-trip
+DELETE FROM order_items WHERE order_doc_id = $1;           -- 1 round-trip
+INSERT INTO order_items (...) VALUES                       -- 1 round-trip (4 rows)
+  ($1,$2,$3,$4), ($5,$6,$7,$8), ($9,$10,$11,$12), ($13,$14,$15,$16);
+COMMIT;
+```
+
+This optimization is **automatic** — no configuration needed. It applies to all four RDBMS engines with the correct dialect:
+
+| Engine | Multi-row syntax |
+|---|---|
+| PostgreSQL | `INSERT INTO ... VALUES (...), (...), (...)` with `$N` placeholders |
+| MySQL | `INSERT INTO ... VALUES (...), (...), (...)` with `%s` placeholders |
+| MSSQL | `INSERT INTO ... VALUES (...), (...), (...)` with `?` placeholders |
+| Oracle | `INSERT ALL INTO ... VALUES (...) INTO ... VALUES (...) SELECT 1 FROM DUAL` |
+
+The **Validate Mapping** button in the Schema Mapping UI (`schema.html`) reflects this batching — it shows the grouped operations with a "N rows batched" badge and a summary like "batched 6 → 3 statements".
+
+**Key constraints:**
+- Only consecutive INSERTs to the **same table** with the **same column set** are merged.
+- UPSERT and DELETE operations are never merged (they pass through as-is).
+- Ordering is preserved — DELETE always runs before the multi-row INSERT.
+
 ### Trade-offs
 
 | Aspect | Full replace | Partial update (future) |
@@ -335,7 +379,9 @@ The existing `process_one()` function calls `output.send(doc, method)`. For RDBM
 
 1. Calls `self._mapper.matches(doc)` to check whether the document matches a mapping definition
 2. Calls `self._mapper.map_document(doc, is_delete=...)` which extracts field values using JSONPath, applies transforms, and returns a list of `SqlOperation` objects
-3. Acquires a connection from the asyncpg pool and iterates the `SqlOperation` list inside `conn.transaction()` — both single-table and multi-table writes use this same transactional path (simple and correct)
+3. Acquires a connection from the asyncpg pool, groups consecutive same-table INSERTs into multi-row statements via `group_insert_ops()`, and executes the grouped ops inside `conn.transaction()` — both single-table and multi-table writes use this same transactional path (simple and correct)
+
+> **Threaded mapping:** When running inside a Pipeline (v2.0 multi-job mode), the match + map step (steps 1–2) is offloaded to the Pipeline's `middleware_executor` ThreadPoolExecutor via `loop.run_in_executor()`. This frees the asyncio event loop to process other documents concurrently while the CPU-bound JSONPath extraction and transforms run in a separate thread. The executor is set via `output.set_map_executor(executor)` — when not set (e.g., standalone mode), mapping runs inline on the event loop as before.
 4. In `dry_run` mode, logs the SQL without executing
 5. Returns `{"ok": True/False, "doc_id": ..., "method": ...}` — same interface as the HTTP output
 
@@ -358,8 +404,21 @@ The `PostgresOutputForwarder` reads connection fields from the resolved engine c
 | `ssl` | `false` | Enable SSL connections. When `true`, creates a default SSL context with hostname checking disabled. |
 | `pool_min` | `2` | Minimum number of connections in the asyncpg pool |
 | `pool_max` | `10` | Maximum number of connections in the asyncpg pool |
+| `sync_commit` | `false` | **Advanced.** When `false` (default), sets `synchronous_commit = OFF` on each connection — Postgres does not wait for WAL flush after commit. **2-5x throughput improvement** for high-volume writes. The pipeline's checkpoint-based recovery makes this safe: on a Postgres crash, the last ~10ms of commits may be lost, but the worker resumes from its checkpoint and re-processes them. Set to `true` for full ACID durability. |
+| `prepared_statements` | `true` | **Advanced.** When `true` (default), asyncpg caches prepared statements per connection (`statement_cache_size=100`). Since the same mapping always produces the same SQL shape, this eliminates repeated parse+plan overhead. **10-30% throughput improvement.** Set to `false` to disable (e.g., if using PgBouncer in transaction mode, which doesn't support prepared statements). |
 
 > **Important:** The `mode` field must be present in the output config entry (e.g., `"postgres"`, `"mysql"`). Without it, the pipeline defaults to stdout output.
+
+### Engine Equivalents for `sync_commit`
+
+The `sync_commit` setting works across all four RDBMS engines, each using the engine's native mechanism:
+
+| Engine | When `sync_commit: false` (default) | Effect |
+|---|---|---|
+| PostgreSQL | `SET synchronous_commit = OFF` | Skip WAL flush wait per commit |
+| MySQL | `SET innodb_flush_log_at_trx_commit = 2` | Write to log buffer at commit, flush once per second |
+| MSSQL | `SET DELAYED_DURABILITY = ON` | Batch log flushes (SQL Server 2014+) |
+| Oracle | `ALTER SESSION SET COMMIT_WRITE = 'BATCH, NOWAIT'` | Batch redo log writes, don't wait |
 
 ---
 

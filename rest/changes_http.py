@@ -873,6 +873,13 @@ async def _process_changes_batch(
     """
     batch_t0 = time.monotonic()
     sequential = proc_cfg.get("sequential", False)
+    include_docs = feed_cfg.get("include_docs", False)
+    ignore_delete = proc_cfg.get("ignore_delete", False)
+    ignore_remove = proc_cfg.get("ignore_remove", False)
+    write_method = getattr(output, "_write_method", "PUT")
+    delete_method = getattr(output, "_delete_method", "DELETE")
+    has_attachments = attachment_processor is not None
+    log_trace = logger.isEnabledFor(logging.DEBUG)
 
     if metrics:
         metrics.inc("poll_cycles_total")
@@ -931,29 +938,37 @@ async def _process_changes_batch(
     # During initial sync for CouchDB (no active_only), force-skip
     # deleted/removed changes to replicate active_only behaviour.
     force_skip_deletes = initial_sync and src == "couchdb"
+    skip_deletes = ignore_delete or force_skip_deletes
+    skip_removes = ignore_remove or force_skip_deletes
     filtered: list[dict] = []
     deleted_count = 0
     removed_count = 0
     feed_deletes = 0
     feed_removes = 0
-    for change in results:
-        if change.get("deleted"):
-            feed_deletes += 1
-        if change.get("removed"):
-            feed_removes += 1
-        if (proc_cfg.get("ignore_delete") or force_skip_deletes) and change.get(
-            "deleted"
-        ):
-            ic("ignoring deleted", change.get("id"))
-            deleted_count += 1
-            continue
-        if (proc_cfg.get("ignore_remove") or force_skip_deletes) and change.get(
-            "removed"
-        ):
-            ic("ignoring removed", change.get("id"))
-            removed_count += 1
-            continue
-        filtered.append(change)
+
+    if not skip_deletes and not skip_removes:
+        # Fast path: no filtering needed — avoid per-change branching
+        filtered = results
+        for change in results:
+            if change.get("deleted"):
+                feed_deletes += 1
+            if change.get("removed"):
+                feed_removes += 1
+    else:
+        for change in results:
+            is_deleted = change.get("deleted")
+            is_removed = change.get("removed")
+            if is_deleted:
+                feed_deletes += 1
+            if is_removed:
+                feed_removes += 1
+            if skip_deletes and is_deleted:
+                deleted_count += 1
+                continue
+            if skip_removes and is_removed:
+                removed_count += 1
+                continue
+            filtered.append(change)
 
     if metrics:
         if feed_deletes:
@@ -1006,12 +1021,12 @@ async def _process_changes_batch(
                 metrics.inc("active_tasks")
             try:
                 doc_id = change.get("id", "")
-                if feed_cfg.get("include_docs"):
+                if include_docs:
                     doc = change.get("doc", change)
                 else:
                     doc = docs_by_id.get(doc_id, change)
                 # ── ATTACHMENT stage (between MIDDLE and RIGHT) ──
-                if attachment_processor is not None:
+                if has_attachments:
                     try:
                         doc, _skip = await attachment_processor.process(
                             doc, base_url, http, basic_auth, auth_headers, src
@@ -1026,42 +1041,38 @@ async def _process_changes_batch(
                         )
                         raise
 
-                method = determine_method(
-                    change,
-                    write_method=getattr(output, "_write_method", "PUT"),
-                    delete_method=getattr(output, "_delete_method", "DELETE"),
-                )
-                op = infer_operation(change=change, doc=doc, method=method)
-                log_event(
-                    logger,
-                    "trace",
-                    "OUTPUT",
-                    "sending document",
-                    operation=op,
-                    doc_id=doc_id,
-                    mode=output._mode,
-                    http_method=method,
-                )
+                method = delete_method if change.get("deleted") else write_method
+                if log_trace:
+                    op = infer_operation(change=change, doc=doc, method=method)
+                    log_event(
+                        logger,
+                        "trace",
+                        "OUTPUT",
+                        "sending document",
+                        operation=op,
+                        doc_id=doc_id,
+                        mode=output._mode,
+                        http_method=method,
+                    )
                 result = await output.send(doc, method)
                 result["_change"] = change
                 result["_doc"] = doc
                 if result.get("ok"):
-                    log_event(
-                        logger,
-                        "debug",
-                        "OUTPUT",
-                        "document forwarded",
-                        operation=op,
-                        doc_id=doc_id,
-                        status=result.get("status"),
-                    )
+                    if log_trace:
+                        log_event(
+                            logger,
+                            "debug",
+                            "OUTPUT",
+                            "document forwarded",
+                            doc_id=doc_id,
+                            status=result.get("status"),
+                        )
                 else:
                     log_event(
                         logger,
                         "warn",
                         "OUTPUT",
                         "document delivery failed",
-                        operation=op,
                         doc_id=doc_id,
                         status=result.get("status"),
                     )

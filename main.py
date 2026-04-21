@@ -2286,6 +2286,7 @@ async def poll_changes(
     metrics: MetricsCollector | None = None,
     restart_event: asyncio.Event | None = None,
     job_id: str | None = None,  # Phase 6: job-specific identifier
+    map_executor=None,  # ThreadPoolExecutor for CPU-bound schema mapping
 ) -> None:
     gw = cfg.get(
         "gateway", cfg.get("inputs", [{}])[0]
@@ -2389,6 +2390,8 @@ async def poll_changes(
                 output = OracleOutputForwarder(out_cfg, dry_run, metrics=metrics)
             else:
                 raise ValueError(f"Unsupported db engine: {db_engine}")
+            if map_executor is not None:
+                output.set_map_executor(map_executor)
             await output.connect()
             db_output = output
             log_event(

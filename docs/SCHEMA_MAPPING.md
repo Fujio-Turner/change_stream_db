@@ -337,20 +337,22 @@ BEGIN;
 -- 1. UPSERT parent
 INSERT INTO orders (...) VALUES (...) ON CONFLICT (doc_id) DO UPDATE SET ...;
 
--- 2. Replace items
+-- 2. Replace items (multi-row INSERT — all items in one statement)
 DELETE FROM order_items WHERE order_doc_id = $1;
-INSERT INTO order_items (...) VALUES (...);  -- per item
+INSERT INTO order_items (...) VALUES ($1,$2,$3,$4), ($5,$6,$7,$8), ...;
 
--- 3. Replace payments
+-- 3. Replace payments (multi-row INSERT)
 DELETE FROM order_payments WHERE order_doc_id = $1;
-INSERT INTO order_payments (...) VALUES (...);  -- per payment
+INSERT INTO order_payments (...) VALUES ($1,$2,$3), ($4,$5,$6), ...;
 
--- 4. Replace shipments
+-- 4. Replace shipments (multi-row INSERT)
 DELETE FROM order_shipments WHERE order_doc_id = $1;
-INSERT INTO order_shipments (...) VALUES (...);  -- per shipment
+INSERT INTO order_shipments (...) VALUES ($1,$2,$3), ($4,$5,$6), ...;
 
 COMMIT;
 ```
+
+> **Note:** Consecutive INSERT operations targeting the same child table are automatically batched into a single multi-row INSERT statement by `group_insert_ops()`. This reduces database round-trips significantly — e.g., 4 individual item INSERTs become 1 statement with 4 value tuples. See [`RDBMS_IMPLEMENTATION.md`](RDBMS_IMPLEMENTATION.md#multi-row-insert-batching) for details.
 
 To add a new child table for another array, add another entry to the `tables` array in your mapping file, following the same pattern:
 

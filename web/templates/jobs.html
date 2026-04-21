@@ -8,6 +8,8 @@
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/tagify.css" rel="stylesheet" type="text/css" />
+  <script src="/static/js/tagify.min.js"></script>
   <script src="/static/js/tailwind.js"></script>
   <script>
     (function(){
@@ -396,6 +398,16 @@
                 <input id="jbOptimizeSync" type="checkbox" class="checkbox checkbox-sm" />
               </label>
             </div>
+            <!-- Channel Filter (CouchDB, App Services, Sync Gateway only) -->
+            <div id="jbChannelFilterWrap" class="hidden mt-3">
+              <label class="label label-text text-xs font-semibold flex items-center gap-2">
+                Channels
+                <div class="tooltip tooltip-right" data-tip="Server-side filter for the _changes feed. Only documents belonging to the listed channels are returned. Leave empty to receive all changes. CouchDB, App Services, and Sync Gateway only.">
+                  <span class="badge badge-ghost badge-sm cursor-help">?</span>
+                </div>
+              </label>
+              <input type="text" id="jbChannels" class="input input-bordered input-sm w-full" placeholder="Type a channel and press Enter" />
+            </div>
           </div>
         </div>
       </div>
@@ -612,6 +624,9 @@
       document.getElementById('jbSourceSelected').classList.add('hidden');
       document.getElementById('jbProcessSelected').classList.add('hidden');
       document.getElementById('jbOutputSelected').classList.add('hidden');
+      // Reset channel filter
+      jbChannelsTagify.removeAllTags();
+      document.getElementById('jbChannelFilterWrap').classList.add('hidden');
       // Reset drilldowns
       jbBackToSourceTypes();
       jbBackToOutputTypes();
@@ -713,6 +728,7 @@
       document.getElementById('jbSourceSelected').classList.remove('hidden');
       updateStepIndicators();
       jbBackToSourceTypes();
+      jbUpdateChannelFilterVisibility();
     }
 
     function jbAddNewSource() {
@@ -1110,7 +1126,8 @@
         continuous_catchup_limit: parseInt(document.getElementById('jbCatchupLimit').value, 10) || 10000,
         active_only: document.getElementById('jbActiveOnly').checked,
         include_docs: document.getElementById('jbIncludeDocs').checked,
-        optimize_initial_sync: document.getElementById('jbOptimizeSync').checked
+        optimize_initial_sync: document.getElementById('jbOptimizeSync').checked,
+        channels: jbChannelsTagify.value.map(function(t) { return t.value; })
       };
 
       var payload = {
@@ -1268,6 +1285,11 @@
           document.getElementById('jbIncludeDocs').checked = !!cf.include_docs;
           document.getElementById('jbOptimizeSync').checked = !!cf.optimize_initial_sync;
 
+          // Populate channels and show/hide filter
+          jbChannelsTagify.removeAllTags();
+          jbChannelsTagify.addTags(cf.channels || []);
+          jbUpdateChannelFilterVisibility();
+
           // Populate output from job.outputs[0]
           var out = (job.outputs && job.outputs[0]) || {};
           currentJobBuilder.outputId = out.id || null;
@@ -1317,6 +1339,21 @@
         .then(function(r){ return r.json(); })
         .then(function(){ showToast('Job deleted', 'success'); loadJobs(); })
         .catch(function(err){ alert('Failed to delete job: ' + err.message); });
+    }
+
+    // ===== Channel Filter (Tagify) =====
+    var jbChannelsTagify = new Tagify(document.getElementById('jbChannels'), {
+      delimiters: ',| |Enter',
+      trim: true,
+      duplicates: false,
+      placeholder: 'Type a channel and press Enter'
+    });
+
+    var channelFilterTypes = ['couchdb', 'app_services', 'sync_gateway'];
+
+    function jbUpdateChannelFilterVisibility() {
+      var show = channelFilterTypes.indexOf(currentJobBuilder.sourceType) !== -1;
+      document.getElementById('jbChannelFilterWrap').classList.toggle('hidden', !show);
     }
 
     // ===== Init =====

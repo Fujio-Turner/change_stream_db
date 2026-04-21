@@ -15,6 +15,8 @@ import datetime
 
 from cbl_store import USE_CBL, CBLStore
 from schema.mapper import SchemaMapper
+from db.db_base import group_insert_ops, _MultiRowInsert
+from db.db_postgres import PostgresOutputForwarder
 from rest.api_v2 import (
     api_get_inputs_changes,
     api_post_inputs_changes,
@@ -1831,24 +1833,44 @@ async def validate_mapping(request):
             return json_response({"matches": False, "ops": []})
 
         ops, _diag = mapper.map_document(doc)
+        grouped = group_insert_ops(ops)
         result_ops = []
-        for op in ops:
-            sql, params = op.to_sql()
-            safe_params = []
-            for p in params:
-                if isinstance(p, (datetime.date, datetime.datetime)):
-                    safe_params.append(str(p))
-                else:
-                    safe_params.append(p)
-            result_ops.append(
-                {
-                    "type": op.op_type,
-                    "table": op.table,
-                    "sql": sql,
-                    "params": params,
-                    "params_display": safe_params,
-                }
-            )
+        for op in grouped:
+            if isinstance(op, _MultiRowInsert):
+                sql, params = PostgresOutputForwarder._multi_row_insert_sql(op)
+                safe_params = []
+                for p in params:
+                    if isinstance(p, (datetime.date, datetime.datetime)):
+                        safe_params.append(str(p))
+                    else:
+                        safe_params.append(p)
+                result_ops.append(
+                    {
+                        "type": "INSERT",
+                        "table": op.table,
+                        "sql": sql,
+                        "params": params,
+                        "params_display": safe_params,
+                        "multi_row": len(op.rows),
+                    }
+                )
+            else:
+                sql, params = op.to_sql()
+                safe_params = []
+                for p in params:
+                    if isinstance(p, (datetime.date, datetime.datetime)):
+                        safe_params.append(str(p))
+                    else:
+                        safe_params.append(p)
+                result_ops.append(
+                    {
+                        "type": op.op_type,
+                        "table": op.table,
+                        "sql": sql,
+                        "params": params,
+                        "params_display": safe_params,
+                    }
+                )
 
         # Run EXPLAIN on each statement against the real database
         explain_results = await _explain_ops(result_ops)
@@ -1858,7 +1880,15 @@ async def validate_mapping(request):
             ro["params"] = ro.pop("params_display")
 
         all_ok = all(e.get("ok") for e in explain_results)
-        return json_response({"matches": True, "ops": result_ops, "explain_ok": all_ok})
+        return json_response(
+            {
+                "matches": True,
+                "ops": result_ops,
+                "explain_ok": all_ok,
+                "original_op_count": len(ops),
+                "grouped_op_count": len(grouped),
+            }
+        )
     except Exception as exc:
         return error_response(str(exc), status=500)
 
