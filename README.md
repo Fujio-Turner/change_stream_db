@@ -1,4 +1,4 @@
-# Changes Worker  v2.0.0
+# Changes Worker  v2.1.0
 
 A production-ready, async Python 3 processor for the Couchbase `_changes` feed. It connects to **Sync Gateway**, **Capella App Services**, **Couchbase Edge Server**, or **Apache CouchDB**, consumes document changes via longpoll or continuous streaming, and forwards them to a downstream consumer — stdout, HTTP endpoint, RDBMS (PostgreSQL, MySQL, MS SQL, Oracle), or cloud blob storage (AWS S3, MinIO, S3-compatible).
 
