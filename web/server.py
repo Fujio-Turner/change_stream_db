@@ -785,6 +785,33 @@ async def get_metrics(request):
         return json_response({"error": "metrics_unreachable", "detail": str(exc)})
 
 
+# --- Maintenance API ---
+
+
+async def post_maintenance(request):
+    """POST /api/maintenance — Run CBL maintenance now (compact + optimize)."""
+    if not USE_CBL:
+        return error_response("CBL is not enabled", 503)
+    try:
+        store = CBLStore()
+        results = {}
+        results["compact"] = store.compact()
+        results["reindex"] = store.reindex()
+        results["optimize"] = store.optimize()
+        all_ok = all(results.values())
+        return json_response(
+            {
+                "ok": all_ok,
+                "results": results,
+                "message": "maintenance completed"
+                if all_ok
+                else "some operations failed",
+            }
+        )
+    except Exception as exc:
+        return json_response({"ok": False, "error": str(exc)}, status=500)
+
+
 # --- Worker Control API ---
 
 
@@ -2183,6 +2210,9 @@ def create_app():
     app.router.add_post("/api/dlq/{id}/retry", retry_dlq_entry)
     app.router.add_delete("/api/dlq/{id}", delete_dlq_entry)
     app.router.add_delete("/api/dlq", clear_dlq)
+
+    # Maintenance API
+    app.router.add_post("/api/maintenance", post_maintenance)
 
     # Status API
     app.router.add_get("/api/status", get_status)

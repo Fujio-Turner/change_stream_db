@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Changes Worker -- Schema Mappings</title>
+  <title>PouchPipes -- Schema Mappings</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
@@ -550,6 +550,17 @@ function _attachThemeChartListener() {
 // Defer until after sidebar.js has run
 if (document.getElementById('themeToggle')) _attachThemeChartListener();
 else document.addEventListener('DOMContentLoaded', _attachThemeChartListener);
+
+// ── Toast helper ─────────────────────────────────────────────
+function showToast(message, type) {
+  var container = document.getElementById('toastContainer');
+  var alertClass = type === 'success' ? 'alert-success' : 'alert-error';
+  var toast = document.createElement('div');
+  toast.className = 'alert ' + alertClass;
+  toast.innerHTML = '<span>' + message + '</span>';
+  container.appendChild(toast);
+  setTimeout(function() { toast.remove(); }, 3000);
+}
 
 // ── State ────────────────────────────────────────────────────
 var tables = [];
@@ -2686,15 +2697,14 @@ async function testDbConnection() {
     });
     var data = await res.json();
     if (data.ok) {
-      status.textContent = 'Connected! ' + (data.version || '').substring(0, 60);
-      status.className = 'text-sm self-center text-success';
+      showToast('✓ Connected! ' + (data.version || '').substring(0, 60), 'success');
     } else {
-      status.textContent = 'Error: ' + (data.error || 'Connection failed');
-      status.className = 'text-sm self-center text-error';
+      showToast('Error: ' + (data.error || 'Connection failed'), 'error');
     }
+    status.textContent = '';
   } catch (e) {
-    status.textContent = 'Error: ' + e.message;
-    status.className = 'text-sm self-center text-error';
+    showToast('Error: ' + e.message, 'error');
+    status.textContent = '';
   }
   btn.classList.remove('loading');
 }
@@ -2712,20 +2722,20 @@ async function introspectDb() {
     });
     var data = await res.json();
     if (data.error) {
-      status.textContent = 'Error: ' + (data.detail || data.error);
-      status.className = 'text-sm self-center text-error';
+      showToast('Error: ' + (data.detail || data.error), 'error');
+      status.textContent = '';
       btn.classList.remove('loading');
       return;
     }
     introspectedTables = data.tables || [];
-    status.textContent = 'Found ' + introspectedTables.length + ' table(s)';
-    status.className = 'text-sm self-center text-success';
+    showToast('✓ Found ' + introspectedTables.length + ' table(s)', 'success');
+    status.textContent = '';
     renderDbTableList(introspectedTables);
     document.getElementById('dbTableList').classList.remove('hidden');
     document.getElementById('btnImportSelected').disabled = false;
   } catch (e) {
-    status.textContent = 'Error: ' + e.message;
-    status.className = 'text-sm self-center text-error';
+    showToast('Error: ' + e.message, 'error');
+    status.textContent = '';
   }
   btn.classList.remove('loading');
 }

@@ -1,0 +1,277 @@
+DATA VALIDATION & COERCION ARCHITECTURE
+========================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          Couchbase Change Stream                            │
+│                    {"order_id": "123", "amount": "99.99"}                   │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+        ┌─────────────────────────────────────────────────────────┐
+        │  Pipeline: parse changes, filter by input sources       │
+        │           (sync_gateway, couchdb, etc.)                 │
+        └──────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+       ┌───────────────────────────────────────────────────────────┐
+       │  Output Selector: route to RDBMS, HTTP, S3, stdout        │
+       │     (based on output definitions)                         │
+       └──────────────────────┬────────────────────────────────────┘
+                              │
+                              ▼
+   ┌──────────────────────────────────────────────────────────────────┐
+   │                  RDBMS OUTPUT FORWARDER                          │
+   │                  (PostgreSQL, MySQL, MSSQL)                      │
+   │                                                                  │
+   │  ┌────────────────────────────────────────────────────────────┐ │
+   │  │ 1. SCHEMA MAPPER (existing)                               │ │
+   │  │    - Load mappings from CBL or filesystem                │ │
+   │  │    - Match document to mapping rules                     │ │
+   │  │    - Extract values using JSONPath                       │ │
+   │  │    - Apply transforms (trim, uppercase, etc.)            │ │
+   │  │    - Create SQL operations (INSERT/UPSERT/DELETE)        │ │
+   │  │                                                            │ │
+   │  │  Output: [SqlOp{table:"orders", data:{...}}, ...]        │ │
+   │  └──────────────────────┬─────────────────────────────────── │ │
+   │                         │                                     │ │
+   │                         ▼                                     │ │
+   │  ┌────────────────────────────────────────────────────────────┐ │
+   │  │ 2. DATA VALIDATOR (NEW)                                   │ │
+   │  │    ✓ Build validators from mapping column definitions    │ │
+   │  │    ✓ For each SQL op:                                    │ │
+   │  │      - Get table name from op.table                      │ │
+   │  │      - Look up SchemaValidator for that table           │ │
+   │  │      - Validate op.data row against schema              │ │
+   │  │      - Coerce values to SQL types                        │ │
+   │  │      - Track coercions (old → new values)               │ │
+   │  │      - Log transformations at debug level               │ │
+   │  │    ✓ Return updated ops with coerced data               │ │
+   │  │                                                            │ │
+   │  │  Output: [SqlOp{table:"orders", data:{123, 100.00}}, ...] │ │
+   │  └──────────────────────┬─────────────────────────────────── │ │
+   │                         │                                     │ │
+   │                         ▼                                     │ │
+   │  ┌────────────────────────────────────────────────────────────┐ │
+   │  │ 3. SQL EXECUTOR (existing)                                │ │
+   │  │    - Group consecutive INSERTs                            │ │
+   │  │    - Execute with connection pooling                      │ │
+   │  │    - Retry transient errors with backoff                 │ │
+   │  │    - Log errors and send to DLQ if needed                │ │
+   │  │                                                            │ │
+   │  │  Output: success/failure result                           │ │
+   │  └────────────────────────────────────────────────────────── │ │
+   └──────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+   ┌──────────────────────────────────────────────────────────────┐
+   │                    Database (PostgreSQL, MySQL, etc.)        │
+   │            INSERT INTO orders (order_id, amount)             │
+   │            VALUES (123, 100.00)  ← coerced values           │
+   └──────────────────────────────────────────────────────────────┘
+
+
+VALIDATION WORKFLOW
+===================
+
+Schema Mapping Input:
+{
+  "tables": [
+    {
+      "table_name": "orders",
+      "columns": {
+        "order_id": "INT",
+        "amount": "DECIMAL(10,2)",
+        "status": "VARCHAR(50)"
+      }
+    }
+  ]
+}
+         │
+         ▼
+_load_mappers() called
+         │
+         ├──▶ SchemaMapper.load()
+         │
+         └──▶ _build_validators_from_mapping()
+              │
+              ├──▶ Parse "INT" → (INT, {})
+              │
+              ├──▶ Parse "DECIMAL(10,2)" → (DECIMAL, {precision:10, scale:2})
+              │
+              └──▶ Create SchemaValidator("orders", {"order_id":"INT", ...})
+                   stored in self._validators
+
+
+Coercion Workflow:
+─────────────────
+
+Input Document:
+{
+  "_id": "order:123",
+  "order_id": "456",        ← String
+  "amount": "99.999",       ← String
+  "status": "pending"       ← Already correct
+}
+         │
+         ▼
+send(doc) called
+         │
+         ├──▶ Mapper matches and extracts
+         │
+         ├──▶ Creates SqlOps:
+         │    SqlOp(
+         │      op_type="UPSERT",
+         │      table="orders",
+         │      data={
+         │        "order_id": "456",       ← string
+         │        "amount": "99.999",      ← string
+         │        "status": "pending"      ← string
+         │      }
+         │    )
+         │
+         ▼
+_validate_and_fix_ops(ops) called
+         │
+         ├──▶ For each op:
+         │    - op.table = "orders"
+         │    - Look up validator = self._validators["orders"]
+         │    - validator.validate_and_coerce(op.data)
+         │
+         ▼
+SchemaValidator.validate_and_coerce()
+         │
+         ├──▶ For "order_id" field:
+         │    - old_val = "456"
+         │    - coerce_value("456", "INT") → 456 (int)
+         │    - Track: coercions["order_id"] = ("456", 456)
+         │    - Log: [VALIDATION] value coerced field=order_id old="456" new=456
+         │
+         ├──▶ For "amount" field:
+         │    - old_val = "99.999"
+         │    - coerce_value("99.999", "DECIMAL(10,2)") → 100.00
+         │    - Track: coercions["amount"] = ("99.999", 100.00)
+         │    - Log: [VALIDATION] value coerced field=amount old="99.999" new=100.00
+         │
+         ├──▶ For "status" field:
+         │    - old_val = "pending"
+         │    - coerce_value("pending", "VARCHAR(50)") → "pending" (no change)
+         │    - Not tracked (no coercion)
+         │
+         └──▶ Return ValidationResult(
+              valid=True,
+              coerced_doc={"order_id": 456, "amount": 100.00, "status": "pending"},
+              coercions={"order_id": ("456", 456), "amount": ("99.999", 100.00)}
+            )
+         │
+         ▼
+Update op.data with coerced values
+         │
+         ├──▶ op.data = {"order_id": 456, "amount": 100.00, "status": "pending"}
+         │
+         ▼
+Execute SQL
+         │
+         └──▶ INSERT INTO orders (order_id, amount, status)
+              VALUES (456, 100.00, "pending")
+              ↓
+              SUCCESS ✓ (types match, no coercion needed in DB)
+
+
+CONFIGURATION HIERARCHY
+=======================
+
+1. Code Defaults
+   └──▶ ValidatorConfig(enabled=False, strict=False, ...)
+
+2. Config File (JSON)
+   └──▶ output.rdbms.db.validation = {...}
+
+3. Web UI (Settings Page)
+   └──▶ output_db_validation_* checkboxes
+
+
+INTEGRATION POINTS
+==================
+
+┌─────────────────────┐
+│   Schema Mapping    │  ← Extracts column types
+│                     │     {"table": "orders", "columns": {...}}
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────────────────┐
+│ _load_mappers() [db/db_base.py] │
+│                                 │
+│ - Load SchemaMapper instances   │
+│ - Call _build_validators_from_  │
+│   mapping() for each mapping    │
+│ - Populate self._validators     │
+└──────────┬──────────────────────┘
+           │
+           ▼
+┌──────────────────────────────────────────┐
+│ send(doc) [db/db_base.py]                │
+│                                          │
+│ - Call mapper.map_document()             │
+│ - Call _validate_and_fix_ops(ops)        │
+│ - Execute ops against database           │
+└──────────┬───────────────────────────────┘
+           │
+           ▼
+┌────────────────────────────────────────┐
+│ Web Settings [web/templates/...]       │
+│                                        │
+│ - Show/hide validation options         │
+│ - Toggle validation enabled            │
+│ - Save/load validation config          │
+└────────────────────────────────────────┘
+
+
+SUPPORTED SQL TYPES
+===================
+
+Numeric:
+  INT, INTEGER, BIGINT, SMALLINT, TINYINT
+  DECIMAL(p,s), NUMERIC(p,s)
+  FLOAT, DOUBLE, REAL
+
+String:
+  VARCHAR(n), CHAR(n), TEXT
+  NVARCHAR(n), NCHAR(n), NTEXT
+
+Temporal:
+  DATE, DATETIME, TIMESTAMP, TIME
+
+Boolean:
+  BOOLEAN, BOOL, BIT
+
+Other:
+  JSON, JSONB, UUID, GUID, BYTEA, BLOB
+
+
+METRICS
+=======
+
+When validation enabled:
+
+changes_worker_db_validation_errors_total{engine="postgres",job_id="orders_sync"} 42
+
+Incremented when ValidationResult.valid = False
+
+
+LOGGING
+=======
+
+Debug level:
+  [VALIDATION] value coerced
+    doc_id=order:123
+    table=orders
+    field=amount
+    old_value="99.999"
+    new_value=100.00
+
+Warn level:
+  [VALIDATION] validation errors for orders
+    doc_id=order:123
+    table=orders
+    errors={...}

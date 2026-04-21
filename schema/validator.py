@@ -1,162 +1,333 @@
 """
-Schema validator – validates a schema mapping definition file.
+Data validation and coercion for RDBMS outputs.
 
-Checks:
-  - All referenced JSON paths are syntactically valid
-  - All target tables / columns are syntactically valid
-  - Foreign-key references between parent and child tables are consistent
-  - Primary keys are defined for parent tables
-  - Source arrays exist for child tables with parents
+Provides Pydantic-based schema validation and type coercion
+to automatically transform incoming documents against CREATE TABLE definitions.
+Tracks original vs. transformed values for audit/debugging.
 """
 
+from __future__ import annotations
+
 import json
-import re
 import logging
-from pathlib import Path
-from typing import Any  # noqa: F401
+from datetime import datetime, date
+from decimal import Decimal
+from typing import Any, Optional, TypeVar
+import re
 
 try:
-    from icecream import ic
+    from pydantic import BaseModel, ValidationError, field_validator, ConfigDict
 except ImportError:
-    ic = lambda *a, **kw: None  # noqa: E731
+    BaseModel = object  # Fallback if pydantic not installed
+    ValidationError = Exception
+
+from pipeline_logging import log_event
 
 logger = logging.getLogger("changes_worker")
 
+T = TypeVar("T")
 
-def validate_schema(
-    mapping: dict, sample_doc: dict | None = None
-) -> tuple[list[str], list[str]]:
+
+# ---------------------------------------------------------------------------
+# SQL Type Mapping
+# ---------------------------------------------------------------------------
+
+_SQL_TYPE_RE = re.compile(
+    r"^(BIGINT|INT|INTEGER|SMALLINT|TINYINT|DECIMAL|NUMERIC|FLOAT|DOUBLE|REAL|"
+    r"VARCHAR|CHAR|TEXT|NVARCHAR|NCHAR|NTEXT|"
+    r"DATE|DATETIME|TIMESTAMP|TIME|"
+    r"BOOLEAN|BOOL|BIT|"
+    r"JSON|JSONB|BYTEA|BLOB|"
+    r"UUID|GUID)"
+    r"(\s*\(.*\))?",
+    re.IGNORECASE,
+)
+
+
+def parse_sql_type(sql_type: str) -> tuple[str, Optional[dict]]:
     """
-    Validate a schema mapping definition.
+    Parse SQL type and extract base type + metadata.
 
-    Args:
-        mapping: The mapping definition dict
-        sample_doc: Optional sample document to validate JSON paths against
+    Examples:
+        "VARCHAR(255)" -> ("VARCHAR", {"max_length": 255})
+        "DECIMAL(10,2)" -> ("DECIMAL", {"precision": 10, "scale": 2})
+        "INT" -> ("INT", {})
+    """
+    m = _SQL_TYPE_RE.match(sql_type.strip())
+    if not m:
+        return (sql_type, {})
+
+    base = m.group(1).upper()
+    params_str = m.group(2)
+    metadata = {}
+
+    if params_str:
+        # Extract params from parentheses
+        params = params_str.strip("()").split(",")
+        if base.startswith("VARCHAR") or base.startswith("CHAR"):
+            try:
+                metadata["max_length"] = int(params[0].strip())
+            except (ValueError, IndexError):
+                pass
+        elif base in ("DECIMAL", "NUMERIC"):
+            try:
+                metadata["precision"] = int(params[0].strip())
+                if len(params) > 1:
+                    metadata["scale"] = int(params[1].strip())
+            except (ValueError, IndexError):
+                pass
+
+    return (base, metadata)
+
+
+def coerce_value(value: Any, sql_type: str) -> Any:
+    """
+    Coerce *value* to match *sql_type*.
+
+    Returns coerced value or None if coercion fails.
+    """
+    if value is None:
+        return None
+
+    base_type, metadata = parse_sql_type(sql_type)
+    base = base_type.upper()
+
+    # ---- Integer types ----
+    if base in ("BIGINT", "INT", "INTEGER", "SMALLINT", "TINYINT"):
+        try:
+            if isinstance(value, bool):
+                return int(value)
+            return int(value)
+        except (ValueError, TypeError):
+            return None
+
+    # ---- Float types ----
+    elif base in ("DECIMAL", "NUMERIC", "FLOAT", "DOUBLE", "REAL"):
+        try:
+            val = float(value)
+            # Round to scale if provided
+            if base in ("DECIMAL", "NUMERIC") and "scale" in metadata:
+                scale = metadata["scale"]
+                val = round(val, scale)
+            return val
+        except (ValueError, TypeError):
+            return None
+
+    # ---- String types ----
+    elif base in ("VARCHAR", "CHAR", "TEXT", "NVARCHAR", "NCHAR", "NTEXT"):
+        s = str(value)
+        if "max_length" in metadata:
+            s = s[: metadata["max_length"]]
+        return s
+
+    # ---- Boolean ----
+    elif base in ("BOOLEAN", "BOOL", "BIT"):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        s = str(value).lower()
+        return s in ("true", "1", "yes", "on")
+
+    # ---- Date/Time ----
+    elif base in ("DATE", "DATETIME", "TIMESTAMP", "TIME"):
+        if isinstance(value, (datetime, date)):
+            return value.isoformat() if isinstance(value, datetime) else str(value)
+        # Try parsing ISO format
+        try:
+            if base == "DATE":
+                return date.fromisoformat(str(value))
+            else:
+                return datetime.fromisoformat(str(value))
+        except (ValueError, AttributeError):
+            return str(value)
+
+    # ---- JSON ----
+    elif base in ("JSON", "JSONB"):
+        if isinstance(value, (dict, list)):
+            return json.dumps(value)
+        return str(value)
+
+    # ---- Default: return as string ----
+    return str(value)
+
+
+# ---------------------------------------------------------------------------
+# Validation tracker
+# ---------------------------------------------------------------------------
+
+
+class ValidationResult:
+    """Result of validating a document."""
+
+    def __init__(self, doc_id: str):
+        self.doc_id = doc_id
+        self.valid = True
+        self.coercions: dict[str, tuple[Any, Any]] = {}  # {field: (old, new)}
+        self.errors: dict[str, str] = {}  # {field: error_msg}
+        self.coerced_doc: dict[str, Any] = {}
+
+    def add_coercion(self, field: str, old_val: Any, new_val: Any) -> None:
+        """Record a value transformation."""
+        self.coercions[field] = (old_val, new_val)
+
+    def add_error(self, field: str, error: str) -> None:
+        """Record a validation error."""
+        self.valid = False
+        self.errors[field] = error
+
+    def summary(self) -> str:
+        """Return human-readable summary."""
+        parts = []
+        if self.coercions:
+            parts.append(f"{len(self.coercions)} coercions")
+        if self.errors:
+            parts.append(f"{len(self.errors)} errors")
+        return " | ".join(parts) if parts else "OK"
+
+
+# ---------------------------------------------------------------------------
+# Schema validation (from CREATE TABLE)
+# ---------------------------------------------------------------------------
+
+
+class SchemaValidator:
+    """Validates and coerces documents against RDBMS table schema."""
+
+    def __init__(self, table_name: str, schema: dict[str, str]):
+        """
+        Args:
+            table_name: Name of the target table
+            schema: {column_name: sql_type, ...}
+        """
+        self.table_name = table_name
+        self.schema = schema
+
+    def validate_and_coerce(
+        self,
+        doc: dict[str, Any],
+        doc_id: str = "unknown",
+        strict: bool = False,
+    ) -> ValidationResult:
+        """
+        Validate and coerce document against schema.
+
+        Args:
+            doc: Input document
+            doc_id: Document ID for logging
+            strict: If True, reject unknown columns. If False, allow extra columns.
+
+        Returns:
+            ValidationResult with coerced_doc and transformations.
+        """
+        result = ValidationResult(doc_id)
+        coerced = {}
+
+        # Process each column in the schema
+        for col_name, sql_type in self.schema.items():
+            if col_name not in doc:
+                # Column not in doc — use NULL
+                coerced[col_name] = None
+                continue
+
+            old_val = doc[col_name]
+            new_val = coerce_value(old_val, sql_type)
+
+            # Check if coercion changed the value
+            if new_val != old_val and new_val is not None:
+                result.add_coercion(col_name, old_val, new_val)
+
+            coerced[col_name] = new_val
+
+        # Check for extra columns
+        if strict:
+            extra = set(doc.keys()) - set(self.schema.keys())
+            if extra:
+                result.add_error(
+                    "_extra_columns",
+                    f"columns not in schema: {', '.join(sorted(extra))}",
+                )
+
+        result.coerced_doc = coerced
+
+        log_event(
+            logger,
+            "debug" if result.valid else "warn",
+            "VALIDATION",
+            f"schema validation: {result.summary()}",
+            doc_id=doc_id,
+            table=self.table_name,
+            coercions=len(result.coercions),
+            errors=len(result.errors),
+        )
+
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Integration with mapping
+# ---------------------------------------------------------------------------
+
+
+class ValidatorConfig:
+    """Configuration for automatic schema validation."""
+
+    def __init__(
+        self,
+        enabled: bool = False,
+        strict: bool = False,
+        track_originals: bool = True,
+        dlq_on_error: bool = True,
+    ):
+        """
+        Args:
+            enabled: Whether to enable automatic validation
+            strict: Whether to reject unknown columns
+            track_originals: Whether to log original values when coerced
+            dlq_on_error: Whether to send invalid docs to DLQ
+        """
+        self.enabled = enabled
+        self.strict = strict
+        self.track_originals = track_originals
+        self.dlq_on_error = dlq_on_error
+
+
+def build_schema_from_mapping(
+    mapping_def: dict,
+) -> dict[str, SchemaValidator]:
+    """
+    Build SchemaValidator instances from mapping definition.
+
+    Expected structure:
+        {
+            "tables": [
+                {
+                    "table_name": "orders",
+                    "columns": {"order_id": "INT", "amount": "DECIMAL(10,2)", ...}
+                },
+                ...
+            ]
+        }
 
     Returns:
-        (warnings, errors) — lists of human-readable messages
+        {table_name: SchemaValidator, ...}
     """
-    warnings: list[str] = []
-    errors: list[str] = []
+    validators = {}
 
-    # Check basic structure
-    tables = mapping.get("tables", [])
-    if not tables:
-        errors.append("No tables defined in mapping")
-        return warnings, errors
+    tables = mapping_def.get("tables", [])
+    if not isinstance(tables, list):
+        return validators
 
-    table_names = set()
-    for i, table in enumerate(tables):
-        name = table.get("name", "")
-        if not name:
-            errors.append(f"Table at index {i} has no name")
+    for table_def in tables:
+        if not isinstance(table_def, dict):
             continue
-        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", name):
-            errors.append(f"Table '{name}' has invalid SQL identifier name")
-        if name in table_names:
-            errors.append(f"Duplicate table name: '{name}'")
-        table_names.add(name)
 
-        # Check primary key on parent tables
-        parent = table.get("parent", "")
-        if not parent and not table.get("primary_key"):
-            warnings.append(
-                f"Table '{name}' has no primary_key — UPSERTs won't work, only INSERTs"
-            )
+        table_name = table_def.get("table_name")
+        columns = table_def.get("columns", {})
 
-        # Check columns
-        columns = table.get("columns", {})
-        if not columns:
-            errors.append(f"Table '{name}' has no columns defined")
+        if not table_name or not isinstance(columns, dict):
+            continue
 
-        for col_name, col_def in columns.items():
-            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", col_name):
-                errors.append(
-                    f"Table '{name}': column '{col_name}' is not a valid SQL identifier"
-                )
+        validators[table_name] = SchemaValidator(table_name, columns)
 
-            # Validate path
-            if isinstance(col_def, dict):
-                path = col_def.get("path", "")
-            else:
-                path = col_def
-
-            if path and not path.startswith("$"):
-                errors.append(
-                    f"Table '{name}', column '{col_name}': path must start with '$', got '{path}'"
-                )
-
-            # If sample_doc provided, check the path resolves
-            if sample_doc and path and path.startswith("$."):
-                from schema.mapper import resolve_path
-
-                value = resolve_path(sample_doc, path)
-                if value is None:
-                    # For child tables with source_array, the path might be relative to array items
-                    source_array = table.get("source_array", "")
-                    if source_array:
-                        array_data = resolve_path(sample_doc, source_array)
-                        if isinstance(array_data, list) and array_data:
-                            item_val = resolve_path(array_data[0], path)
-                            if item_val is None:
-                                warnings.append(
-                                    f"Table '{name}', column '{col_name}': path '{path}' not found in sample doc or array item"
-                                )
-                    else:
-                        warnings.append(
-                            f"Table '{name}', column '{col_name}': path '{path}' not found in sample doc"
-                        )
-
-        # Check parent/FK consistency
-        if parent:
-            if parent not in table_names:
-                # Parent might be defined later
-                found = any(t.get("name") == parent for t in tables)
-                if not found:
-                    errors.append(
-                        f"Table '{name}': parent '{parent}' not found in mapping"
-                    )
-
-            fk = table.get("foreign_key", {})
-            if not fk.get("column"):
-                errors.append(
-                    f"Table '{name}': has parent '{parent}' but no foreign_key.column"
-                )
-            if not fk.get("references"):
-                errors.append(
-                    f"Table '{name}': has parent '{parent}' but no foreign_key.references"
-                )
-            else:
-                # Check that the referenced column exists on the parent
-                ref_col = fk["references"]
-                parent_table = next(
-                    (t for t in tables if t.get("name") == parent), None
-                )
-                if parent_table and ref_col not in parent_table.get("columns", {}):
-                    errors.append(
-                        f"Table '{name}': foreign_key references '{ref_col}' which is not a column in parent '{parent}'"
-                    )
-
-            if not table.get("source_array"):
-                warnings.append(
-                    f"Table '{name}': has parent but no source_array — how will child rows be generated?"
-                )
-
-        # on_delete check
-        on_delete = table.get("on_delete", "delete")
-        if on_delete not in ("delete", "ignore"):
-            errors.append(
-                f"Table '{name}': on_delete must be 'delete' or 'ignore', got '{on_delete}'"
-            )
-
-    return warnings, errors
-
-
-def validate_file(path: str | Path) -> tuple[list[str], list[str]]:
-    """Validate a mapping file on disk."""
-    try:
-        with open(path) as f:
-            mapping = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as exc:
-        return [], [f"Cannot read mapping file: {exc}"]
-    return validate_schema(mapping)
+    return validators

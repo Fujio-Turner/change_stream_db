@@ -412,6 +412,7 @@
         </div>
       </div>
     </main>
+    <div id="toastContainer" class="toast toast-end toast-bottom z-50"></div>
   </div>
 
   <!-- Sidebar -->
@@ -446,11 +447,14 @@
       return d.innerHTML;
     }
 
-    function showToast(msg, type) {
-      var el = document.getElementById('jobSaveStatus');
-      el.textContent = msg;
-      el.style.color = type === 'success' ? 'var(--color-success)' : 'var(--color-error)';
-      setTimeout(function(){ el.textContent = ''; }, 3000);
+    function showToast(message, type) {
+      var container = document.getElementById('toastContainer');
+      var alertClass = type === 'success' ? 'alert-success' : 'alert-error';
+      var toast = document.createElement('div');
+      toast.className = 'alert ' + alertClass;
+      toast.innerHTML = '<span>' + message + '</span>';
+      container.appendChild(toast);
+      setTimeout(function() { toast.remove(); }, 3000);
     }
 
     // ===== Load Jobs (status endpoint for richer data) =====

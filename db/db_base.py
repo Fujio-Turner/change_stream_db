@@ -18,6 +18,7 @@ from collections import deque
 from pathlib import Path
 
 from pipeline_logging import log_event
+from schema.validator import SchemaValidator, ValidatorConfig, ValidationResult
 
 try:
     from icecream import ic
@@ -286,6 +287,16 @@ class BaseOutputForwarder(abc.ABC):
         sm = engine_cfg.get("schema_mappings", {})
         self._mappings_dir = sm.get("path", "") if sm.get("enabled") else ""
 
+        # Data validation config
+        validation_cfg = engine_cfg.get("validation", {})
+        self._validator_config = ValidatorConfig(
+            enabled=validation_cfg.get("enabled", False),
+            strict=validation_cfg.get("strict", False),
+            track_originals=validation_cfg.get("track_originals", True),
+            dlq_on_error=validation_cfg.get("dlq_on_error", True),
+        )
+        self._validators: dict[str, SchemaValidator] = {}  # {table_name: validator}
+
         # Job ID for per-job metric labels (falls back to engine name)
         self._job_id = out_cfg.get("job_id", "")
 
@@ -333,6 +344,7 @@ class BaseOutputForwarder(abc.ABC):
         """
         Load schema mappers from CBL or filesystem.
         Called by connect() after the pool is created.
+        Also builds validators if validation is enabled.
         """
         from schema.mapper import MappingDiagnostics, SchemaMapper
 
@@ -354,7 +366,13 @@ class BaseOutputForwarder(abc.ABC):
                         continue
                     data = json.loads(raw) if isinstance(raw, str) else raw
                     data["_source_name"] = name
-                    new_mappers.append(SchemaMapper(data))
+                    mapper = SchemaMapper(data)
+                    new_mappers.append(mapper)
+
+                    # Build validators from this mapping if validation is enabled
+                    if self._validator_config.enabled:
+                        self._build_validators_from_mapping(data)
+
                     log_event(
                         logger,
                         "info",
@@ -393,7 +411,13 @@ class BaseOutputForwarder(abc.ABC):
                                     doc_id=str(f),
                                 )
                                 continue
-                            new_mappers.append(SchemaMapper(raw))
+                            mapper = SchemaMapper(raw)
+                            new_mappers.append(mapper)
+
+                            # Build validators from this mapping if validation is enabled
+                            if self._validator_config.enabled:
+                                self._build_validators_from_mapping(raw)
+
                             log_event(
                                 logger,
                                 "info",
@@ -470,6 +494,129 @@ class BaseOutputForwarder(abc.ABC):
 
         self._mappers = new_mappers
         ic("_load_mappers: done", len(self._mappers))
+
+    def _build_validators_from_mapping(self, mapping_def: dict) -> None:
+        """
+        Build SchemaValidator instances from a mapping definition.
+
+        Expects mapping to have a "tables" list with:
+            {
+                "table_name": "orders",
+                "columns": {"order_id": "INT", "amount": "DECIMAL(10,2)", ...}
+            }
+        """
+        tables = mapping_def.get("tables", [])
+        if not isinstance(tables, list):
+            return
+
+        for table_def in tables:
+            if not isinstance(table_def, dict):
+                continue
+
+            table_name = table_def.get("table_name")
+            columns = table_def.get("columns", {})
+
+            if not table_name or not isinstance(columns, dict):
+                continue
+
+            # Build a schema dict from the columns
+            schema = {col: col_type for col, col_type in columns.items()}
+            self._validators[table_name] = SchemaValidator(table_name, schema)
+
+            log_event(
+                logger,
+                "debug",
+                "VALIDATION",
+                "built schema validator",
+                table=table_name,
+                columns=len(schema),
+            )
+
+    def _validate_row_for_table(
+        self, row: dict, table_name: str, doc_id: str
+    ) -> tuple[dict, ValidationResult | None]:
+        """
+        Validate and coerce a row against the table schema.
+
+        Returns:
+            (coerced_row, validation_result) or (row, None) if validation disabled
+        """
+        if not self._validator_config.enabled:
+            return (row, None)
+
+        validator = self._validators.get(table_name)
+        if not validator:
+            return (row, None)
+
+        result = validator.validate_and_coerce(
+            row,
+            doc_id=doc_id,
+            strict=self._validator_config.strict,
+        )
+
+        return (result.coerced_doc, result)
+
+    def _validate_and_fix_ops(self, ops: list, doc_id: str) -> list:
+        """
+        Validate and coerce all SQL operations against table schemas.
+
+        If validation is enabled, this will:
+        1. For each operation with a table name, validate its data
+        2. Replace data with coerced version
+        3. Log coercions and errors
+        4. Return updated ops (or original if validation disabled)
+        """
+        if not self._validator_config.enabled:
+            return ops
+
+        validated_ops = []
+        for op in ops:
+            # Skip operations without data (e.g., DELETE without row data)
+            if not op.data:
+                validated_ops.append(op)
+                continue
+
+            coerced, result = self._validate_row_for_table(op.data, op.table, doc_id)
+
+            if result:
+                # Log coercions
+                if result.coercions and self._validator_config.track_originals:
+                    for field, (old_val, new_val) in result.coercions.items():
+                        log_event(
+                            logger,
+                            "debug",
+                            "VALIDATION",
+                            "value coerced",
+                            doc_id=doc_id,
+                            table=op.table,
+                            field=field,
+                            old_value=str(old_val)[:100],
+                            new_value=str(new_val)[:100],
+                        )
+
+                # Log errors
+                if result.errors:
+                    log_event(
+                        logger,
+                        "warn",
+                        "VALIDATION",
+                        f"validation errors for {op.table}: {result.summary()}",
+                        doc_id=doc_id,
+                        table=op.table,
+                        errors=result.errors,
+                    )
+
+                    if not result.valid and self._validator_config.dlq_on_error:
+                        if self._metrics:
+                            self._metrics.inc("validation_errors_total")
+                        # Continue with coerced data; caller can decide to DLQ
+                        # For now, just log and continue
+
+            # Update op with coerced data
+            op.data = coerced
+            validated_ops.append(op)
+
+        return validated_ops
 
     # ── Pool lifecycle (subclass hooks) ─────────────────────────────────
 
@@ -673,6 +820,9 @@ class BaseOutputForwarder(abc.ABC):
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {"ok": True, "doc_id": doc_id, "ops": 0}
+
+        # Validate and coerce rows against table schemas if enabled
+        ops = self._validate_and_fix_ops(ops, doc_id)
 
         if self._dry_run:
             for op in ops:

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Changes Worker -- Setup Wizard</title>
+  <title>PouchPipes -- Setup Wizard</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
@@ -396,14 +396,44 @@
                  </div>
                </div>
 
-               <div class="flex gap-2 mt-6">
-                 <button class="btn btn-success" onclick="outputsRdbmsSave()">Save Output</button>
-                 <button class="btn btn-ghost" onclick="outputsCancel('rdbms')">Cancel</button>
-               </div>
-               </div>
-               </div>
-               </div>
-               </div>
+               <!-- Data Validation & Coercion -->
+                <div class="divider text-xs opacity-60">Data Validation &amp; Coercion</div>
+                <div class="form-control mb-3">
+                  <label class="label cursor-pointer justify-start gap-4">
+                    <span class="label-text font-semibold">Auto-Validate Against Table Schema</span>
+                    <input type="checkbox" id="outRdbmsValidationEnabled" class="toggle toggle-success" onchange="document.getElementById('outRdbmsValidationOptions').classList.toggle('hidden', !this.checked)" />
+                  </label>
+                  <p class="text-xs opacity-60 mt-1">Automatically validate and coerce incoming data against CREATE TABLE definitions.</p>
+                </div>
+                <div id="outRdbmsValidationOptions" class="hidden pl-4 border-l-2 border-primary space-y-2">
+                  <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-4">
+                      <span class="label-text">Strict Mode (reject unknown columns)</span>
+                      <input type="checkbox" id="outRdbmsValidationStrict" class="toggle toggle-sm" />
+                    </label>
+                  </div>
+                  <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-4">
+                      <span class="label-text">Track Original Values (in logs)</span>
+                      <input type="checkbox" id="outRdbmsValidationTrackOriginals" class="toggle toggle-sm" checked />
+                    </label>
+                  </div>
+                  <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-4">
+                      <span class="label-text">Send invalid docs to DLQ</span>
+                      <input type="checkbox" id="outRdbmsValidationDlq" class="toggle toggle-sm" checked />
+                    </label>
+                  </div>
+                </div>
+
+                <div class="flex gap-2 mt-6">
+                  <button class="btn btn-success" onclick="outputsRdbmsSave()">Save Output</button>
+                  <button class="btn btn-ghost" onclick="outputsCancel('rdbms')">Cancel</button>
+                </div>
+                </div>
+                </div>
+                </div>
+                </div>
 
                <!-- HTTP Outputs -->
        <div id="outPanelHttp" class="hidden space-y-6">
@@ -1830,16 +1860,15 @@ function hideAllWizards() {
       .then(r => r.json())
       .then(data => {
         if (data.ok) {
-          statusEl.textContent = '✓ Connected: ' + (data.version || '');
-          statusEl.className = 'text-sm text-success';
+          showToast('✓ Connected: ' + (data.version || ''), 'success');
         } else {
-          statusEl.textContent = '✗ ' + (data.error || 'Connection failed');
-          statusEl.className = 'text-sm text-error';
+          showToast('✗ ' + (data.error || 'Connection failed'), 'error');
         }
+        statusEl.textContent = '';
       })
       .catch(e => {
-        statusEl.textContent = '✗ ' + e.message;
-        statusEl.className = 'text-sm text-error';
+        showToast('✗ ' + e.message, 'error');
+        statusEl.textContent = '';
       });
   }
 
@@ -1886,16 +1915,15 @@ function hideAllWizards() {
             return '<tr><td>' + esc(tbl.name) + '</td><td class="text-right">' + cols + '</td></tr>';
           }).join('');
           document.getElementById('rdbmsTablesSection').classList.remove('hidden');
-          statusEl.textContent = '✓ Loaded ' + data.tables.length + ' tables';
-          statusEl.className = 'text-sm text-success';
+          showToast('✓ Loaded ' + data.tables.length + ' tables', 'success');
         } else {
-          statusEl.textContent = '✗ ' + (data.error || 'Failed to load tables');
-          statusEl.className = 'text-sm text-error';
+          showToast('✗ ' + (data.error || 'Failed to load tables'), 'error');
         }
+        statusEl.textContent = '';
       })
       .catch(e => {
-        statusEl.textContent = '✗ ' + e.message;
-        statusEl.className = 'text-sm text-error';
+        showToast('✗ ' + e.message, 'error');
+        statusEl.textContent = '';
       });
   }
 
@@ -2339,16 +2367,15 @@ function srcTestConnection() {
     .then(r => r.json())
     .then(data => {
       if (data.ok) {
-        statusEl.textContent = '✓ Connected successfully';
-        statusEl.className = 'text-sm text-success ml-2';
+        showToast('✓ Connected successfully', 'success');
       } else {
-        statusEl.textContent = '✗ ' + (data.error || 'Connection failed');
-        statusEl.className = 'text-sm text-error ml-2';
+        showToast('✗ ' + (data.error || 'Connection failed'), 'error');
       }
+      statusEl.textContent = '';
     })
     .catch(e => {
-      statusEl.textContent = '✗ ' + e.message;
-      statusEl.className = 'text-sm text-error ml-2';
+      showToast('✗ ' + e.message, 'error');
+      statusEl.textContent = '';
     });
 }
 
@@ -3007,15 +3034,14 @@ function saveCloudStorageConfig() {
     });
     var data = putRes.json();
     if (data.ok) {
-      status.textContent = 'Cloud storage config saved!';
-      status.className = 'text-sm text-success';
+      showToast('✓ Cloud storage config saved!', 'success');
     } else {
-      status.textContent = (data.error || 'Save failed');
-      status.className = 'text-sm text-error';
+      showToast(data.error || 'Save failed', 'error');
     }
+    status.textContent = '';
   } catch (e) {
-    status.textContent = e.message;
-    status.className = 'text-sm text-error';
+    showToast(e.message, 'error');
+    status.textContent = '';
   }
 }
 
@@ -5029,6 +5055,11 @@ function outputsRdbmsAddNew() {
   document.getElementById('outRdbmsPoolMin').value = '2';
   document.getElementById('outRdbmsSsl').checked = false;
   document.getElementById('outRdbmsMode').textContent = '–';
+  document.getElementById('outRdbmsValidationEnabled').checked = false;
+  document.getElementById('outRdbmsValidationStrict').checked = false;
+  document.getElementById('outRdbmsValidationTrackOriginals').checked = true;
+  document.getElementById('outRdbmsValidationDlq').checked = true;
+  document.getElementById('outRdbmsValidationOptions').classList.add('hidden');
   document.getElementById('outRdbmsFormCard').classList.remove('hidden');
 }
 
@@ -5089,6 +5120,12 @@ function outputsEdit(outId, type) {
         document.getElementById('outRdbmsPoolMin').value = src.pool_min || '2';
         document.getElementById('outRdbmsSsl').checked = src.ssl || false;
         document.getElementById('outRdbmsMode').textContent = src.mode || src.engine || '–';
+        var vc = src.validation || {};
+        document.getElementById('outRdbmsValidationEnabled').checked = !!vc.enabled;
+        document.getElementById('outRdbmsValidationStrict').checked = !!vc.strict;
+        document.getElementById('outRdbmsValidationTrackOriginals').checked = vc.track_originals !== false;
+        document.getElementById('outRdbmsValidationDlq').checked = vc.dlq_on_error !== false;
+        document.getElementById('outRdbmsValidationOptions').classList.toggle('hidden', !vc.enabled);
         document.getElementById('outRdbmsFormCard').classList.remove('hidden');
       } else if (type === 'http') {
         document.getElementById('outHttpId').value = src.id || '';
@@ -5133,6 +5170,12 @@ function outputsRdbmsSave() {
   var pool_min = parseInt(document.getElementById('outRdbmsPoolMin').value) || 2;
   var ssl = document.getElementById('outRdbmsSsl').checked;
   var mode = engine;
+  var validation = {
+    enabled: document.getElementById('outRdbmsValidationEnabled').checked,
+    strict: document.getElementById('outRdbmsValidationStrict').checked,
+    track_originals: document.getElementById('outRdbmsValidationTrackOriginals').checked,
+    dlq_on_error: document.getElementById('outRdbmsValidationDlq').checked
+  };
   
   if (!id || !engine || !host) {
     alert('ID, Engine, and Host are required');
@@ -5142,7 +5185,7 @@ function outputsRdbmsSave() {
   outputsSaveEntry('rdbms', {
     id: id, name: name, enabled: enabled, mode: mode, engine: engine, host: host, port: port,
     database: database, username: username, password: password, schema: schema,
-    pool_min: pool_min, pool_max: pool_max, ssl: ssl
+    pool_min: pool_min, pool_max: pool_max, ssl: ssl, validation: validation
   });
 }
 

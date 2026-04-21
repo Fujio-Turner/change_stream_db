@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Changes Worker Admin (Beta)</title>
+  <title>PouchPipes Admin (Beta)</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
@@ -42,24 +42,24 @@
     .arch-col-src  { flex: 0 0 22%; }
     .arch-col-work { flex: 0 0 30%; gap: 50px; }
     .arch-col-out  { flex: 1; gap: 6px; }
-    .arch-node { border-radius: 16px; padding: 14px 20px; text-align: center; color: #fff; font-size: 0.875rem; line-height: 1.35; min-width: 150px; transition: box-shadow 0.2s, transform 0.2s; cursor: pointer; position: relative; }
-    .arch-node:hover { transform: scale(1.05); z-index: 10; }
-    .arch-node-src  { background: #505050; border: 3px solid var(--color-success); box-shadow: 0 0 18px rgba(80,80,80,0.4); }
-    .arch-node-src:hover  { box-shadow: 0 0 28px rgba(80,80,80,0.7); }
-    .arch-node-work { background: #6c56a4; border: 3px solid var(--color-info); box-shadow: 0 0 18px rgba(108,86,164,0.4); }
-    .arch-node-work:hover { box-shadow: 0 0 28px rgba(108,86,164,0.7); }
-    .arch-node-http { background: #4caf50; border: 3px solid var(--color-warning); box-shadow: 0 0 14px rgba(76,175,80,0.3); }
-    .arch-node-http:hover { box-shadow: 0 0 24px rgba(76,175,80,0.6); }
-    .arch-node-db   { background: #2196f3; border: 3px solid var(--color-warning); box-shadow: 0 0 14px rgba(33,150,243,0.3); }
-    .arch-node-db:hover   { box-shadow: 0 0 24px rgba(33,150,243,0.6); }
-    .arch-node-s3   { background: #ff9800; border: 3px solid var(--color-warning); box-shadow: 0 0 14px rgba(255,152,0,0.3); }
-    .arch-node-s3:hover   { box-shadow: 0 0 24px rgba(255,152,0,0.6); }
-    .arch-node-std  { background: #f4511e; border: 3px solid var(--color-warning); box-shadow: 0 0 14px rgba(244,81,30,0.3); }
-    .arch-node-std:hover  { box-shadow: 0 0 24px rgba(244,81,30,0.6); }
-    .arch-node-dlq  { background: #d32f2f; border: 3px solid var(--color-info); box-shadow: 0 0 14px rgba(211,47,47,0.3); }
-    .arch-node-dlq:hover  { box-shadow: 0 0 24px rgba(211,47,47,0.6); }
-    .arch-node-attach { background: #e91e63; border: 3px solid var(--color-info); box-shadow: 0 0 14px rgba(233,30,99,0.3); }
-    .arch-node-attach:hover { box-shadow: 0 0 24px rgba(233,30,99,0.6); }
+    .arch-node { border-radius: 18px; padding: 16px 22px; text-align: center; color: #fff; font-size: 0.875rem; line-height: 1.35; min-width: 150px; transition: box-shadow 0.35s ease, transform 0.3s ease; cursor: pointer; position: relative; }
+    .arch-node:hover { transform: translateY(-3px) scale(1.04); z-index: 10; }
+    .arch-node-src  { background: linear-gradient(135deg, #3a4a5a 0%, #2a3a4a 100%); border: 2px solid rgba(54,211,153,0.4); box-shadow: 0 6px 24px rgba(42,58,74,0.35), 0 0 12px rgba(54,211,153,0.1); }
+    .arch-node-src:hover  { box-shadow: 0 10px 36px rgba(42,58,74,0.5), 0 0 20px rgba(54,211,153,0.2); }
+    .arch-node-work { background: linear-gradient(135deg, #7c66b4 0%, #5c4694 100%); border: 2px solid rgba(58,191,248,0.5); box-shadow: 0 6px 24px rgba(108,86,164,0.35), 0 0 12px rgba(108,86,164,0.2); }
+    .arch-node-work:hover { box-shadow: 0 10px 36px rgba(108,86,164,0.55), 0 0 20px rgba(108,86,164,0.35); }
+    .arch-node-http { background: linear-gradient(135deg, #56b85a 0%, #3d9941 100%); border: 2px solid rgba(255,193,7,0.45); box-shadow: 0 6px 20px rgba(76,175,80,0.3), 0 0 10px rgba(76,175,80,0.15); }
+    .arch-node-http:hover { box-shadow: 0 10px 32px rgba(76,175,80,0.5), 0 0 18px rgba(76,175,80,0.3); }
+    .arch-node-db   { background: linear-gradient(135deg, #42a5f5 0%, #1976d2 100%); border: 2px solid rgba(255,193,7,0.45); box-shadow: 0 6px 20px rgba(33,150,243,0.3), 0 0 10px rgba(33,150,243,0.15); }
+    .arch-node-db:hover   { box-shadow: 0 10px 32px rgba(33,150,243,0.5), 0 0 18px rgba(33,150,243,0.3); }
+    .arch-node-s3   { background: linear-gradient(135deg, #ffa726 0%, #ef8c00 100%); border: 2px solid rgba(255,193,7,0.45); box-shadow: 0 6px 20px rgba(255,152,0,0.3), 0 0 10px rgba(255,152,0,0.15); }
+    .arch-node-s3:hover   { box-shadow: 0 10px 32px rgba(255,152,0,0.5), 0 0 18px rgba(255,152,0,0.3); }
+    .arch-node-std  { background: linear-gradient(135deg, #ff6e40 0%, #d84315 100%); border: 2px solid rgba(255,193,7,0.45); box-shadow: 0 6px 20px rgba(244,81,30,0.3), 0 0 10px rgba(244,81,30,0.15); }
+    .arch-node-std:hover  { box-shadow: 0 10px 32px rgba(244,81,30,0.5), 0 0 18px rgba(244,81,30,0.3); }
+    .arch-node-dlq  { background: linear-gradient(135deg, #e53935 0%, #b71c1c 100%); border: 2px solid rgba(58,191,248,0.4); box-shadow: 0 6px 20px rgba(211,47,47,0.3), 0 0 10px rgba(211,47,47,0.15); }
+    .arch-node-dlq:hover  { box-shadow: 0 10px 32px rgba(211,47,47,0.5), 0 0 18px rgba(211,47,47,0.3); }
+    .arch-node-attach { background: linear-gradient(135deg, #ec407a 0%, #c2185b 100%); border: 2px solid rgba(58,191,248,0.4); box-shadow: 0 6px 20px rgba(233,30,99,0.3), 0 0 10px rgba(233,30,99,0.15); }
+    .arch-node-attach:hover { box-shadow: 0 10px 32px rgba(233,30,99,0.5), 0 0 18px rgba(233,30,99,0.3); }
     .arch-node.dimmed { opacity: 0.3; filter: saturate(0.4); }
     .arch-node .arch-title { font-weight: 700; font-size: 0.95rem; margin-bottom: 2px; }
     .arch-node .arch-sub { font-size: 0.8rem; opacity: 0.7; }
@@ -75,7 +75,7 @@
     .arch-node:hover .arch-tip { display: block; }
     /* Arch detail modal */
     .arch-modal-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .arch-modal-charts > div { height: 180px; }
+    .arch-modal-charts > div { height: 220px; }
 
     /* Pipeline Health */
     .summary-ribbon { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
@@ -426,7 +426,7 @@
   </dialog>
 
   <!-- Architecture Node Detail Modal -->
-  <dialog id="archModal" class="modal">
+  <dialog id="archModal" class="modal" onclose="archModalWhich=null;if(archModalChart1){archModalChart1.dispose();archModalChart1=null;}if(archModalChart2){archModalChart2.dispose();archModalChart2=null;}">
     <div class="modal-box max-w-3xl">
       <form method="dialog">
         <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">×</button>
@@ -723,9 +723,11 @@ function lineOpt(title, series) {
 
 function lineSeries(name, data, color) {
   return {
-    name: name, type: 'line', smooth: true, symbol: 'none',
+    name: name, type: 'line', smooth: 0.6, symbol: 'none',
     data: data, itemStyle: { color: color },
-    areaStyle: { opacity: 0.10 }, lineStyle: { width: 1.5 }
+    areaStyle: { opacity: 0.15, shadowColor: color, shadowBlur: 8, shadowOffsetY: 4 }, 
+    lineStyle: { width: 2.5, shadowColor: color, shadowBlur: 6, shadowOffsetY: 2 },
+    emphasis: { lineStyle: { width: 3.5 } }
   };
 }
 
@@ -819,6 +821,8 @@ function drawArchArrows() {
   for (var ci = 0; ci < colors.length; ci++) {
     html += '<marker id="ah_'+colorNames[ci]+'" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M0,0 L10,3 L0,6" fill="'+colors[ci]+'" opacity="0.85"/></marker>';
     html += '<marker id="ah_'+colorNames[ci]+'_rev" viewBox="0 0 10 6" refX="0" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M10,0 L0,3 L10,6" fill="'+colors[ci]+'" opacity="0.85"/></marker>';
+    // Glow filter per color
+    html += '<filter id="glow_'+colorNames[ci]+'" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3.5" result="blur"/><feFlood flood-color="'+colors[ci]+'" flood-opacity="0.35" result="color"/><feComposite in="color" in2="blur" operator="in" result="shadow"/><feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
   }
   html += '</defs>';
 
@@ -827,10 +831,21 @@ function drawArchArrows() {
     return 'grey';
   }
 
+  // Helper: horizontal cubic bezier path
+  function hBezier(x1, y1, x2, y2) {
+    var cpOff = Math.abs(x2 - x1) * 0.45;
+    return 'M'+x1+','+y1+' C'+(x1+cpOff)+','+y1+' '+(x2-cpOff)+','+y2+' '+x2+','+y2;
+  }
+  // Helper: vertical cubic bezier path
+  function vBezier(x1, y1, x2, y2) {
+    var cpOff = Math.abs(y2 - y1) * 0.45;
+    return 'M'+x1+','+y1+' C'+x1+','+(y1+cpOff)+' '+x2+','+(y2-cpOff)+' '+x2+','+y2;
+  }
+
   // ─── Source → Worker (single arrow, one-way data flow) ───
   var sx = rx(src), sy = cy(src), wx = lx(work), wy = cy(work);
   var fk = colorKey(feedColor);
-  html += '<line x1="'+sx+'" y1="'+sy+'" x2="'+wx+'" y2="'+wy+'" stroke="'+feedColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+fk+')"/>';
+  html += '<path d="'+hBezier(sx,sy,wx,wy)+'" fill="none" stroke="'+feedColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+fk+')" filter="url(#glow_'+fk+')"/>';
   html += rateBadge((sx+wx)/2, (sy+wy)/2, archRates.feed, feedColor);
 
   // ─── Worker → Attachments → Outputs (if attachments enabled) ───
@@ -850,7 +865,7 @@ function drawArchArrows() {
     var attachErrRatio = attachTotal > 0 ? attachErrors / attachTotal : 0;
     var attachArrowColor = uptime > 0 ? (attachErrRatio > 0.1 ? ARROW_YELLOW : ARROW_GREEN) : ARROW_GREY;
     var aak = colorKey(attachArrowColor);
-    html += '<line x1="'+awxR+'" y1="'+awyC+'" x2="'+aaxL+'" y2="'+aayC+'" stroke="'+attachArrowColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+aak+')"/>';
+    html += '<path d="'+hBezier(awxR,awyC,aaxL,aayC)+'" fill="none" stroke="'+attachArrowColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+aak+')" filter="url(#glow_'+aak+')"/>';
 
     // Attachments → each output
     for (var i = 0; i < outs.length; i++) {
@@ -860,10 +875,10 @@ function drawArchArrows() {
       var aRx = rx(attachEl), aCy = cy(attachEl);
       if (active) {
         var ok = colorKey(activeOutColor);
-        html += '<line x1="'+aRx+'" y1="'+aCy+'" x2="'+ox+'" y2="'+oy+'" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')"/>';
+        html += '<path d="'+hBezier(aRx,aCy,ox,oy)+'" fill="none" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')" filter="url(#glow_'+ok+')"/>';
         html += rateBadge((aRx+ox)/2, (aCy+oy)/2, archRates.out, activeOutColor);
       } else {
-        html += '<line x1="'+aRx+'" y1="'+aCy+'" x2="'+ox+'" y2="'+oy+'" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
+        html += '<path d="'+hBezier(aRx,aCy,ox,oy)+'" fill="none" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
       }
     }
   } else {
@@ -876,10 +891,10 @@ function drawArchArrows() {
       var wxR = rx(work), wyC = cy(work);
       if (active) {
         var ok = colorKey(activeOutColor);
-        html += '<line x1="'+wxR+'" y1="'+wyC+'" x2="'+ox+'" y2="'+oy+'" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')"/>';
+        html += '<path d="'+hBezier(wxR,wyC,ox,oy)+'" fill="none" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')" filter="url(#glow_'+ok+')"/>';
         html += rateBadge((wxR+ox)/2, (wyC+oy)/2, archRates.out, activeOutColor);
       } else {
-        html += '<line x1="'+wxR+'" y1="'+wyC+'" x2="'+ox+'" y2="'+oy+'" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
+        html += '<path d="'+hBezier(wxR,wyC,ox,oy)+'" fill="none" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
       }
     }
   }
@@ -892,9 +907,9 @@ function drawArchArrows() {
     var dk = colorKey(dlqColor);
     var dlqGap = 10;
     // Arrow down: Worker → DLQ (left side)
-    html += '<line x1="'+(wCx-dlqGap)+'" y1="'+wBy+'" x2="'+(dCx-dlqGap)+'" y2="'+dTy+'" stroke="'+dlqColor+'" stroke-width="2" stroke-opacity="0.6" marker-end="url(#ah_'+dk+')"/>';
+    html += '<path d="'+vBezier(wCx-dlqGap,wBy,dCx-dlqGap,dTy)+'" fill="none" stroke="'+dlqColor+'" stroke-width="2" stroke-opacity="0.6" marker-end="url(#ah_'+dk+')" filter="url(#glow_'+dk+')"/>';
     // Arrow up: DLQ → Worker (right side, retry path)
-    html += '<line x1="'+(dCx+dlqGap)+'" y1="'+dTy+'" x2="'+(wCx+dlqGap)+'" y2="'+wBy+'" stroke="'+dlqColor+'" stroke-width="1.5" stroke-opacity="0.35" marker-end="url(#ah_'+dk+'_rev)"/>';
+    html += '<path d="'+vBezier(dCx+dlqGap,dTy,wCx+dlqGap,wBy)+'" fill="none" stroke="'+dlqColor+'" stroke-width="1.5" stroke-opacity="0.35" stroke-dasharray="6,4" marker-end="url(#ah_'+dk+'_rev)"/>';
   }
 
   svg.innerHTML = html;
@@ -910,11 +925,11 @@ function fmtRate(r) {
 
 function rateBadge(x, y, rate, color) {
   var label = fmtRate(rate);
-  var w = Math.max(67, label.length * 10.5 + 25);
-  var h = 34;
-  return '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="17" fill="'+color+'" opacity="0.55"/>'
-       + '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="17" fill="none" stroke="'+color+'" stroke-width="2" opacity="0.7"/>'
-       + '<text x="'+x+'" y="'+(y+5)+'" text-anchor="middle" font-size="15" font-weight="700" font-family="monospace" fill="#111">'+label+'</text>';
+  var w = Math.max(64, label.length * 9.5 + 22);
+  var h = 28;
+  return '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="14" fill="#1e1e2e" opacity="0.88"/>'
+       + '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="14" fill="none" stroke="'+color+'" stroke-width="1.5" opacity="0.5"/>'
+       + '<text x="'+x+'" y="'+(y+4.5)+'" text-anchor="middle" font-size="13" font-weight="700" font-family="monospace" fill="#e2e8f0">'+label+'</text>';
 }
 
 function updateArchData(m) {
@@ -1034,8 +1049,10 @@ function updateArchData(m) {
 
 // ── Architecture Detail Modal (onclick) ──────────────────────
 var archModalChart1 = null, archModalChart2 = null;
+var archModalWhich = null; // track which modal is open for live updates
 
 function showArchDetail(which) {
+  archModalWhich = which;
   var m = lastArchM || {};
   var c = chartColors();
   var modal = document.getElementById('archModal');
@@ -1218,16 +1235,17 @@ function showArchDetail(which) {
   }
   document.getElementById('archModalStatsBody').innerHTML = tbody;
 
-  // Render charts in modal
-  modal.showModal();
-  setTimeout(function() {
-    if (archModalChart1) archModalChart1.dispose();
-    if (archModalChart2) archModalChart2.dispose();
+  // Render / update charts in modal
+  var isOpen = modal.open;
+  if (!isOpen) modal.showModal();
+  if (!archModalChart1 || archModalChart1.isDisposed()) {
     archModalChart1 = echarts.init(document.getElementById('archModalChart1'));
+  }
+  if (!archModalChart2 || archModalChart2.isDisposed()) {
     archModalChart2 = echarts.init(document.getElementById('archModalChart2'));
-    if (chart1Opt) archModalChart1.setOption(chart1Opt, true);
-    if (chart2Opt) archModalChart2.setOption(chart2Opt, true);
-  }, 80);
+  }
+  if (chart1Opt) archModalChart1.setOption(chart1Opt, !isOpen);
+  if (chart2Opt) archModalChart2.setOption(chart2Opt, !isOpen);
 }
 
 function pieOpt(title, data) {
@@ -1235,13 +1253,14 @@ function pieOpt(title, data) {
   return {
     backgroundColor: 'transparent',
     textStyle: { color: c.text },
-    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)', backgroundColor: 'rgba(15,23,42,0.92)', borderColor: '#475569', textStyle: { color: c.text } },
     legend: { bottom: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 10, itemHeight: 8 },
     series: [{
       type: 'pie', radius: ['35%','60%'], center: ['50%','45%'],
       label: { color: c.text, fontSize: 10 },
+      itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.5)', shadowOffsetX: 0, shadowOffsetY: 4 },
       data: data,
-      emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.3)' } }
+      emphasis: { itemStyle: { shadowBlur: 20, shadowColor: 'rgba(0,0,0,0.7)' } }
     }]
   };
 }
@@ -1251,11 +1270,17 @@ function barOpt(title, cats, series) {
   return {
     backgroundColor: 'transparent',
     textStyle: { color: c.text, fontSize: 10 },
-    tooltip: { trigger: 'axis' },
-    grid: { top: 16, left: 40, right: 12, bottom: 10 },
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,42,0.92)', borderColor: '#475569', textStyle: { color: c.text } },
+    grid: { top: 16, left: 40, right: 12, bottom: 30 },
     xAxis: { type: 'category', data: cats, axisLabel: { color: c.text, fontSize: 10 }, axisLine: { lineStyle: { color: c.split } } },
     yAxis: { type: 'value', axisLabel: { color: c.text, fontSize: 9 }, splitLine: { lineStyle: { color: c.split } }, axisLine: { show: false } },
-    series: series
+    series: series.map(function(s) { 
+      s.itemStyle = s.itemStyle || {}; 
+      s.itemStyle.shadowBlur = 8;
+      s.itemStyle.shadowColor = 'rgba(0,0,0,0.4)';
+      s.itemStyle.shadowOffsetY = 3;
+      return s;
+    })
   };
 }
 
@@ -1336,14 +1361,14 @@ function renderCharts() {
         splitLine: { lineStyle: { color: c.split } }
       },
       series: [
-        { name: 'Bytes In', type: 'line', smooth: true, symbol: 'none', data: chartHistory.bytesIn,
+        { name: 'Source: Bytes In', type: 'line', smooth: true, symbol: 'none', data: chartHistory.bytesIn,
           lineStyle: { width: 2, color: '#36d399' }, itemStyle: { color: '#36d399' },
           areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: 'rgba(54,211,153,0.35)' },
             { offset: 1, color: 'rgba(54,211,153,0.05)' }
           ]) }
         },
-        { name: 'Bytes Out', type: 'line', smooth: true, symbol: 'none', data: outNeg,
+        { name: 'Output: Bytes Out', type: 'line', smooth: true, symbol: 'none', data: outNeg,
           lineStyle: { width: 2, color: '#3abff8' }, itemStyle: { color: '#3abff8' },
           areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: 'rgba(58,191,248,0.05)' },
@@ -1838,6 +1863,9 @@ function loadMetrics() {
       // History for charts
       pushHistory(m);
       renderCharts();
+      if (archModalWhich && document.getElementById('archModal').open) {
+        showArchDetail(archModalWhich);
+      }
       updateArchData(m);
 
       // Update pipeline health aggregate from metrics
@@ -1881,7 +1909,8 @@ function loadJobStatus() {
           var job = data.jobs[i];
           jobsCache[job.job_id] = job;
           var jIcon = job.status === 'running' ? '\u25CF ' : job.status === 'error' ? '\u25CB ' : '\u25CB ';
-          opts.push('<option value="' + job.job_id + '">' + jIcon + (job.name || job.job_id) + ' (' + job.status + ')</option>');
+          var displayText = (job.name && job.name.trim()) ? job.name : job.job_id;
+          opts.push('<option value="' + job.job_id + '">' + jIcon + displayText + ' (' + job.status + ')</option>');
         }
         selector.innerHTML = opts.join('');
         selector.value = currentValue;

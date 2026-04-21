@@ -57,7 +57,9 @@
     '<aside id="sidebar" class="sidebar">' +
       '<div class="sidebar-brand" id="sidebarBrand">' +
         '<img src="/static/favicon.svg" alt="Logo" />' +
-        '<span class="sidebar-brand-text">Changes Worker</span>' +
+        '<div class="tooltip tooltip-right" data-tip="Portable Over Unreliable Changes Handler Passing Instant Pipelines for Events and Streams">' +
+          '<span class="sidebar-brand-text">PouchPipes</span>' +
+        '</div>' +
       '</div>' +
       '<button id="sidebarToggle" class="sidebar-toggle">' +
         '<img src="/static/icons/menu.svg" alt="Toggle" /></button>' +
@@ -181,7 +183,7 @@
   }
 
   restartBtn.addEventListener('click', function () {
-    if (!confirm('Restart the Changes Worker? The feed will reconnect with the current config.')) return;
+    if (!confirm('Restart PouchPipes? The feed will reconnect with the current config.')) return;
     sidebarToast('Restarting worker...', 'info');
     fetch('/api/restart', { method: 'POST' })
       .then(function (res) { return res.json(); })
@@ -245,7 +247,7 @@
   var shutdownBtn = document.getElementById('navShutdown');
   if (shutdownBtn) {
     shutdownBtn.addEventListener('click', function () {
-      if (!confirm('Shutdown the Changes Worker? This will gracefully stop the feed and exit the process.')) return;
+      if (!confirm('Shutdown PouchPipes? This will gracefully stop the feed and exit the process.')) return;
       sidebarToast('Shutting down worker...', 'info');
       fetch('/api/shutdown', { method: 'POST' })
         .then(function (res) { return res.json(); })
