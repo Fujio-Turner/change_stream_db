@@ -1,4 +1,19 @@
-# Changes Worker — Release Notes
+# PouchPipes — Release Notes
+
+---
+
+## v2.2.1 — 2026-04-21
+
+### New Features
+
+- **Project rebrand to PouchPipes** — New name, logo, and backronym: "Portable Over Unreliable Changes Handler that Pipes it all downstream". Updated all documentation, UI, and messaging to reflect the new brand identity.
+
+- **Mascot image** — Added official PouchPipes mascot image to README and documentation.
+
+### Changes
+
+- **Version bump** — All version references updated from v2.1.0 to v2.2.1.
+- **Documentation updates** — All references to "Changes Worker" replaced with "PouchPipes" across README, docs, HTML templates, and guides.
 
 ---
 

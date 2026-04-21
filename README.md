@@ -1,4 +1,10 @@
-# Changes Worker  v2.1.0
+# PouchPipes 🥔📦 v2.2.1
+
+<div align="center">
+  <img src="img/PouchPipes.jpg" alt="PouchPipes Mascot" width="280" style="border-radius: 12px; margin: 20px 0;">
+</div>
+
+**Portable Over Unreliable Changes Handler that pipes CouchDB / Sync Gateway / Capella `_changes` feeds into clean, reliable downstream pipelines.**
 
 A production-ready, async Python 3 processor for the Couchbase `_changes` feed. It connects to **Sync Gateway**, **Capella App Services**, **Couchbase Edge Server**, or **Apache CouchDB**, consumes document changes via longpoll or continuous streaming, and forwards them to a downstream consumer — stdout, HTTP endpoint, RDBMS (PostgreSQL, MySQL, MS SQL, Oracle), or cloud blob storage (AWS S3, MinIO, S3-compatible).
 
