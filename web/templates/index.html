@@ -1,0 +1,2201 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Changes Worker Admin (Beta)</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+  <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
+  <script src="/static/js/tailwind.js"></script>
+  <script src="/static/js/echarts.min.js"></script>
+  <script>
+    (function(){
+      var t = localStorage.getItem('cw_theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <style>
+    .dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+    .dot-green  { background: #36d399; box-shadow: 0 0 6px #36d399; }
+    .dot-yellow { background: #fbbd23; box-shadow: 0 0 6px #fbbd23; }
+    .dot-red    { background: #f87272; box-shadow: 0 0 6px #f87272; }
+    .status-clickable { cursor: pointer; transition: opacity 0.15s; }
+    .status-clickable:hover { opacity: 0.8; }
+    .diag-item { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.4rem 0; }
+    .diag-icon { flex-shrink: 0; font-size: 1.1rem; line-height: 1.4; }
+    .diag-text { font-size: 0.875rem; line-height: 1.4; }
+    .stat-tip { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .stat-tip .tip-q { font-size: 0.6rem; opacity: 0.4; cursor: help; border: 1px solid currentColor; border-radius: 50%; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .stat-tip .tip-q:hover { opacity: 0.8; }
+    /* Pipeline stage border accents */
+    .border-source  { border-left: 3px solid var(--color-success); }
+    .border-process { border-left: 3px solid var(--color-info); }
+    .border-output  { border-left: 3px solid var(--color-warning); }
+
+    /* Architecture diagram */
+    .arch-wrap { position: relative; width: 100%; min-height: 420px; overflow: visible; }
+    .arch-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+    .arch-nodes { position: relative; display: flex; align-items: stretch; width: 100%; height: 420px; }
+    .arch-col { display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 2; }
+    .arch-col-src  { flex: 0 0 22%; }
+    .arch-col-work { flex: 0 0 30%; gap: 50px; }
+    .arch-col-out  { flex: 1; gap: 6px; }
+    .arch-node { border-radius: 16px; padding: 14px 20px; text-align: center; color: #fff; font-size: 0.875rem; line-height: 1.35; min-width: 150px; transition: box-shadow 0.2s, transform 0.2s; cursor: pointer; position: relative; }
+    .arch-node:hover { transform: scale(1.05); z-index: 10; }
+    .arch-node-src  { background: #505050; border: 3px solid var(--color-success); box-shadow: 0 0 18px rgba(80,80,80,0.4); }
+    .arch-node-src:hover  { box-shadow: 0 0 28px rgba(80,80,80,0.7); }
+    .arch-node-work { background: #6c56a4; border: 3px solid var(--color-info); box-shadow: 0 0 18px rgba(108,86,164,0.4); }
+    .arch-node-work:hover { box-shadow: 0 0 28px rgba(108,86,164,0.7); }
+    .arch-node-http { background: #4caf50; border: 3px solid var(--color-warning); box-shadow: 0 0 14px rgba(76,175,80,0.3); }
+    .arch-node-http:hover { box-shadow: 0 0 24px rgba(76,175,80,0.6); }
+    .arch-node-db   { background: #2196f3; border: 3px solid var(--color-warning); box-shadow: 0 0 14px rgba(33,150,243,0.3); }
+    .arch-node-db:hover   { box-shadow: 0 0 24px rgba(33,150,243,0.6); }
+    .arch-node-s3   { background: #ff9800; border: 3px solid var(--color-warning); box-shadow: 0 0 14px rgba(255,152,0,0.3); }
+    .arch-node-s3:hover   { box-shadow: 0 0 24px rgba(255,152,0,0.6); }
+    .arch-node-std  { background: #f4511e; border: 3px solid var(--color-warning); box-shadow: 0 0 14px rgba(244,81,30,0.3); }
+    .arch-node-std:hover  { box-shadow: 0 0 24px rgba(244,81,30,0.6); }
+    .arch-node-dlq  { background: #d32f2f; border: 3px solid var(--color-info); box-shadow: 0 0 14px rgba(211,47,47,0.3); }
+    .arch-node-dlq:hover  { box-shadow: 0 0 24px rgba(211,47,47,0.6); }
+    .arch-node-attach { background: #e91e63; border: 3px solid var(--color-info); box-shadow: 0 0 14px rgba(233,30,99,0.3); }
+    .arch-node-attach:hover { box-shadow: 0 0 24px rgba(233,30,99,0.6); }
+    .arch-node.dimmed { opacity: 0.3; filter: saturate(0.4); }
+    .arch-node .arch-title { font-weight: 700; font-size: 0.95rem; margin-bottom: 2px; }
+    .arch-node .arch-sub { font-size: 0.8rem; opacity: 0.7; }
+    .arch-node .arch-stat { font-size: 0.82rem; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .arch-rate { font-size: 11px; font-weight: 700; font-family: monospace; }
+    /* Hover tooltip for arch nodes */
+    .arch-tip { display: none; position: absolute; left: 50%; bottom: calc(100% + 10px); transform: translateX(-50%); background: rgba(15,23,42,0.96); color: #e2e8f0; border: 1px solid #475569; border-radius: 10px; padding: 10px 14px; font-size: 0.72rem; line-height: 1.5; white-space: nowrap; z-index: 50; pointer-events: none; box-shadow: 0 4px 24px rgba(0,0,0,0.7); text-align: left; }
+    .arch-tip::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 6px solid transparent; border-top-color: #475569; }
+    .arch-tip-bottom { bottom: auto; top: calc(100% + 10px); }
+    .arch-tip-bottom::after { top: auto; bottom: 100%; border-top-color: transparent; border-bottom-color: #475569; }
+    .arch-tip-right { left: calc(100% + 12px); bottom: auto; top: 50%; transform: translateY(-50%); }
+    .arch-tip-right::after { left: -6px; top: 50%; transform: translateY(-50%); border: 6px solid transparent; border-right-color: #475569; border-top-color: transparent; }
+    .arch-node:hover .arch-tip { display: block; }
+    /* Arch detail modal */
+    .arch-modal-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .arch-modal-charts > div { height: 180px; }
+
+    /* Pipeline Health */
+    .summary-ribbon { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+    .summary-stat { text-align: center; padding: 0.75rem 0.5rem; }
+    .summary-stat .stat-value { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+    .summary-stat .stat-label { font-size: 0.75rem; opacity: 0.6; margin-top: 2px; }
+    .summary-stat .stat-sub { font-size: 0.7rem; opacity: 0.45; }
+    .summary-dots { display: flex; gap: 4px; justify-content: center; margin-top: 4px; }
+    .summary-dots .dot { width: 10px; height: 10px; }
+    .health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1rem; }
+    .health-card { border-radius: 16px; transition: box-shadow 0.2s, transform 0.15s; }
+    .health-card:hover { box-shadow: 0 0 24px rgba(54,211,153,0.12); transform: translateY(-1px); }
+    .funnel-bar { height: 8px; border-radius: 4px; overflow: hidden; display: flex; background: rgba(100,100,100,0.2); }
+    .funnel-seg { height: 100%; transition: width 0.5s ease; min-width: 0; }
+    .funnel-processed { background: #36d399; }
+    .funnel-filtered { background: #fbbd23; }
+    .funnel-errors { background: #f87272; }
+    .funnel-dlq { background: #d32f2f; }
+    .spark-wrap { height: 60px; width: 100%; }
+    .key-stats { display: flex; gap: 1rem; justify-content: space-around; }
+    .key-stat { text-align: center; }
+    .key-stat .ks-val { font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .key-stat .ks-label { font-size: 0.65rem; opacity: 0.5; text-transform: uppercase; }
+    .health-footer { display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; opacity: 0.6; }
+    #configBadgeBar .badge { font-size: 0.7rem; gap: 3px; transition: opacity 0.3s; }
+    @media (max-width: 768px) {
+      .summary-ribbon { grid-template-columns: repeat(2, 1fr); }
+      .health-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-base-200">
+  <div id="sidebar-root"></div>
+  <div id="toastContainer" style="position: fixed; bottom: 20px; right: 20px; z-index: 9999;"></div>
+
+  <div class="sidebar-main">
+  <main class="w-full mx-auto p-6 space-y-6">
+
+    <!-- Status Bar -->
+    <div class="card bg-base-100 shadow">
+      <div class="card-body py-3 px-6">
+        <div class="flex flex-wrap items-center gap-6">
+          <div class="flex items-center gap-2 status-clickable" onclick="showStatusDetail('feed')">
+            <span id="dotFeed" class="dot dot-yellow"></span>
+            <span class="text-sm font-medium">Changes Feed</span>
+          </div>
+          <div class="flex items-center gap-2 status-clickable" onclick="showStatusDetail('process')">
+            <span id="dotProcess" class="dot dot-yellow"></span>
+            <span class="text-sm font-medium">Processing</span>
+          </div>
+          <div class="flex items-center gap-2 status-clickable" onclick="showStatusDetail('cbl')">
+            <span id="dotCBL" class="dot dot-yellow"></span>
+            <span class="text-sm font-medium">Couchbase Lite</span>
+          </div>
+          <div class="flex items-center gap-2 status-clickable" onclick="showStatusDetail('output')">
+            <span id="dotOutput" class="dot dot-yellow"></span>
+            <span class="text-sm font-medium">Output</span>
+          </div>
+          <!-- Job Selector (inline in status bar) -->
+          <div class="flex items-center gap-2 ml-4 border-l border-base-300 pl-4">
+            <select id="jobSelector" class="select select-bordered select-xs" onchange="handleJobChange(event)">
+              <option value="">ALL</option>
+            </select>
+            <span id="jobSelectorHint" class="text-xs opacity-40"></span>
+          </div>
+          <div class="ml-auto text-sm opacity-60" id="uptimeLabel">Uptime: --</div>
+        </div>
+      </div>
+    </div>
+    <!-- Hidden table for job data (used by job control functions) -->
+    <div style="display:none"><table><tbody id="jobStatusTable"></tbody></table></div>
+
+    <!-- Config Badges + Architecture -->
+    <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-4">
+        <!-- Config Type Badges -->
+        <div class="flex flex-wrap items-center gap-4 mb-3" id="configBadgeBar">
+          <div class="flex items-center gap-1">
+            <span class="text-xs font-bold uppercase opacity-50" style="color:var(--color-success)">Source</span>
+            <span class="badge badge-sm" id="badgeSG" style="background:#505050;color:#fff;border:1px solid var(--color-success)">SG <span class="opacity-60" id="badgeSGn">0</span></span>
+            <span class="badge badge-sm" id="badgeAppSer" style="background:#505050;color:#fff;border:1px solid var(--color-success)">AppSer <span class="opacity-60" id="badgeAppSern">0</span></span>
+            <span class="badge badge-sm" id="badgeEdge" style="background:#505050;color:#fff;border:1px solid var(--color-success)">Edge <span class="opacity-60" id="badgeEdgen">0</span></span>
+            <span class="badge badge-sm" id="badgeCouchDB" style="background:#505050;color:#fff;border:1px solid var(--color-success)">CouchDB <span class="opacity-60" id="badgeCouchDBn">0</span></span>
+          </div>
+          <div class="border-l border-base-300 pl-4 flex items-center gap-1">
+            <span class="text-xs font-bold uppercase opacity-50" style="color:var(--color-info)">Process</span>
+            <span class="badge badge-sm" id="badgeData" style="background:#6c56a4;color:#fff;border:1px solid var(--color-info)">Data <span class="opacity-60" id="badgeDatan">0</span></span>
+            <span class="badge badge-sm" id="badgeDataAttach" style="background:#6c56a4;color:#fff;border:1px solid var(--color-info)">Data+Attach <span class="opacity-60" id="badgeDataAttachn">0</span></span>
+            <span class="badge badge-sm" id="badgeAsync" style="background:#6c56a4;color:#fff;border:1px solid var(--color-info)">Async <span class="opacity-60" id="badgeAsyncn">0</span></span>
+          </div>
+          <div class="border-l border-base-300 pl-4 flex items-center gap-1">
+            <span class="text-xs font-bold uppercase opacity-50" style="color:var(--color-warning)">Output</span>
+            <span class="badge badge-sm" id="badgeCloud" style="background:#ff9800;color:#fff;border:1px solid var(--color-warning)">Cloud <span class="opacity-60" id="badgeCloudn">0</span></span>
+            <span class="badge badge-sm" id="badgeRDBMS" style="background:#2196f3;color:#fff;border:1px solid var(--color-warning)">RDBMS <span class="opacity-60" id="badgeRDBMSn">0</span></span>
+            <span class="badge badge-sm" id="badgeHTTP" style="background:#4caf50;color:#fff;border:1px solid var(--color-warning)">HTTP <span class="opacity-60" id="badgeHTTPn">0</span></span>
+          </div>
+        </div>
+        <!-- Architecture Diagram -->
+        <div class="flex items-center gap-2 mb-1">
+          <h3 class="text-sm font-semibold">Architecture</h3>
+          <div class="tooltip tooltip-right" data-tip="Live pipeline topology. Node badges update with real-time metrics.">
+            <span class="badge badge-ghost badge-sm cursor-help">?</span>
+          </div>
+        </div>
+        <div class="arch-wrap" id="archWrap">
+          <svg class="arch-svg" id="archSvg"></svg>
+          <div class="arch-nodes">
+            <!-- Source -->
+            <div class="arch-col arch-col-src">
+              <div class="arch-node arch-node-src" id="archSrc" onclick="showArchDetail('src')">
+                <div class="arch-title">Sync Gateway</div>
+                <div class="arch-sub">_changes feed</div>
+                <div class="arch-stat" id="archSrcStat">Received: --</div>
+                <div class="arch-tip" id="archTipSrc">Loading…</div>
+              </div>
+            </div>
+            <!-- Worker + DLQ -->
+            <div class="arch-col arch-col-work">
+              <div class="arch-node arch-node-work" id="archWork" onclick="showArchDetail('work')">
+                <div class="arch-title">changes_worker</div>
+                <div class="arch-sub">checkpoint · retry · mapping</div>
+                <div class="arch-stat" id="archWorkStat">Processed: -- | Filtered: --</div>
+                <div class="arch-tip" id="archTipWork">Loading…</div>
+              </div>
+              <div class="arch-node arch-node-dlq" id="archDlq" onclick="showArchDetail('dlq')">
+                <div class="arch-title">DLQ</div>
+                <div class="arch-sub">Dead Letter Queue</div>
+                <div class="arch-stat" id="archDlqStat">0 docs</div>
+                <div class="arch-tip arch-tip-bottom" id="archTipDlq">Loading…</div>
+              </div>
+            </div>
+            <!-- Attachments -->
+            <div class="arch-col" id="archAttachCol" style="flex: 0 0 18%; justify-content: center;">
+              <div class="arch-node arch-node-attach" id="archAttach" onclick="showArchDetail('attach')">
+                <div class="arch-title">Attachments</div>
+                <div class="arch-sub">fetch · upload · post-process</div>
+                <div class="arch-stat" id="archAttachStat">--</div>
+                <div class="arch-tip" id="archTipAttach">Loading…</div>
+              </div>
+            </div>
+            <!-- Outputs -->
+            <div class="arch-col arch-col-out">
+              <div class="arch-node arch-node-http" id="archOutHttp" data-mode="http" onclick="showArchDetail('http')">
+                <div class="arch-title">HTTP Endpoint</div>
+                <div class="arch-sub">PUT / POST / DELETE</div>
+                <div class="arch-stat" id="archOutHttpStat">--</div>
+                <div class="arch-tip arch-tip-right" id="archTipHttp">Loading…</div>
+              </div>
+              <div class="arch-node arch-node-db" id="archOutDb" data-mode="db" onclick="showArchDetail('db')">
+                <div class="arch-title">RDBMS</div>
+                <div class="arch-sub">Postgres / MySQL / MSSQL</div>
+                <div class="arch-stat" id="archOutDbStat">--</div>
+                <div class="arch-tip arch-tip-right" id="archTipDb">Loading…</div>
+              </div>
+              <div class="arch-node arch-node-s3" id="archOutS3" data-mode="s3" onclick="showArchDetail('s3')">
+                <div class="arch-title">AWS S3</div>
+                <div class="arch-sub">S3 / MinIO</div>
+                <div class="arch-stat" id="archOutS3Stat">--</div>
+                <div class="arch-tip arch-tip-right" id="archTipS3">Loading…</div>
+              </div>
+              <div class="arch-node arch-node-std" id="archOutStd" data-mode="stdout" onclick="showArchDetail('stdout')">
+                <div class="arch-title">stdout</div>
+                <div class="arch-sub">JSON / XML / msgpack</div>
+                <div class="arch-stat" id="archOutStdStat">--</div>
+                <div class="arch-tip arch-tip-right" id="archTipStd">Loading…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Activity Timeline (bottleneck detector) -->
+    <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-4">
+        <div class="flex items-center justify-between mb-1">
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold opacity-70">Activity Timeline</h3>
+            <div class="dropdown dropdown-hover dropdown-right" style="z-index:9999;">
+              <label tabindex="0">
+                <svg class="opacity-40 cursor-help" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+              </label>
+              <div tabindex="0" class="dropdown-content rounded-xl shadow-lg p-4 w-72 text-xs leading-relaxed border border-base-content/10" style="background:oklch(var(--b1));">
+                <p class="font-bold mb-2">How to read this chart</p>
+                <p class="mb-1"><span style="color:#7c3aed;">--</span> <strong>Pending</strong> = docs received minus docs output. Your backlog.</p>
+                <p class="mb-1"><span style="color:#f87272;">- -</span> <strong>In/Out</strong> = received / output ratio. 1.0x = balanced, &gt;1x = backlog growing.</p>
+                <hr class="my-2 border-base-content/10"/>
+                <p class="mb-1"><strong>Pending flat at 0</strong> -- healthy, every doc processed</p>
+                <p class="mb-1"><strong>Pending rising + In/Out &gt; 1x</strong> -- input outpacing output</p>
+                <p class="mb-1"><strong>In/Out &lt; 1x</strong> -- catching up on backlog</p>
+                <p><strong>In/Out = 1x + Pending flat</strong> -- steady state</p>
+              </div>
+            </div>
+          </div>
+          <button class="btn btn-xs btn-outline font-mono" id="btnScaleToggle" onclick="toggleYScale()">Y: Linear</button>
+        </div>
+        <div id="chartActivity" style="width:100%;height:240px"></div>
+      </div>
+    </div>
+
+    <!-- Charts Row (top, right under status bar) -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="card bg-base-100 shadow rounded-2xl border-source">
+        <div class="card-body p-4">
+          <h2 class="text-sm font-semibold opacity-70">Changes Feed</h2>
+          <div id="chartFeed" style="width:100%;height:180px"></div>
+        </div>
+      </div>
+      <div class="card bg-base-100 shadow rounded-2xl border-process">
+        <div class="card-body p-4">
+          <h2 class="text-sm font-semibold opacity-70">Processing</h2>
+          <div id="chartProcess" style="width:100%;height:180px"></div>
+        </div>
+      </div>
+      <div class="card bg-base-100 shadow rounded-2xl border-output">
+        <div class="card-body p-4">
+          <h2 class="text-sm font-semibold opacity-70">Output</h2>
+          <div id="chartOutput" style="width:100%;height:180px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Avg Time Charts Row -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="card bg-base-100 shadow rounded-2xl border-source">
+        <div class="card-body p-4">
+          <h2 class="text-sm font-semibold opacity-70">Avg Poll Time <span class="font-normal opacity-50">(ms)</span></h2>
+          <div id="chartFeedAvg" style="width:100%;height:180px"></div>
+        </div>
+      </div>
+      <div class="card bg-base-100 shadow rounded-2xl border-process">
+        <div class="card-body p-4">
+          <h2 class="text-sm font-semibold opacity-70">Avg Processing Time <span class="font-normal opacity-50">(ms/doc)</span></h2>
+          <div id="chartProcessAvg" style="width:100%;height:180px"></div>
+        </div>
+      </div>
+      <div class="card bg-base-100 shadow rounded-2xl border-output">
+        <div class="card-body p-4">
+          <h2 class="text-sm font-semibold opacity-70">Avg Output Response <span class="font-normal opacity-50">(ms)</span></h2>
+          <div id="chartOutputAvg" style="width:100%;height:180px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pipeline Health -->
+    <div class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-4">
+        <div class="flex items-center gap-2 mb-3">
+          <h3 class="text-sm font-semibold">Pipeline Health</h3>
+          <div class="tooltip tooltip-right" data-tip="At-a-glance view of how each job is performing. The funnel bar shows where documents are going: processed (green), filtered (yellow), errors (red), dead letters (dark red).">
+            <span class="badge badge-ghost badge-sm cursor-help">?</span>
+          </div>
+        </div>
+
+        <!-- Aggregate Summary Ribbon (visible when All Jobs selected) -->
+        <div id="healthSummaryRibbon" class="summary-ribbon mb-4">
+          <div class="summary-stat">
+            <div class="stat-value" id="sumJobsHealth">--</div>
+            <div class="stat-label">Jobs Running</div>
+            <div class="summary-dots" id="sumJobDots"></div>
+          </div>
+          <div class="summary-stat">
+            <div class="stat-value" id="sumTotalIn">--</div>
+            <div class="stat-label">Total In</div>
+            <div class="stat-sub" id="sumInRate"></div>
+          </div>
+          <div class="summary-stat">
+            <div class="stat-value" id="sumTotalOut">--</div>
+            <div class="stat-label">Total Out</div>
+            <div class="stat-sub" id="sumSuccessRate"></div>
+          </div>
+          <div class="summary-stat">
+            <div class="stat-value" id="sumIssues">0</div>
+            <div class="stat-label">Issues</div>
+            <div class="stat-sub" id="sumIssueDetail"></div>
+          </div>
+        </div>
+
+        <!-- Aggregate Funnel Bar -->
+        <div id="healthAggFunnel" class="mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs opacity-50">Pipeline Funnel</span>
+            <div class="flex gap-3 ml-auto text-xs opacity-50">
+              <span class="flex items-center gap-1"><span style="width:8px;height:8px;border-radius:2px;background:#36d399;display:inline-block"></span> Processed</span>
+              <span class="flex items-center gap-1"><span style="width:8px;height:8px;border-radius:2px;background:#fbbd23;display:inline-block"></span> Filtered</span>
+              <span class="flex items-center gap-1"><span style="width:8px;height:8px;border-radius:2px;background:#f87272;display:inline-block"></span> Errors</span>
+              <span class="flex items-center gap-1"><span style="width:8px;height:8px;border-radius:2px;background:#d32f2f;display:inline-block"></span> DLQ</span>
+            </div>
+          </div>
+          <div class="funnel-bar" id="aggFunnelBar"></div>
+          <div class="flex justify-between text-xs opacity-40 mt-1">
+            <span id="aggFunnelIn">0 in</span>
+            <span id="aggFunnelOut">0 out</span>
+          </div>
+        </div>
+
+        <!-- Per-Job Health Cards -->
+        <div class="health-grid" id="healthGrid">
+          <div class="text-center opacity-50 py-6">Loading jobs...</div>
+        </div>
+      </div>
+    </div>
+
+  <!-- Status Detail Modal -->
+  <dialog id="statusModal" class="modal">
+    <div class="modal-box max-w-lg">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">×</button>
+      </form>
+      <div class="flex items-center gap-3 mb-4">
+        <span id="modalDot" class="dot dot-yellow"></span>
+        <h3 id="modalTitle" class="text-lg font-bold">Status Detail</h3>
+      </div>
+      <div id="modalBody" class="space-y-1"></div>
+      <div class="divider my-2"></div>
+      <div id="modalMetrics" class="overflow-x-auto">
+        <table class="table table-sm table-zebra"><tbody id="modalMetricsBody"></tbody></table>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
+
+  <!-- Architecture Node Detail Modal -->
+  <dialog id="archModal" class="modal">
+    <div class="modal-box max-w-3xl">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">×</button>
+      </form>
+      <div class="flex items-center gap-3 mb-4">
+        <span id="archModalDot" style="width:16px;height:16px;border-radius:50%;display:inline-block;flex-shrink:0;"></span>
+        <h3 id="archModalTitle" class="text-lg font-bold"></h3>
+      </div>
+      <div id="archModalStats" class="overflow-x-auto mb-4">
+        <table class="table table-sm table-zebra"><tbody id="archModalStatsBody"></tbody></table>
+      </div>
+      <div class="arch-modal-charts">
+        <div id="archModalChart1"></div>
+        <div id="archModalChart2"></div>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
+
+<script>
+// ── Debug flag: add ?debug=true to URL to enable console logging ─
+var DEBUG = new URLSearchParams(window.location.search).get('debug') === 'true';
+function dbg() { if (DEBUG) console.log.apply(console, ['[CW]'].concat(Array.prototype.slice.call(arguments))); }
+
+// ── Helpers ──────────────────────────────────────────────────
+function fmt(n) {
+  if (n == null) return '--';
+  if (typeof n !== 'number') return String(n);
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'G';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return n % 1 === 0 ? String(n) : n.toFixed(2);
+}
+function fmtBytes(b) {
+  if (b == null) return '--';
+  if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
+  if (b >= 1048576)    return (b / 1048576).toFixed(1) + ' MB';
+  if (b >= 1024)       return (b / 1024).toFixed(1) + ' KB';
+  return b + ' B';
+}
+function fmtUptime(s) {
+  if (!s) return '--';
+  var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d > 0) return d + 'd ' + h + 'h';
+  if (h > 0) return h + 'h ' + m + 'm';
+  return m + 'm ' + Math.floor(s % 60) + 's';
+}
+function fmtMs(sec) {
+  if (!sec) return '--';
+  return (sec * 1000).toFixed(1) + 'ms';
+}
+function fmtAgo(epoch) {
+  if (!epoch) return 'Never';
+  var sec = Math.floor(Date.now() / 1000 - epoch);
+  if (sec < 60)    return sec + ' sec';
+  if (sec < 3600)  return Math.floor(sec / 60) + ' min';
+  if (sec < 86400) return Math.floor(sec / 3600) + ' hr';
+  var days = Math.floor(sec / 86400);
+  if (days < 7)    return days + ' days';
+  if (days < 30)   return Math.floor(days / 7) + ' weeks';
+  if (days < 365)  return Math.floor(days / 30) + ' months';
+  return '1yr+';
+}
+function setText(id, v) { document.getElementById(id).textContent = v; }
+function setDot(id, c) { document.getElementById(id).className = 'dot dot-' + c; }
+function timeLabel() {
+  var d = new Date();
+  return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
+}
+
+// ── Prometheus Parser ────────────────────────────────────────
+// Stores every line keyed by the full metric+labels string AND by base name.
+function parseProm(text) {
+  var m = {};
+  var lines = text.split('\n');
+  var parsed = 0, skipped = 0;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (line.charAt(0) === '#' || !line.trim()) { skipped++; continue; }
+    var sp = line.lastIndexOf(' ');
+    if (sp < 0) { skipped++; continue; }
+    var fullKey = line.substring(0, sp);
+    var val = parseFloat(line.substring(sp + 1));
+    if (isNaN(val)) { skipped++; continue; }
+    m[fullKey] = val;
+    // Also store by base name (first match wins — for simple scalars)
+    var brace = fullKey.indexOf('{');
+    var base = brace >= 0 ? fullKey.substring(0, brace) : fullKey;
+    if (!(base in m)) m[base] = val;
+    parsed++;
+  }
+  dbg('parseProm: parsed=' + parsed + ' skipped=' + skipped + ' totalLines=' + lines.length);
+  dbg('parseProm keys:', Object.keys(m).filter(function(k) { return k.indexOf('{') < 0; }));
+  return m;
+}
+function getLabeled(m, base, label) {
+  for (var k in m) {
+    if (k.indexOf(base + '{') === 0 && k.indexOf(label) >= 0) return m[k];
+  }
+  return 0;
+}
+function getCheckpointSeq(text) {
+  var match = text.match(/changes_worker_checkpoint_seq\{[^}]*seq="([^"]*)"/);
+  return match ? match[1] : '--';
+}
+
+// ── Chart History ────────────────────────────────────────────
+var MAX_POINTS = 30;
+var chartHistory = {
+  labels: [],
+  changesReceived: [],
+  pollErrors: [],
+  processed: [],
+  filtered: [],
+  outSuccess: [],
+  outErrors: [],
+  outSkipped: [],
+  deadLetters: [],
+  avgPollTime: [],
+  avgProcessTime: [],
+  avgOutputTime: [],
+  // Activity Timeline
+  pending: [],
+  failRate: [],
+  throughputRate: []
+};
+// Track previous totals so we can compute deltas
+var prev = {};
+var pushHistoryTs = 0;
+
+function pushHistory(m) {
+  var now = Date.now();
+  var dt = pushHistoryTs ? (now - pushHistoryTs) / 1000 : 0;
+  pushHistoryTs = now;
+
+  chartHistory.labels.push(timeLabel());
+  if (chartHistory.labels.length > MAX_POINTS) chartHistory.labels.shift();
+
+  var keys = [
+    ['changesReceived', 'changes_worker_changes_received_total'],
+    ['pollErrors',      'changes_worker_poll_errors_total'],
+    ['processed',       'changes_worker_changes_processed_total'],
+    ['filtered',        'changes_worker_changes_filtered_total'],
+    ['outSuccess',      'changes_worker_output_success_total'],
+    ['outErrors',       'changes_worker_output_errors_total'],
+    ['outSkipped',      'changes_worker_output_skipped_total'],
+    ['deadLetters',     'changes_worker_dead_letter_total']
+  ];
+  for (var i = 0; i < keys.length; i++) {
+    var hk = keys[i][0], mk = keys[i][1];
+    var cur = m[mk] || 0;
+    var delta = (prev[mk] != null) ? Math.max(0, cur - prev[mk]) : 0;
+    prev[mk] = cur;
+    var rate = (dt > 0) ? parseFloat((delta / dt).toFixed(2)) : 0;
+    chartHistory[hk].push(rate);
+    if (chartHistory[hk].length > MAX_POINTS) chartHistory[hk].shift();
+  }
+
+  // Avg output response time (cumulative: total _sum / total _count)
+  var ortSum = 0, ortCount = 0;
+  for (var k in m) {
+    if (k.indexOf('changes_worker_output_response_time_seconds_sum') === 0) ortSum = m[k];
+    if (k.indexOf('changes_worker_output_response_time_seconds_count') === 0) ortCount = m[k];
+  }
+  var avgOut = ortCount > 0 ? (ortSum / ortCount) * 1000 : null; // ms
+  chartHistory.avgOutputTime.push(avgOut);
+  if (chartHistory.avgOutputTime.length > MAX_POINTS) chartHistory.avgOutputTime.shift();
+
+  // Avg poll time (cumulative: uptime / poll_cycles)
+  var uptime = m['changes_worker_uptime_seconds'] || 0;
+  var pollCycles = m['changes_worker_poll_cycles_total'] || 0;
+  var avgPoll = pollCycles > 0 ? (uptime / pollCycles) * 1000 : null; // ms
+  chartHistory.avgPollTime.push(avgPoll);
+  if (chartHistory.avgPollTime.length > MAX_POINTS) chartHistory.avgPollTime.shift();
+
+  // Avg processing time per doc (cumulative: response_time_sum / processed)
+  // Re-use the output response time sum as the best proxy for per-doc processing time
+  var processed = m['changes_worker_changes_processed_total'] || 0;
+  var avgProc = processed > 0 ? (ortSum / processed) * 1000 : null; // ms per doc
+  chartHistory.avgProcessTime.push(avgProc);
+  if (chartHistory.avgProcessTime.length > MAX_POINTS) chartHistory.avgProcessTime.shift();
+
+  // Activity Timeline: Pending + Failure Rate %
+  var totalReceived = m['changes_worker_changes_received_total'] || 0;
+  var totalOutOk    = m['changes_worker_output_success_total'] || 0;
+  var totalOutErr   = (m['changes_worker_output_errors_total'] || 0) + (m['changes_worker_dead_letter_total'] || 0);
+  var totalSkipped  = m['changes_worker_output_skipped_total'] || 0;
+  var pending = Math.max(0, totalReceived - totalOutOk - totalOutErr - totalSkipped);
+  chartHistory.pending.push(pending);
+  if (chartHistory.pending.length > MAX_POINTS) chartHistory.pending.shift();
+  var totalOut = totalOutOk + totalOutErr;
+  var failPct = totalOut > 0 ? parseFloat(((totalOutErr / totalOut) * 100).toFixed(2)) : 0;
+  chartHistory.failRate.push(failPct);
+  if (chartHistory.failRate.length > MAX_POINTS) chartHistory.failRate.shift();
+  var thruPct = totalReceived > 0 ? parseFloat(((totalOutOk / totalReceived) * 100).toFixed(2)) : 0;
+  chartHistory.throughputRate.push(thruPct);
+  if (chartHistory.throughputRate.length > MAX_POINTS) chartHistory.throughputRate.shift();
+}
+
+// ── ECharts ──────────────────────────────────────────────────
+var yAxisLog = false;
+var cFeed, cProcess, cOutput, cFeedAvg, cProcessAvg, cOutputAvg, cActivity;
+
+function chartColors() {
+  var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  return {
+    text: dark ? '#a6adba' : '#1f2937',
+    split: dark ? '#2a323c' : '#e5e7eb',
+    green: '#36d399', red: '#f87272', yellow: '#fbbd23', blue: '#3b82f6'
+  };
+}
+
+function makeChart(el) {
+  return echarts.init(el);
+}
+
+function rebuildCharts() {
+  if (cActivity) cActivity.dispose();
+  if (cFeed) cFeed.dispose();
+  if (cProcess) cProcess.dispose();
+  if (cOutput) cOutput.dispose();
+  if (cFeedAvg) cFeedAvg.dispose();
+  if (cProcessAvg) cProcessAvg.dispose();
+  if (cOutputAvg) cOutputAvg.dispose();
+  cActivity   = makeChart(document.getElementById('chartActivity'));
+  cFeed       = makeChart(document.getElementById('chartFeed'));
+  cProcess    = makeChart(document.getElementById('chartProcess'));
+  cOutput     = makeChart(document.getElementById('chartOutput'));
+  cFeedAvg    = makeChart(document.getElementById('chartFeedAvg'));
+  cProcessAvg = makeChart(document.getElementById('chartProcessAvg'));
+  cOutputAvg  = makeChart(document.getElementById('chartOutputAvg'));
+  renderCharts();
+  drawArchArrows();
+
+  // Sync crosshair across all charts
+  echarts.connect([cActivity, cFeed, cProcess, cOutput, cFeedAvg, cProcessAvg, cOutputAvg]);
+}
+
+function toggleYScale() {
+  yAxisLog = !yAxisLog;
+  document.getElementById('btnScaleToggle').textContent = yAxisLog ? 'Y: Log' : 'Y: Linear';
+  renderCharts();
+}
+
+function lineOpt(title, series) {
+  var c = chartColors();
+  var yType = yAxisLog ? 'log' : 'value';
+  return {
+    backgroundColor: 'transparent',
+    textStyle: { color: c.text, fontSize: 10 },
+    tooltip: { trigger: 'axis', textStyle: { fontSize: 11 }, axisPointer: { type: 'cross', crossStyle: { color: '#666' }, lineStyle: { color: '#666' } }, valueFormatter: function(v) { return v != null ? fmt(v) + '/s' : '--'; } },
+    legend: { bottom: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+    grid: { top: 8, left: 40, right: 12, bottom: 30 },
+    xAxis: {
+      type: 'category', data: chartHistory.labels, boundaryGap: false,
+      axisLabel: { show: false },
+      axisLine: { lineStyle: { color: c.split } },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: yType, minInterval: yAxisLog ? null : 1, min: yAxisLog ? 1 : null,
+      axisLine: { show: false },
+      axisLabel: { fontSize: 9, color: c.text },
+      splitLine: { lineStyle: { color: c.split } }
+    },
+    series: series
+  };
+}
+
+function lineSeries(name, data, color) {
+  return {
+    name: name, type: 'line', smooth: true, symbol: 'none',
+    data: data, itemStyle: { color: color },
+    areaStyle: { opacity: 0.10 }, lineStyle: { width: 1.5 }
+  };
+}
+
+function lineOptMs(title, series) {
+  var c = chartColors();
+  var yType = yAxisLog ? 'log' : 'value';
+  return {
+    backgroundColor: 'transparent',
+    textStyle: { color: c.text, fontSize: 10 },
+    tooltip: { trigger: 'axis', textStyle: { fontSize: 11 }, axisPointer: { type: 'cross', crossStyle: { color: '#666' }, lineStyle: { color: '#666' } }, valueFormatter: function(v) { return v != null ? v.toFixed(2) + ' ms' : '--'; } },
+    legend: { bottom: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+    grid: { top: 8, left: 46, right: 12, bottom: 30 },
+    xAxis: {
+      type: 'category', data: chartHistory.labels, boundaryGap: false,
+      axisLabel: { show: false },
+      axisLine: { lineStyle: { color: c.split } },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: yType, min: yAxisLog ? 1 : null,
+      axisLine: { show: false },
+      axisLabel: { fontSize: 9, color: c.text, formatter: function(v) { return v.toFixed(1); } },
+      splitLine: { lineStyle: { color: c.split } }
+    },
+    series: series
+  };
+}
+
+// ── Architecture Diagram (HTML + SVG arrows) ─────────────────
+var archPrev = {};
+var archPrevTs = 0;
+var archRates = { feed: 0, out: 0 };
+var archNodeColors = { http: '#4caf50', db: '#2196f3', s3: '#ff9800', stdout: '#f4511e', attach: '#e91e63' };
+var lastArchM = null; // stash for modal
+
+// Arrow color logic: green=healthy, yellow=slow/warning, red=active but erroring, grey=inactive
+var ARROW_GREEN  = '#36d399';
+var ARROW_YELLOW = '#fbbd23';
+var ARROW_RED    = '#f87272';
+var ARROW_GREY   = '#475569';
+
+function arrowColor(active, epUp, errRatio) {
+  if (!active) return ARROW_GREY;
+  if (epUp === 0) return ARROW_RED;         // configured but endpoint down
+  if (errRatio > 0.1) return ARROW_YELLOW;  // >10% errors = warning
+  return ARROW_GREEN;                        // healthy
+}
+
+function drawArchArrows() {
+  var svg = document.getElementById('archSvg');
+  if (!svg) return;
+  var wrap = document.getElementById('archWrap');
+  var wr = wrap.getBoundingClientRect();
+  var src  = document.getElementById('archSrc');
+  var work = document.getElementById('archWork');
+  var outs = [
+    document.getElementById('archOutHttp'),
+    document.getElementById('archOutDb'),
+    document.getElementById('archOutS3'),
+    document.getElementById('archOutStd')
+  ];
+  var dlqEl = document.getElementById('archDlq');
+  var m = lastArchM || {};
+  function cx(el) { var r = el.getBoundingClientRect(); return r.left + r.width / 2 - wr.left; }
+  function cy(el) { var r = el.getBoundingClientRect(); return r.top + r.height / 2 - wr.top; }
+  function by(el) { return el.getBoundingClientRect().bottom - wr.top; }
+  function ty(el) { return el.getBoundingClientRect().top - wr.top; }
+  function rx(el) { return el.getBoundingClientRect().right - wr.left; }
+  function lx(el) { return el.getBoundingClientRect().left - wr.left; }
+  var outMode = (cachedCfg && cachedCfg.output) ? cachedCfg.output.mode : '';
+
+  // Compute health for feed arrow
+  var pollCycles = m['changes_worker_poll_cycles_total'] || 0;
+  var pollErrors = m['changes_worker_poll_errors_total'] || 0;
+  var feedErrRatio = pollCycles > 0 ? pollErrors / pollCycles : 0;
+  var uptime = m['changes_worker_uptime_seconds'] || 0;
+  var feedColor = uptime > 0 ? (feedErrRatio > 0.1 ? ARROW_YELLOW : ARROW_GREEN) : ARROW_GREY;
+
+  // Compute health for output arrow
+  var outOk  = m['changes_worker_output_success_total'] || 0;
+  var outErr = m['changes_worker_output_errors_total'] || 0;
+  var epUp   = m['changes_worker_output_endpoint_up'];
+  var outTotal = outOk + outErr;
+  var outErrRatio = outTotal > 0 ? outErr / outTotal : 0;
+  var activeOutColor = arrowColor(true, epUp, outErrRatio);
+
+  // Markers for each color
+  var colors = [ARROW_GREEN, ARROW_YELLOW, ARROW_RED, ARROW_GREY];
+  var colorNames = ['green','yellow','red','grey'];
+  var html = '<defs>';
+  for (var ci = 0; ci < colors.length; ci++) {
+    html += '<marker id="ah_'+colorNames[ci]+'" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M0,0 L10,3 L0,6" fill="'+colors[ci]+'" opacity="0.85"/></marker>';
+    html += '<marker id="ah_'+colorNames[ci]+'_rev" viewBox="0 0 10 6" refX="0" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M10,0 L0,3 L10,6" fill="'+colors[ci]+'" opacity="0.85"/></marker>';
+  }
+  html += '</defs>';
+
+  function colorKey(c) {
+    for (var k = 0; k < colors.length; k++) { if (c === colors[k]) return colorNames[k]; }
+    return 'grey';
+  }
+
+  // ─── Source → Worker (single arrow, one-way data flow) ───
+  var sx = rx(src), sy = cy(src), wx = lx(work), wy = cy(work);
+  var fk = colorKey(feedColor);
+  html += '<line x1="'+sx+'" y1="'+sy+'" x2="'+wx+'" y2="'+wy+'" stroke="'+feedColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+fk+')"/>';
+  html += rateBadge((sx+wx)/2, (sy+wy)/2, archRates.feed, feedColor);
+
+  // ─── Worker → Attachments → Outputs (if attachments enabled) ───
+  var attachEl = document.getElementById('archAttach');
+  var attachCol = document.getElementById('archAttachCol');
+  var attachEnabled = cachedCfg && cachedCfg.attachments && cachedCfg.attachments.enabled;
+
+  // ─── Attachment/Output arrows ───
+  if (attachEnabled && attachEl) {
+    attachEl.classList.remove('dimmed');
+    if (attachCol) attachCol.style.display = '';
+    // Worker → Attachments
+    var awxR = rx(work), awyC = cy(work), aaxL = lx(attachEl), aayC = cy(attachEl);
+    var attachDetected = m['changes_worker_attachments_detected_total'] || 0;
+    var attachErrors = (m['changes_worker_attachments_download_errors_total'] || 0) + (m['changes_worker_attachments_upload_errors_total'] || 0);
+    var attachTotal = attachDetected + attachErrors;
+    var attachErrRatio = attachTotal > 0 ? attachErrors / attachTotal : 0;
+    var attachArrowColor = uptime > 0 ? (attachErrRatio > 0.1 ? ARROW_YELLOW : ARROW_GREEN) : ARROW_GREY;
+    var aak = colorKey(attachArrowColor);
+    html += '<line x1="'+awxR+'" y1="'+awyC+'" x2="'+aaxL+'" y2="'+aayC+'" stroke="'+attachArrowColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+aak+')"/>';
+
+    // Attachments → each output
+    for (var i = 0; i < outs.length; i++) {
+      var mode = outs[i].getAttribute('data-mode');
+      var active = mode === outMode;
+      var ox = lx(outs[i]), oy = cy(outs[i]);
+      var aRx = rx(attachEl), aCy = cy(attachEl);
+      if (active) {
+        var ok = colorKey(activeOutColor);
+        html += '<line x1="'+aRx+'" y1="'+aCy+'" x2="'+ox+'" y2="'+oy+'" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')"/>';
+        html += rateBadge((aRx+ox)/2, (aCy+oy)/2, archRates.out, activeOutColor);
+      } else {
+        html += '<line x1="'+aRx+'" y1="'+aCy+'" x2="'+ox+'" y2="'+oy+'" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
+      }
+    }
+  } else {
+    if (attachCol) attachCol.style.display = 'none';
+    // Worker → each output (original direct path)
+    for (var i = 0; i < outs.length; i++) {
+      var mode = outs[i].getAttribute('data-mode');
+      var active = mode === outMode;
+      var ox = lx(outs[i]), oy = cy(outs[i]);
+      var wxR = rx(work), wyC = cy(work);
+      if (active) {
+        var ok = colorKey(activeOutColor);
+        html += '<line x1="'+wxR+'" y1="'+wyC+'" x2="'+ox+'" y2="'+oy+'" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')"/>';
+        html += rateBadge((wxR+ox)/2, (wyC+oy)/2, archRates.out, activeOutColor);
+      } else {
+        html += '<line x1="'+wxR+'" y1="'+wyC+'" x2="'+ox+'" y2="'+oy+'" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
+      }
+    }
+  }
+
+  // ─── Worker ↔ DLQ (dual arrows — bidirectional: docs in, retry out) ───
+  if (dlqEl) {
+    var wCx = cx(work), wBy = by(work), dTy = ty(dlqEl), dCx = cx(dlqEl);
+    var dlqCount = m['changes_worker_dead_letter_total'] || 0;
+    var dlqColor = dlqCount > 0 ? ARROW_RED : ARROW_GREEN;
+    var dk = colorKey(dlqColor);
+    var dlqGap = 10;
+    // Arrow down: Worker → DLQ (left side)
+    html += '<line x1="'+(wCx-dlqGap)+'" y1="'+wBy+'" x2="'+(dCx-dlqGap)+'" y2="'+dTy+'" stroke="'+dlqColor+'" stroke-width="2" stroke-opacity="0.6" marker-end="url(#ah_'+dk+')"/>';
+    // Arrow up: DLQ → Worker (right side, retry path)
+    html += '<line x1="'+(dCx+dlqGap)+'" y1="'+dTy+'" x2="'+(wCx+dlqGap)+'" y2="'+wBy+'" stroke="'+dlqColor+'" stroke-width="1.5" stroke-opacity="0.35" marker-end="url(#ah_'+dk+'_rev)"/>';
+  }
+
+  svg.innerHTML = html;
+}
+
+function fmtRate(r) {
+  if (r <= 0) return '0/s';
+  if (r >= 1e6) return (r / 1e6).toFixed(2) + 'M/s';
+  if (r >= 1e3) return (r / 1e3).toFixed(2) + 'K/s';
+  if (r >= 1)   return r.toFixed(1) + '/s';
+  return r.toFixed(1) + '/s';
+}
+
+function rateBadge(x, y, rate, color) {
+  var label = fmtRate(rate);
+  var w = Math.max(67, label.length * 10.5 + 25);
+  var h = 34;
+  return '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="17" fill="'+color+'" opacity="0.55"/>'
+       + '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="17" fill="none" stroke="'+color+'" stroke-width="2" opacity="0.7"/>'
+       + '<text x="'+x+'" y="'+(y+5)+'" text-anchor="middle" font-size="15" font-weight="700" font-family="monospace" fill="#111">'+label+'</text>';
+}
+
+function updateArchData(m) {
+  lastArchM = m;
+  var now = Date.now();
+  var dt = archPrevTs ? (now - archPrevTs) / 1000 : 0;
+  archPrevTs = now;
+
+  var received  = m ? (m['changes_worker_changes_received_total'] || 0) : 0;
+  var processed = m ? (m['changes_worker_changes_processed_total'] || 0) : 0;
+  var filtered  = m ? (m['changes_worker_changes_filtered_total'] || 0) : 0;
+  var outOk     = m ? (m['changes_worker_output_success_total'] || 0) : 0;
+  var outErr    = m ? (m['changes_worker_output_errors_total'] || 0) : 0;
+  var outSkip   = m ? (m['changes_worker_output_skipped_total'] || 0) : 0;
+  var dlq       = m ? (m['changes_worker_dead_letter_total'] || 0) : 0;
+  var bytesIn   = m ? (m['changes_worker_bytes_received_total'] || 0) : 0;
+  var bytesOut  = m ? (m['changes_worker_bytes_output_total'] || 0) : 0;
+  var pollCycles= m ? (m['changes_worker_poll_cycles_total'] || 0) : 0;
+  var pollErrors= m ? (m['changes_worker_poll_errors_total'] || 0) : 0;
+  var retries   = m ? (m['changes_worker_retries_total'] || 0) : 0;
+  var chkSaves  = m ? (m['changes_worker_checkpoint_saves_total'] || 0) : 0;
+  var uptime    = m ? (m['changes_worker_uptime_seconds'] || 0) : 0;
+  var outMode   = (cachedCfg && cachedCfg.output) ? cachedCfg.output.mode : '';
+
+  // Compute rates
+  if (dt > 0 && archPrev._received != null) {
+    archRates.feed = Math.max(0, received - archPrev._received) / dt;
+    archRates.out  = Math.max(0, outOk - archPrev._outOk) / dt;
+  }
+  archPrev._received = received;
+  archPrev._outOk    = outOk;
+
+  // Node stat labels
+  var attachEnabled = cachedCfg && cachedCfg.attachments && cachedCfg.attachments.enabled;
+  setText('archSrcStat', 'Received: ' + fmt(received) + ' · ' + fmtBytes(bytesIn));
+  var modeLabel = attachEnabled ? '📎 ' : '';
+  setText('archWorkStat', modeLabel + 'Processed: ' + fmt(processed) + ' | Filtered: ' + fmt(filtered) + ' | DLQ: ' + fmt(dlq));
+
+  // Output nodes — active vs dimmed
+  var outEls = document.querySelectorAll('[data-mode]');
+  for (var i = 0; i < outEls.length; i++) {
+    if (outEls[i].getAttribute('data-mode') === outMode) {
+      outEls[i].classList.remove('dimmed');
+    } else {
+      outEls[i].classList.add('dimmed');
+    }
+  }
+  setText('archOutHttpStat', outMode === 'http' ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
+  setText('archOutDbStat',   outMode === 'db'   ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
+  setText('archOutS3Stat',   outMode === 's3'   ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
+  setText('archOutStdStat',  outMode === 'stdout' ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
+
+  // Attachment node
+  var attDetected = m ? (m['changes_worker_attachments_detected_total'] || 0) : 0;
+  var attDownloaded = m ? (m['changes_worker_attachments_downloaded_total'] || 0) : 0;
+  var attUploaded = m ? (m['changes_worker_attachments_uploaded_total'] || 0) : 0;
+  var attDlErr = m ? (m['changes_worker_attachments_download_errors_total'] || 0) : 0;
+  var attUlErr = m ? (m['changes_worker_attachments_upload_errors_total'] || 0) : 0;
+  var attSkipped = m ? (m['changes_worker_attachments_skipped_total'] || 0) : 0;
+  var attBytesDown = m ? (m['changes_worker_attachments_bytes_downloaded_total'] || 0) : 0;
+  var attBytesUp = m ? (m['changes_worker_attachments_bytes_uploaded_total'] || 0) : 0;
+  var attPostProc = m ? (m['changes_worker_attachments_post_process_total'] || 0) : 0;
+  var attPostErr = m ? (m['changes_worker_attachments_post_process_errors_total'] || 0) : 0;
+  var attachCol = document.getElementById('archAttachCol');
+  var workCol = document.getElementById('archWork').closest('.arch-col');
+  if (attachEnabled) {
+    setText('archAttachStat', fmt(attUploaded) + ' up · ' + fmt(attDlErr + attUlErr) + ' err');
+    if (attachCol) attachCol.style.display = '';
+    if (workCol) workCol.style.flex = '0 0 30%';
+  } else {
+    setText('archAttachStat', 'disabled');
+    if (attachCol) attachCol.style.display = 'none';
+    if (workCol) workCol.style.flex = '0 0 36%';
+  }
+
+  // DLQ node
+  setText('archDlqStat', fmt(dlq) + ' doc' + (dlq !== 1 ? 's' : ''));
+
+  // Hover tooltips — concise summary info
+  var feedRate = archRates.feed > 0 ? (archRates.feed < 1 ? archRates.feed.toFixed(1) : fmt(archRates.feed)) + ' docs/s' : 'idle';
+  var outRate  = archRates.out > 0  ? (archRates.out < 1  ? archRates.out.toFixed(1)  : fmt(archRates.out))  + ' docs/s' : 'idle';
+  document.getElementById('archTipSrc').innerHTML =
+    'Rate: <b>' + feedRate + '</b><br>' +
+    'Received: <b>' + fmt(received) + '</b> (' + fmtBytes(bytesIn) + ')<br>' +
+    'Poll Cycles: <b>' + fmt(pollCycles) + '</b> · Errors: <b>' + fmt(pollErrors) + '</b><br>' +
+    'Uptime: <b>' + fmtUptime(uptime) + '</b>';
+  document.getElementById('archTipWork').innerHTML =
+    'Processed: <b>' + fmt(processed) + '</b><br>' +
+    'Filtered: <b>' + fmt(filtered) + '</b><br>' +
+    'Dead Letters: <b>' + fmt(dlq) + '</b><br>' +
+    'Checkpoint Saves: <b>' + fmt(chkSaves) + '</b><br>' +
+    'Retries: <b>' + fmt(retries) + '</b>';
+  var outTip = 'Rate: <b>' + outRate + '</b><br>' +
+    'Success: <b>' + fmt(outOk) + '</b> · Errors: <b>' + fmt(outErr) + '</b><br>' +
+    'Skipped: <b>' + fmt(outSkip) + '</b><br>' +
+    'Bytes Sent: <b>' + fmtBytes(bytesOut) + '</b>';
+  document.getElementById('archTipHttp').innerHTML = outMode === 'http' ? outTip : 'Not active';
+  document.getElementById('archTipDb').innerHTML   = outMode === 'db'   ? outTip : 'Not active';
+  document.getElementById('archTipS3').innerHTML   = outMode === 's3'   ? outTip : 'Not active';
+  document.getElementById('archTipStd').innerHTML  = outMode === 'stdout' ? outTip : 'Not active';
+  document.getElementById('archTipDlq').innerHTML =
+    'Dead Letters: <b>' + fmt(dlq) + '</b><br>' +
+    'Last Insert: <b>' + fmtEpoch(cachedDlqMeta.last_inserted_at) + '</b><br>' +
+    'Last Drain: <b>' + fmtEpoch(cachedDlqMeta.last_drained_at) + '</b><br>' +
+    'Review at <b>/api/dlq</b>';
+  document.getElementById('archTipAttach').innerHTML = attachEnabled
+    ? 'Detected: <b>' + fmt(attDetected) + '</b><br>' +
+      'Downloaded: <b>' + fmt(attDownloaded) + '</b> (' + fmtBytes(attBytesDown) + ')<br>' +
+      'Uploaded: <b>' + fmt(attUploaded) + '</b> (' + fmtBytes(attBytesUp) + ')<br>' +
+      'Skipped: <b>' + fmt(attSkipped) + '</b><br>' +
+      'Errors: <b>' + fmt(attDlErr + attUlErr) + '</b><br>' +
+      'Post-Process: <b>' + fmt(attPostProc) + '</b> (err: ' + fmt(attPostErr) + ')'
+    : 'Attachments disabled';
+
+  drawArchArrows();
+}
+
+// ── Architecture Detail Modal (onclick) ──────────────────────
+var archModalChart1 = null, archModalChart2 = null;
+
+function showArchDetail(which) {
+  var m = lastArchM || {};
+  var c = chartColors();
+  var modal = document.getElementById('archModal');
+  var title = '', color = '', rows = [], chart1Opt = null, chart2Opt = null;
+
+  var received  = m['changes_worker_changes_received_total'] || 0;
+  var processed = m['changes_worker_changes_processed_total'] || 0;
+  var filtered  = m['changes_worker_changes_filtered_total'] || 0;
+  var outOk     = m['changes_worker_output_success_total'] || 0;
+  var outErr    = m['changes_worker_output_errors_total'] || 0;
+  var outSkip   = m['changes_worker_output_skipped_total'] || 0;
+  var dlq       = m['changes_worker_dead_letter_total'] || 0;
+  var bytesIn   = m['changes_worker_bytes_received_total'] || 0;
+  var bytesOut  = m['changes_worker_bytes_output_total'] || 0;
+  var pollCycles= m['changes_worker_poll_cycles_total'] || 0;
+  var pollErrors= m['changes_worker_poll_errors_total'] || 0;
+  var retries   = m['changes_worker_retries_total'] || 0;
+  var uptime    = m['changes_worker_uptime_seconds'] || 0;
+  var lastBatch = m['changes_worker_last_batch_size'] || 0;
+  var chkSaves  = m['changes_worker_checkpoint_saves_total'] || 0;
+  var feedDel   = m['changes_worker_feed_deletes_seen_total'] || 0;
+  var feedRem   = m['changes_worker_feed_removes_seen_total'] || 0;
+
+  if (which === 'src') {
+    title = 'Sync Gateway — Changes Feed';
+    color = '#26a69a';
+    rows = [
+      ['Changes Received', fmt(received)],
+      ['Bytes Downloaded', fmtBytes(bytesIn)],
+      ['Poll Cycles', fmt(pollCycles)],
+      ['Poll Errors', fmt(pollErrors)],
+      ['Error Ratio', pollCycles > 0 ? ((pollErrors/pollCycles)*100).toFixed(1) + '%' : '0%'],
+      ['Retries', fmt(retries)],
+      ['Last Batch Size', fmt(lastBatch)],
+      ['Deletes Seen', fmt(feedDel)],
+      ['Removes Seen', fmt(feedRem)],
+      ['Uptime', fmtUptime(uptime)]
+    ];
+    // Chart 1: line — feed history
+    chart1Opt = lineOpt('Feed Over Time', [
+      lineSeries('Received', chartHistory.changesReceived, '#26a69a'),
+      lineSeries('Poll Errors', chartHistory.pollErrors, c.red)
+    ]);
+    // Chart 2: pie — deletes vs removes vs normal
+    var normal = Math.max(0, received - feedDel - feedRem);
+    chart2Opt = pieOpt('Changes Breakdown', [
+      { name: 'Normal', value: normal, itemStyle: { color: '#26a69a' } },
+      { name: 'Deletes', value: feedDel, itemStyle: { color: c.red } },
+      { name: 'Removes', value: feedRem, itemStyle: { color: c.yellow } }
+    ]);
+  } else if (which === 'dlq') {
+    title = 'Dead Letter Queue';
+    color = '#d32f2f';
+    rows = [
+      ['Dead Letters', fmt(dlq)],
+      ['Last Inserted', fmtEpoch(cachedDlqMeta.last_inserted_at)],
+      ['Insert Job', cachedDlqMeta.last_inserted_job || '--'],
+      ['Last Drained', fmtEpoch(cachedDlqMeta.last_drained_at)],
+      ['Drain Job', cachedDlqMeta.last_drained_job || '--'],
+      ['Output Errors', fmt(outErr)],
+      ['Output Success', fmt(outOk)],
+      ['Retries', fmt(retries)],
+      ['Uptime', fmtUptime(uptime)]
+    ];
+    // Chart 1: pie — success vs errors vs DLQ
+    chart1Opt = pieOpt('Output Outcomes', [
+      { name: 'Success', value: outOk, itemStyle: { color: '#36d399' } },
+      { name: 'Errors', value: outErr, itemStyle: { color: '#f87272' } },
+      { name: 'Dead Letters', value: dlq, itemStyle: { color: '#d32f2f' } }
+    ]);
+    // Chart 2: line — dead letter history
+    chart2Opt = lineOpt('Dead Letters Over Time', [
+      lineSeries('Dead Letters', chartHistory.deadLetters, '#d32f2f'),
+      lineSeries('Errors', chartHistory.outErrors, c.red)
+    ]);
+  } else if (which === 'work') {
+    title = 'changes_worker — Processing';
+    color = '#6c56a4';
+    rows = [
+      ['Docs Processed', fmt(processed)],
+      ['Docs Filtered', fmt(filtered)],
+      ['Dead Letters', fmt(dlq)],
+      ['Checkpoint Saves', fmt(chkSaves)],
+      ['Retries', fmt(retries)],
+      ['Uptime', fmtUptime(uptime)]
+    ];
+    // Chart 1: bar — processed vs filtered vs DLQ
+    chart1Opt = barOpt('Document Fate', ['Processed','Filtered','Dead Letter'], [
+      { name: 'Count', type: 'bar', data: [processed, filtered, dlq],
+        itemStyle: { color: function(p) { return ['#6c56a4','#fbbd23','#f87272'][p.dataIndex]; } },
+        barWidth: '50%', label: { show: true, position: 'top', color: c.text, fontSize: 10 } }
+    ]);
+    // Chart 2: line — processing history
+    chart2Opt = lineOpt('Processing Over Time', [
+      lineSeries('Processed', chartHistory.processed, '#6c56a4'),
+      lineSeries('Filtered', chartHistory.filtered, c.yellow)
+    ]);
+  } else if (which === 'attach') {
+    title = 'Attachments — Processing';
+    color = '#e91e63';
+    var attDetected = m['changes_worker_attachments_detected_total'] || 0;
+    var attDownloaded = m['changes_worker_attachments_downloaded_total'] || 0;
+    var attUploaded = m['changes_worker_attachments_uploaded_total'] || 0;
+    var attDlErr = m['changes_worker_attachments_download_errors_total'] || 0;
+    var attUlErr = m['changes_worker_attachments_upload_errors_total'] || 0;
+    var attSkipped = m['changes_worker_attachments_skipped_total'] || 0;
+    var attBytesDown = m['changes_worker_attachments_bytes_downloaded_total'] || 0;
+    var attBytesUp = m['changes_worker_attachments_bytes_uploaded_total'] || 0;
+    var attPostProc = m['changes_worker_attachments_post_process_total'] || 0;
+    var attPostErr = m['changes_worker_attachments_post_process_errors_total'] || 0;
+    var attEnabled = cachedCfg && cachedCfg.attachments && cachedCfg.attachments.enabled;
+    var attMode = (cachedCfg && cachedCfg.attachments) ? cachedCfg.attachments.mode || 'individual' : '--';
+    var attDest = (cachedCfg && cachedCfg.attachments && cachedCfg.attachments.destination) ? cachedCfg.attachments.destination.type || '--' : '--';
+    rows = [
+      ['Status', attEnabled ? '✅ Enabled' : '💤 Disabled'],
+      ['Mode', attMode],
+      ['Destination', attDest],
+      ['Detected', fmt(attDetected)],
+      ['Downloaded', fmt(attDownloaded)],
+      ['Uploaded', fmt(attUploaded)],
+      ['Download Errors', fmt(attDlErr)],
+      ['Upload Errors', fmt(attUlErr)],
+      ['Skipped', fmt(attSkipped)],
+      ['Bytes Downloaded', fmtBytes(attBytesDown)],
+      ['Bytes Uploaded', fmtBytes(attBytesUp)],
+      ['Post-Process', fmt(attPostProc)],
+      ['Post-Process Errors', fmt(attPostErr)],
+      ['Uptime', fmtUptime(uptime)]
+    ];
+    // Chart 1: pie — downloaded vs uploaded vs errors vs skipped
+    chart1Opt = pieOpt('Attachment Outcomes', [
+      { name: 'Uploaded', value: attUploaded, itemStyle: { color: '#36d399' } },
+      { name: 'DL Errors', value: attDlErr, itemStyle: { color: '#f87272' } },
+      { name: 'UL Errors', value: attUlErr, itemStyle: { color: '#d32f2f' } },
+      { name: 'Skipped', value: attSkipped, itemStyle: { color: '#fbbd23' } }
+    ]);
+    // Chart 2: bar — bytes downloaded vs uploaded
+    chart2Opt = barOpt('Transfer Volume', ['Downloaded','Uploaded'], [
+      { name: 'Bytes', type: 'bar', data: [attBytesDown, attBytesUp],
+        itemStyle: { color: function(p) { return ['#e91e63','#36d399'][p.dataIndex]; } },
+        barWidth: '50%', label: { show: true, position: 'top', color: c.text, fontSize: 10,
+          formatter: function(p) { return fmtBytes(p.value); } } }
+    ]);
+  } else {
+    // Output nodes
+    var outMode = (cachedCfg && cachedCfg.output) ? cachedCfg.output.mode : '';
+    var names = { http: 'HTTP Endpoint', db: 'RDBMS', s3: 'AWS S3', stdout: 'stdout' };
+    title = (names[which] || which) + ' — Output';
+    color = archNodeColors[which] || '#475569';
+    var isActive = which === outMode;
+    rows = [
+      ['Status', isActive ? '✅ Active' : '💤 Inactive'],
+      ['Requests Total', fmt(outOk + outErr + outSkip)],
+      ['Success', fmt(outOk)],
+      ['Errors', fmt(outErr)],
+      ['Skipped', fmt(outSkip)],
+      ['Dead Letters', fmt(dlq)],
+      ['Bytes Sent', fmtBytes(bytesOut)]
+    ];
+    // Chart 1: pie — success vs errors vs skipped
+    chart1Opt = pieOpt('Request Outcomes', [
+      { name: 'Success', value: outOk, itemStyle: { color: '#36d399' } },
+      { name: 'Errors', value: outErr, itemStyle: { color: '#f87272' } },
+      { name: 'Skipped', value: outSkip, itemStyle: { color: '#fbbd23' } }
+    ]);
+    // Chart 2: line — output history
+    chart2Opt = lineOpt('Output Over Time', [
+      lineSeries('Success', chartHistory.outSuccess, '#36d399'),
+      lineSeries('Errors', chartHistory.outErrors, c.red),
+      lineSeries('Dead Letters', chartHistory.deadLetters, c.yellow)
+    ]);
+  }
+
+  document.getElementById('archModalTitle').textContent = title;
+  document.getElementById('archModalDot').style.background = color;
+  document.getElementById('archModalDot').style.boxShadow = '0 0 10px ' + color;
+  var tbody = '';
+  for (var r = 0; r < rows.length; r++) {
+    tbody += '<tr><td class="font-medium text-sm">' + rows[r][0] + '</td><td class="text-right text-sm">' + rows[r][1] + '</td></tr>';
+  }
+  document.getElementById('archModalStatsBody').innerHTML = tbody;
+
+  // Render charts in modal
+  modal.showModal();
+  setTimeout(function() {
+    if (archModalChart1) archModalChart1.dispose();
+    if (archModalChart2) archModalChart2.dispose();
+    archModalChart1 = echarts.init(document.getElementById('archModalChart1'));
+    archModalChart2 = echarts.init(document.getElementById('archModalChart2'));
+    if (chart1Opt) archModalChart1.setOption(chart1Opt, true);
+    if (chart2Opt) archModalChart2.setOption(chart2Opt, true);
+  }, 80);
+}
+
+function pieOpt(title, data) {
+  var c = chartColors();
+  return {
+    backgroundColor: 'transparent',
+    textStyle: { color: c.text },
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+    legend: { bottom: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 10, itemHeight: 8 },
+    series: [{
+      type: 'pie', radius: ['35%','60%'], center: ['50%','45%'],
+      label: { color: c.text, fontSize: 10 },
+      data: data,
+      emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.3)' } }
+    }]
+  };
+}
+
+function barOpt(title, cats, series) {
+  var c = chartColors();
+  return {
+    backgroundColor: 'transparent',
+    textStyle: { color: c.text, fontSize: 10 },
+    tooltip: { trigger: 'axis' },
+    grid: { top: 16, left: 40, right: 12, bottom: 10 },
+    xAxis: { type: 'category', data: cats, axisLabel: { color: c.text, fontSize: 10 }, axisLine: { lineStyle: { color: c.split } } },
+    yAxis: { type: 'value', axisLabel: { color: c.text, fontSize: 9 }, splitLine: { lineStyle: { color: c.split } }, axisLine: { show: false } },
+    series: series
+  };
+}
+
+function renderCharts() {
+  var c = chartColors();
+  // Activity Timeline
+  var yType = yAxisLog ? 'log' : 'value';
+  if (cActivity) {
+    cActivity.setOption({
+      backgroundColor: 'transparent',
+      textStyle: { color: c.text, fontSize: 10 },
+      tooltip: { trigger: 'axis', textStyle: { fontSize: 11 },
+        axisPointer: { type: 'cross', crossStyle: { color: '#666' }, lineStyle: { color: '#666' } },
+        formatter: function(params) {
+          var tip = params[0].axisValueLabel + '<br/>';
+          for (var i = 0; i < params.length; i++) {
+            var p = params[i];
+            tip += '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + p.color + ';margin-right:4px"></span>';
+            if (p.seriesName === 'Fail %' || p.seriesName === 'Thru %') {
+              tip += p.seriesName + ': <b>' + (p.value != null ? p.value.toFixed(2) + '%' : '--') + '</b><br/>';
+            } else if (p.seriesName === 'Pending') {
+              tip += p.seriesName + ': <b>' + fmt(p.value) + '</b><br/>';
+            } else {
+              tip += p.seriesName + ': <b>' + fmt(p.value) + '/s</b><br/>';
+            }
+          }
+          return tip;
+        }
+      },
+      legend: { bottom: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+      grid: { top: 12, left: 50, right: 55, bottom: 30 },
+      xAxis: {
+        type: 'category', data: chartHistory.labels, boundaryGap: false,
+        axisLabel: { show: false }, axisLine: { lineStyle: { color: c.split } }, axisTick: { show: false }
+      },
+      yAxis: [
+        { type: yType, minInterval: yAxisLog ? null : 1, min: yAxisLog ? 1 : null, axisLine: { show: false }, axisLabel: { fontSize: 9, color: c.text }, splitLine: { lineStyle: { color: c.split } } },
+        { type: 'value', position: 'right', min: 0, max: 100, axisLabel: { fontSize: 9, color: '#f87272', formatter: '{value}%' }, axisLine: { lineStyle: { color: '#f87272' } }, splitLine: { show: false } }
+      ],
+      series: [
+        { name: 'Received', type: 'line', smooth: true, symbol: 'none', data: chartHistory.changesReceived, lineStyle: { width: 1.5, color: c.green }, itemStyle: { color: c.green }, areaStyle: { opacity: 0.06 } },
+        { name: 'Output', type: 'line', smooth: true, symbol: 'none', data: chartHistory.outSuccess, lineStyle: { width: 1.5, color: '#3abff8' }, itemStyle: { color: '#3abff8' } },
+        { name: 'Pending', type: 'line', smooth: true, symbol: 'none', data: chartHistory.pending, lineStyle: { width: 2, color: '#7c3aed' }, itemStyle: { color: '#7c3aed' }, areaStyle: { opacity: 0.08, color: '#7c3aed' } },
+        { name: 'Fail %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.failRate, lineStyle: { width: 2, color: '#f87272', type: 'dashed' }, itemStyle: { color: '#f87272' }, yAxisIndex: 1 },
+        { name: 'Thru %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.throughputRate, lineStyle: { width: 2, color: '#36d399', type: 'dashed' }, itemStyle: { color: '#36d399' }, yAxisIndex: 1 }
+      ]
+    }, true);
+  }
+  if (cFeed) {
+    cFeed.setOption(lineOpt('Feed', [
+      lineSeries('Received', chartHistory.changesReceived, c.green),
+      lineSeries('Poll Errors', chartHistory.pollErrors, c.red)
+    ]), true);
+  }
+  if (cProcess) {
+    cProcess.setOption(lineOpt('Process', [
+      lineSeries('Processed', chartHistory.processed, c.blue),
+      lineSeries('Filtered', chartHistory.filtered, c.yellow)
+    ]), true);
+  }
+  if (cOutput) {
+    cOutput.setOption(lineOpt('Output', [
+      lineSeries('Success', chartHistory.outSuccess, c.green),
+      lineSeries('Errors', chartHistory.outErrors, c.red),
+      lineSeries('Skipped', chartHistory.outSkipped, c.blue),
+      lineSeries('Dead Letters', chartHistory.deadLetters, c.yellow)
+    ]), true);
+  }
+  if (cFeedAvg) {
+    cFeedAvg.setOption(lineOptMs('Avg Poll', [
+      lineSeries('Avg Poll', chartHistory.avgPollTime, c.blue)
+    ]), true);
+  }
+  if (cProcessAvg) {
+    cProcessAvg.setOption(lineOptMs('Avg Process', [
+      lineSeries('Avg/doc', chartHistory.avgProcessTime, c.blue)
+    ]), true);
+  }
+  if (cOutputAvg) {
+    cOutputAvg.setOption(lineOptMs('Avg Response', [
+      lineSeries('Avg Resp', chartHistory.avgOutputTime, c.green)
+    ]), true);
+  }
+}
+
+window.addEventListener('resize', function() {
+  if (cActivity) cActivity.resize();
+  if (cFeed) cFeed.resize();
+  if (cProcess) cProcess.resize();
+  if (cOutput) cOutput.resize();
+  if (cFeedAvg) cFeedAvg.resize();
+  if (cProcessAvg) cProcessAvg.resize();
+  if (cOutputAvg) cOutputAvg.resize();
+  drawArchArrows();
+  for (var k in jobSparkCharts) { if (jobSparkCharts[k]) jobSparkCharts[k].resize(); }
+});
+
+// ── Status Dots (computed from metrics, not a separate endpoint) ─
+var metricsReachable = false;
+
+// Stores last computed diagnostics so the modal can show them on click
+var statusDiag = { feed: null, process: null, output: null, cbl: null };
+var lastMetrics = null;
+
+function diagOk(text)   { return { icon: '', text: text, level: 'ok' }; }
+function diagWarn(text)  { return { icon: '', text: text, level: 'warn' }; }
+function diagErr(text)   { return { icon: '', text: text, level: 'error' }; }
+function diagInfo(text)  { return { icon: '', text: text, level: 'info' }; }
+
+function computeStatus(m, cfg) {
+  lastMetrics = m;
+  var uptime     = m['changes_worker_uptime_seconds'] || 0;
+  var pollCycles = m['changes_worker_poll_cycles_total'] || 0;
+  var pollErrors = m['changes_worker_poll_errors_total'] || 0;
+  var retries    = m['changes_worker_retries_total'] || 0;
+  var retryExh   = m['changes_worker_retry_exhausted_total'] || 0;
+  var streamRecon = m['changes_worker_stream_reconnects_total'] || 0;
+
+  dbg('computeStatus: uptime=' + uptime + ' pollCycles=' + pollCycles + ' pollErrors=' + pollErrors);
+  dbg('computeStatus: cfg output.mode=' + ((cfg && cfg.output) ? cfg.output.mode : 'NO CFG'));
+
+  // ── Changes Feed ─────────────────────────────────────────
+  var feedChecks = [];
+  var feedColor = 'red';
+  var feedMetrics = {
+    'Uptime': fmtUptime(uptime),
+    'Poll Cycles': fmt(pollCycles),
+    'Poll Errors': fmt(pollErrors),
+    'Error Ratio': pollCycles > 0 ? ((pollErrors / pollCycles) * 100).toFixed(1) + '%' : '0%',
+    'Retries': fmt(retries),
+    'Retries Exhausted': fmt(retryExh),
+    'Stream Reconnects': fmt(streamRecon),
+    'Bytes Received': fmtBytes(m['changes_worker_bytes_received_total'])
+  };
+  if (uptime <= 0) {
+    feedChecks.push(diagErr('Worker is not running — uptime is zero'));
+    feedChecks.push(diagInfo('Check that the changes-worker container started successfully'));
+  } else {
+    feedChecks.push(diagOk('Worker is running (uptime: ' + fmtUptime(uptime) + ')'));
+    var errorRatio = pollCycles > 0 ? pollErrors / pollCycles : 0;
+    var feedReceived = m['changes_worker_changes_received_total'] || 0;
+    var feedType = (cfg && cfg.changes_feed) ? cfg.changes_feed.feed_type : '';
+    var isStreaming = (feedType === 'websocket' || feedType === 'continuous');
+    if (isStreaming) {
+      // In streaming mode poll_errors are idle-timeout reconnects (normal),
+      // not real failures. Use stream_reconnects + uptime to judge health.
+      if (feedReceived > 0 || uptime > 30) {
+        feedColor = 'green';
+        if (feedReceived > 0) {
+          feedChecks.push(diagOk('Streaming mode (' + feedType + ') — ' + fmt(feedReceived) + ' change(s) received'));
+        } else {
+          feedChecks.push(diagOk('Streaming mode (' + feedType + ') — connected, waiting for changes'));
+        }
+      } else {
+        feedColor = 'yellow';
+        feedChecks.push(diagWarn('Streaming mode (' + feedType + ') — still connecting'));
+      }
+      if (pollErrors > 0) {
+        feedChecks.push(diagInfo(fmt(pollErrors) + ' idle-timeout reconnect(s) — normal for streaming'));
+      }
+    } else if (pollCycles === 0 && feedReceived === 0) {
+      feedChecks.push(diagWarn('No poll cycles completed yet — still starting up'));
+      feedColor = 'yellow';
+    } else if (errorRatio > 0.1) {
+      feedColor = 'yellow';
+      feedChecks.push(diagWarn('High error ratio: ' + (errorRatio * 100).toFixed(1) + '% of poll cycles failed'));
+      feedChecks.push(diagInfo('Possible causes: gateway unreachable, auth expired, network timeout'));
+    } else {
+      feedColor = 'green';
+      feedChecks.push(diagOk('Error ratio is healthy: ' + (errorRatio * 100).toFixed(1) + '%'));
+    }
+    if (retryExh > 0) {
+      feedChecks.push(diagWarn(fmt(retryExh) + ' request(s) exhausted all retries — gateway may be overloaded'));
+    }
+    if (retries > 0 && retryExh === 0) {
+      feedChecks.push(diagInfo(fmt(retries) + ' retry attempt(s) — all eventually succeeded'));
+    }
+    if (streamRecon > 0) {
+      feedChecks.push(diagInfo(fmt(streamRecon) + ' stream reconnection(s) detected'));
+    }
+  }
+  statusDiag.feed = { color: feedColor, checks: feedChecks, metrics: feedMetrics };
+  setDot('dotFeed', feedColor);
+
+  // ── Processing ───────────────────────────────────────────
+  var procChecks = [];
+  var processed   = m['changes_worker_changes_processed_total'] || 0;
+  var received    = m['changes_worker_changes_received_total'] || 0;
+  var filtered    = m['changes_worker_changes_filtered_total'] || 0;
+  var batches     = m['changes_worker_batches_total'] || 0;
+  var batchFail   = m['changes_worker_batches_failed_total'] || 0;
+  var docFetchErr = m['changes_worker_doc_fetch_errors_total'] || 0;
+  var chkSaveErr  = m['changes_worker_checkpoint_save_errors_total'] || 0;
+  var chkLoadErr  = m['changes_worker_checkpoint_load_errors_total'] || 0;
+  var procMetrics = {
+    'Changes Received': fmt(received),
+    'Changes Processed': fmt(processed),
+    'Changes Filtered': fmt(filtered),
+    'Batches': fmt(batches),
+    'Batches Failed': fmt(batchFail),
+    'Doc Fetch Errors': fmt(docFetchErr),
+    'Checkpoint Saves': fmt(m['changes_worker_checkpoint_saves_total']),
+    'Checkpoint Save Errors': fmt(chkSaveErr),
+    'Checkpoint Load Errors': fmt(chkLoadErr)
+  };
+  var procColor = 'red';
+  if (uptime > 30 || (uptime > 0 && processed > 0)) {
+    procColor = 'green';
+    procChecks.push(diagOk('Worker running for ' + fmtUptime(uptime)));
+  } else if (uptime > 0) {
+    procColor = 'yellow';
+    procChecks.push(diagWarn('Worker just started (' + fmtUptime(uptime) + ') — still warming up'));
+  } else {
+    procChecks.push(diagErr('Worker is not running'));
+  }
+  if (batchFail > 0) {
+    procColor = procColor === 'red' ? 'red' : 'yellow';
+    procChecks.push(diagWarn(fmt(batchFail) + ' batch(es) failed — output was unreachable during processing'));
+  } else if (batches > 0) {
+    procChecks.push(diagOk('All ' + fmt(batches) + ' batch(es) processed successfully'));
+  }
+  if (docFetchErr > 0) {
+    procChecks.push(diagWarn(fmt(docFetchErr) + ' doc fetch error(s) — some documents could not be retrieved'));
+  }
+  if (chkSaveErr > 0) {
+    procChecks.push(diagWarn(fmt(chkSaveErr) + ' checkpoint save error(s) — fell back to local storage'));
+    procChecks.push(diagInfo('Checkpoint saves to Sync Gateway failed; local file/CBL fallback was used'));
+  }
+  if (chkLoadErr > 0) {
+    procChecks.push(diagWarn(fmt(chkLoadErr) + ' checkpoint load error(s) — could not read from Sync Gateway'));
+  }
+  if (received > 0 && processed === 0 && filtered === 0) {
+    procChecks.push(diagInfo('Changes received but none processed or filtered yet'));
+  }
+  if (filtered > 0) {
+    procChecks.push(diagInfo(fmt(filtered) + ' change(s) filtered out (deletes/removes)'));
+  }
+  statusDiag.process = { color: procColor, checks: procChecks, metrics: procMetrics };
+  setDot('dotProcess', procColor);
+
+  // ── Output ───────────────────────────────────────────────
+  var outMode  = (cfg && cfg.output) ? cfg.output.mode : 'stdout';
+  var epUp     = m['changes_worker_output_endpoint_up'];
+  var outErr   = m['changes_worker_output_errors_total'] || 0;
+  var outTotal = m['changes_worker_output_requests_total'] || 0;
+  var outOk    = m['changes_worker_output_success_total'] || 0;
+  var outSkip  = m['changes_worker_output_skipped_total'] || 0;
+  var dlq      = m['changes_worker_dead_letter_total'] || 0;
+  var mapErr   = m['changes_worker_mapper_errors_total'] || 0;
+
+  dbg('  output: mode=' + outMode + ' epUp=' + epUp + ' outErr=' + outErr + ' outTotal=' + outTotal);
+
+  var outChecks = [];
+  var outMetrics = {
+    'Mode': outMode,
+    'Requests Total': fmt(outTotal),
+    'Success': fmt(outOk),
+    'Errors': fmt(outErr),
+    'Skipped': fmt(outSkip),
+    'Dead Letters': fmt(dlq),
+    'Mapper Errors': fmt(mapErr),
+    'Endpoint': epUp === 1 ? 'UP' : epUp === 0 ? 'DOWN' : '--',
+    'Bytes Sent': fmtBytes(m['changes_worker_bytes_output_total'])
+  };
+
+  var outColor = 'red';
+  if (outMode === 'stdout') {
+    outColor = uptime > 0 ? 'green' : 'red';
+    if (uptime > 0) {
+      outChecks.push(diagOk('Output mode is stdout — no external endpoint needed'));
+    } else {
+      outChecks.push(diagErr('Worker not running'));
+    }
+  } else if (epUp === 0) {
+    outColor = 'red';
+    outChecks.push(diagErr('Output endpoint is DOWN — the target is unreachable'));
+    if (outMode === 'http') {
+      var targetUrl = (cfg && cfg.output) ? cfg.output.target_url : '';
+      outChecks.push(diagInfo('Target URL: ' + (targetUrl || 'not configured')));
+      outChecks.push(diagInfo('Check: DNS resolution, firewall rules, target service health'));
+    }
+    if (outMode === 'db') {
+      outChecks.push(diagInfo('Check: database host/port, credentials, connection pool'));
+    }
+  } else if (outTotal > 0 && outErr > 0) {
+    var errRatio = outErr / outTotal;
+    outColor = errRatio > 0.1 ? 'yellow' : 'green';
+    if (errRatio > 0.1) {
+      outChecks.push(diagWarn('Error rate is ' + (errRatio * 100).toFixed(1) + '% (' + fmt(outErr) + '/' + fmt(outTotal) + ')'));
+      outChecks.push(diagInfo('Some requests are failing — check target service logs'));
+    } else {
+      outChecks.push(diagOk('Error rate is low: ' + (errRatio * 100).toFixed(1) + '%'));
+    }
+  } else if (uptime > 0) {
+    outColor = 'green';
+    if (outTotal > 0) {
+      outChecks.push(diagOk(fmt(outOk) + ' request(s) sent successfully with no errors'));
+    } else {
+      outChecks.push(diagOk('Endpoint is up — no documents sent yet'));
+    }
+  }
+  if (dlq > 0) {
+    outChecks.push(diagWarn(fmt(dlq) + ' document(s) sent to the dead letter queue'));
+    outChecks.push(diagInfo('Review dead letters at /api/dlq to retry or discard'));
+  }
+  if (mapErr > 0) {
+    outChecks.push(diagWarn(fmt(mapErr) + ' schema mapper error(s) — check mapping definitions'));
+  }
+  if (outSkip > 0) {
+    outChecks.push(diagInfo(fmt(outSkip) + ' document(s) skipped (no mapper match or null doc)'));
+  }
+  statusDiag.output = { color: outColor, checks: outChecks, metrics: outMetrics };
+  setDot('dotOutput', outColor);
+}
+
+// ── Status Detail Modal ──────────────────────────────────────
+var statusTitles = {
+  feed: 'Changes Feed', process: 'Processing', cbl: 'Couchbase Lite', output: 'Output'
+};
+
+function showStatusDetail(which) {
+  var diag = statusDiag[which];
+  if (!diag) {
+    // No diagnostics yet (e.g., CBL with no metrics data)
+    diag = { color: 'yellow', checks: [diagInfo('No diagnostic data available yet')], metrics: {} };
+  }
+  document.getElementById('modalTitle').textContent = statusTitles[which] + ' Status';
+  document.getElementById('modalDot').className = 'dot dot-' + diag.color;
+
+  var bodyHtml = '';
+  for (var i = 0; i < diag.checks.length; i++) {
+    var c = diag.checks[i];
+    bodyHtml += '<div class="diag-item"><span class="diag-icon">' + c.icon + '</span><span class="diag-text">' + c.text + '</span></div>';
+  }
+  document.getElementById('modalBody').innerHTML = bodyHtml;
+
+  var metricsHtml = '';
+  var mk = diag.metrics || {};
+  for (var key in mk) {
+    if (mk.hasOwnProperty(key)) {
+      var val = mk[key];
+      var valClass = '';
+      if (val === 'DOWN') valClass = ' class="text-error font-semibold"';
+      else if (val === 'UP') valClass = ' class="text-success font-semibold"';
+      else if (/^0[^.]/.test(String(val)) || val === '0' || val === '0%') valClass = ' class="opacity-50"';
+      metricsHtml += '<tr><td class="font-medium text-sm">' + key + '</td><td class="text-right text-sm"' + valClass + '>' + val + '</td></tr>';
+    }
+  }
+  document.getElementById('modalMetricsBody').innerHTML = metricsHtml;
+
+  document.getElementById('statusModal').showModal();
+}
+
+// ── CBL status from server ───────────────────────────────────
+var cblStatus = null;
+
+function loadCBLStatus() {
+  dbg('loadCBLStatus: fetching /api/status');
+  fetch('/api/status')
+    .then(function(r) { return r.json(); })
+    .then(function(s) {
+      dbg('loadCBLStatus: response', s);
+      cblStatus = s;
+      var color = s.cbl || 'red';
+      setDot('dotCBL', color);
+      // Build CBL diagnostics
+      var checks = [];
+      var metrics = {};
+      if (color === 'green') {
+        checks.push(diagOk('Couchbase Lite is available and operational'));
+        checks.push(diagInfo('Local storage is using CBL for checkpoints, config, and DLQ'));
+      } else {
+        checks.push(diagErr('Couchbase Lite is not available'));
+        checks.push(diagInfo('CBL native library may not be installed in the container'));
+        checks.push(diagInfo('Falling back to file-based storage for checkpoints and config'));
+      }
+      metrics['CBL Available'] = color === 'green' ? 'Yes' : 'No';
+      metrics['Storage Mode'] = color === 'green' ? 'Couchbase Lite' : 'File-based';
+      statusDiag.cbl = { color: color, checks: checks, metrics: metrics };
+    })
+    .catch(function(e) {
+      dbg('loadCBLStatus: ERROR', e);
+      setDot('dotCBL', 'red');
+      statusDiag.cbl = {
+        color: 'red',
+        checks: [diagErr('Could not reach /api/status endpoint'), diagInfo('Error: ' + e.message)],
+        metrics: { 'API Reachable': 'No' }
+      };
+    });
+}
+
+// ── Config Badges ────────────────────────────────────────────
+var cachedCfg = null;
+function loadConfig() {
+  dbg('loadConfig: fetching /api/config + /api/v2/jobs');
+  Promise.all([
+    fetch('/api/config').then(function(r) { return r.json(); }),
+    fetch('/api/v2/jobs').then(function(r) { return r.json(); }).catch(function() { return { jobs: [] }; }),
+    fetch('/api/jobs/status').then(function(r) { return r.json(); }).catch(function() { return { jobs: [] }; })
+  ]).then(function(results) {
+    var cfg = results[0];
+    var jobsList = results[1];
+    var jobsStatus = results[2];
+    cachedCfg = cfg;
+    dbg('loadConfig: got config', cfg);
+
+    // Enrich cfg with first active job for architecture diagram
+    var activeJobs = (jobsStatus.jobs || []).filter(function(j) { return j.status === 'running' || j.enabled; });
+    if (activeJobs.length > 0) {
+      var activeJobId = activeJobs[0].job_id;
+      fetch('/api/v2/jobs/' + activeJobId).then(function(r) { return r.json(); }).then(function(job) {
+        var inp = (job.inputs || [])[0] || {};
+        var out = (job.outputs || [])[0] || {};
+        var mode = out.mode || out.engine || '';
+        if (['postgres','mysql','mssql','oracle'].indexOf(mode) >= 0) {
+          cfg.output = { mode: 'db', db: { engine: mode } };
+        } else {
+          cfg.output = { mode: mode || '--' };
+        }
+        cfg.gateway = inp;
+        cfg.changes_feed = inp.changes_feed || {};
+        cachedCfg = cfg;
+        drawArchArrows();
+      }).catch(function() {});
+    }
+
+    // Fetch all job docs to count source/process/output types
+    var jobs = jobsList.jobs || [];
+    if (jobs.length === 0) return;
+
+    var fetches = jobs.map(function(j) {
+      var jid = (j.id || j.job_id || '').replace('job::', '');
+      return fetch('/api/v2/jobs/' + jid).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; });
+    });
+
+    Promise.all(fetches).then(function(jobDocs) {
+      var src = { sync_gateway: 0, app_services: 0, edge_server: 0, couchdb: 0 };
+      var proc = { data: 0, data_attach: 0, async: 0 };
+      var out = { cloud: 0, rdbms: 0, http: 0 };
+
+      for (var i = 0; i < jobDocs.length; i++) {
+        var jd = jobDocs[i];
+        if (!jd) continue;
+
+        // Source type from inputs
+        var inputs = jd.inputs || [];
+        for (var k = 0; k < inputs.length; k++) {
+          var st = inputs[k].source_type || 'sync_gateway';
+          if (src[st] != null) src[st]++;
+        }
+
+        // Output type
+        var ot = jd.output_type || '';
+        if (out[ot] != null) out[ot]++;
+
+        // Process type: check attachments + system.sequential
+        var sys = jd.system || {};
+        var hasAttach = sys.attachments_enabled || (jd.mapping && jd.mapping.attachments);
+        var isAsync = sys.sequential === false;
+        if (isAsync) { proc.async++; }
+        else if (hasAttach) { proc.data_attach++; }
+        else { proc.data++; }
+      }
+
+      // Update badge counts + dim badges with 0 count
+      function setBadge(id, count) {
+        var el = document.getElementById(id);
+        if (el) {
+          el.textContent = String(count);
+          el.closest('.badge').style.opacity = count > 0 ? '1' : '0.25';
+        }
+      }
+      setBadge('badgeSGn', src.sync_gateway);
+      setBadge('badgeAppSern', src.app_services);
+      setBadge('badgeEdgen', src.edge_server);
+      setBadge('badgeCouchDBn', src.couchdb);
+      setBadge('badgeDatan', proc.data);
+      setBadge('badgeDataAttachn', proc.data_attach);
+      setBadge('badgeAsyncn', proc.async);
+      setBadge('badgeCloudn', out.cloud);
+      setBadge('badgeRDBMSn', out.rdbms);
+      setBadge('badgeHTTPn', out.http);
+    });
+  }).catch(function(e) {
+    dbg('loadConfig: ERROR', e);
+  });
+}
+
+// ── Fetch & Render Metrics ───────────────────────────────────
+function loadMetrics() {
+  dbg('loadMetrics: fetching /api/metrics');
+  fetch('/api/metrics')
+    .then(function(res) {
+      dbg('loadMetrics: status=' + res.status + ' content-type=' + (res.headers.get('content-type') || ''));
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var ct = res.headers.get('content-type') || '';
+      if (ct.indexOf('text/plain') >= 0) return res.text();
+      // JSON response = error from proxy (disabled or unreachable)
+      return res.text().then(function(body) {
+        dbg('loadMetrics: JSON response (not prom text):', body);
+        return null;
+      });
+    })
+    .then(function(text) {
+      if (!text) {
+        dbg('loadMetrics: no prometheus data — showing yellow (unknown)');
+        setUnknown();
+        return;
+      }
+      metricsReachable = true;
+      dbg('loadMetrics: got ' + text.length + ' chars of prometheus text');
+      var m = parseProm(text);
+
+      // Log key metric values
+      dbg('loadMetrics values:', {
+        uptime: m['changes_worker_uptime_seconds'],
+        poll_cycles: m['changes_worker_poll_cycles_total'],
+        poll_errors: m['changes_worker_poll_errors_total'],
+        received: m['changes_worker_changes_received_total'],
+        processed: m['changes_worker_changes_processed_total'],
+        output_requests: m['changes_worker_output_requests_total'],
+        output_success: m['changes_worker_output_success_total'],
+        output_errors: m['changes_worker_output_errors_total'],
+        endpoint_up: m['changes_worker_output_endpoint_up']
+      });
+
+      // Status dots
+      computeStatus(m, cachedCfg);
+
+      // History for charts
+      pushHistory(m);
+      renderCharts();
+      updateArchData(m);
+
+      // Update pipeline health aggregate from metrics
+      updateHealthFromMetrics(m);
+
+      // Uptime
+      setText('uptimeLabel', 'Uptime: ' + fmtUptime(m['changes_worker_uptime_seconds']));
+    })
+    .catch(function(e) {
+      dbg('loadMetrics: FETCH ERROR', e);
+      if (!metricsReachable) setUnknown();
+    });
+}
+
+// ── Job Selector & Status ────────────────────────────────────
+var selectedJob = '';
+var jobsCache = {};
+
+function loadJobStatus() {
+  var tableBody = document.getElementById('jobStatusTable');
+  if (!tableBody) return;
+  
+  fetch('/api/jobs/status')
+    .then(function(res) { return res.ok ? res.json() : null; })
+    .then(function(data) {
+      if (!data || !data.jobs || data.jobs.length === 0) {
+        tableBody.innerHTML = '<tr><td colspan="6" class="text-center opacity-50 py-4">No jobs configured</td></tr>';
+        document.getElementById('jobSelectorHint').textContent = '0 jobs';
+        return;
+      }
+      
+      // Update job dropdown with status indicators
+      var selector = document.getElementById('jobSelector');
+      jobsCache = {}; // Reset cache
+      if (selector) {
+        var currentValue = selector.value;
+        var running = data.jobs.filter(function(j) { return j.status === 'running'; }).length;
+        var statusIcon = running === data.jobs.length ? '\u25CF ' : (running > 0 ? '\u25D4 ' : '\u25CB ');
+        var opts = ['<option value="">' + statusIcon + 'ALL (' + data.count + ' jobs)</option>'];
+        for (var i = 0; i < data.jobs.length; i++) {
+          var job = data.jobs[i];
+          jobsCache[job.job_id] = job;
+          var jIcon = job.status === 'running' ? '\u25CF ' : job.status === 'error' ? '\u25CB ' : '\u25CB ';
+          opts.push('<option value="' + job.job_id + '">' + jIcon + (job.name || job.job_id) + ' (' + job.status + ')</option>');
+        }
+        selector.innerHTML = opts.join('');
+        selector.value = currentValue;
+      }
+
+      // Update hint
+      document.getElementById('jobSelectorHint').textContent = '';
+
+      // Render pipeline health cards
+      renderHealthCards(data.jobs);
+    })
+    .catch(function(e) {
+      dbg('loadJobStatus: ERROR', e);
+      tableBody.innerHTML = '<tr><td colspan="6" class="text-center text-error py-4">Failed to load job status</td></tr>';
+    });
+}
+
+function handleJobChange(event) {
+  selectedJob = event.target.value;
+  dbg('Job selected:', selectedJob);
+  // When a job is selected, reload metrics
+  loadMetrics();
+}
+
+function openJobManager() {
+  // TODO: Open job manager modal or page in v2.1+
+  showToast('Job Manager coming in v2.1+', 'info');
+}
+
+// Job control functions
+function editJob(jobId) {
+  window.location.href = '/jobs?edit=' + encodeURIComponent(jobId);
+}
+
+// ── Job Control Functions (Phase 10) ─────────────────────────
+
+function startJob(jobId) {
+  if (!jobsCache[jobId]) return showToast('Job not found', 'error');
+  var jobName = jobsCache[jobId].name || jobId;
+  
+  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/start', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.status === 'already_running') {
+        showToast(jobName + ' is already running', 'info');
+      } else if (data.error) {
+        showToast('Failed to start ' + jobName + ': ' + data.error, 'error');
+      } else {
+        showToast(jobName + ' started', 'success');
+      }
+      loadJobStatus();
+    })
+    .catch(err => {
+      console.error('Start job error:', err);
+      showToast('Failed to start ' + jobName, 'error');
+    });
+}
+
+function stopJob(jobId) {
+  if (!jobsCache[jobId]) return showToast('Job not found', 'error');
+  var jobName = jobsCache[jobId].name || jobId;
+  
+  if (!confirm('Stop ' + jobName + ' gracefully? It will drain in-flight documents.')) return;
+  
+  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/stop', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        showToast('Failed to stop ' + jobName + ': ' + data.error, 'error');
+      } else {
+        showToast(jobName + ' stopping...', 'success');
+      }
+      loadJobStatus();
+    })
+    .catch(err => {
+      console.error('Stop job error:', err);
+      showToast('Failed to stop ' + jobName, 'error');
+    });
+}
+
+function killJob(jobId) {
+  if (!jobsCache[jobId]) return showToast('Job not found', 'error');
+  var jobName = jobsCache[jobId].name || jobId;
+  
+  if (!confirm('KILL ' + jobName + ' immediately (non-graceful)?\n\nWarning: This may lose the current checkpoint. The job will resync from the last saved checkpoint on restart.')) return;
+  
+  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/kill', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        showToast('Failed to kill ' + jobName + ': ' + data.error, 'error');
+      } else {
+        showToast(jobName + ' killed', 'warning');
+      }
+      loadJobStatus();
+    })
+    .catch(err => {
+      console.error('Kill job error:', err);
+      showToast('Failed to kill ' + jobName, 'error');
+    });
+}
+
+function restartJob(jobId) {
+  if (!jobsCache[jobId]) return showToast('Job not found', 'error');
+  var jobName = jobsCache[jobId].name || jobId;
+  
+  fetch('/api/jobs/' + encodeURIComponent(jobId) + '/restart', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        showToast('Failed to restart ' + jobName + ': ' + data.error, 'error');
+      } else {
+        showToast(jobName + ' restarting...', 'success');
+      }
+      loadJobStatus();
+    })
+    .catch(err => {
+      console.error('Restart job error:', err);
+      showToast('Failed to restart ' + jobName, 'error');
+    });
+}
+
+// ── Helper Functions ─────────────────────────────────────────
+function escapeJs(str) {
+  if (!str) return '';
+  return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
+// ── DLQ Meta (last_inserted_at / last_drained_at) ────────────
+var cachedDlqMeta = { last_inserted_at: null, last_drained_at: null, last_inserted_job: null, last_drained_job: null };
+
+function fmtEpoch(epoch) {
+  if (!epoch) return 'never';
+  try {
+    var d = new Date(epoch * 1000);
+    if (isNaN(d.getTime())) return 'never';
+    var now = Date.now();
+    var diff = (now - d.getTime()) / 1000;
+    var ago = '';
+    if (diff < 60) ago = Math.floor(diff) + 's ago';
+    else if (diff < 3600) ago = Math.floor(diff / 60) + 'm ago';
+    else if (diff < 86400) ago = Math.floor(diff / 3600) + 'h ago';
+    else ago = Math.floor(diff / 86400) + 'd ago';
+    return d.toLocaleString() + ' (' + ago + ')';
+  } catch(e) { return 'never'; }
+}
+
+function loadDlqMeta() {
+  fetch('/api/dlq/meta')
+    .then(function(res) { return res.ok ? res.json() : null; })
+    .then(function(data) { if (data) cachedDlqMeta = data; })
+    .catch(function() {});
+}
+
+function setUnknown() {
+  dbg('setUnknown: no metrics data — dots -> yellow (not monitored)');
+  setDot('dotFeed', 'yellow');
+  setDot('dotProcess', 'yellow');
+  setDot('dotOutput', 'yellow');
+  setText('uptimeLabel', 'Uptime: -- (enable metrics in config to monitor)');
+  // Push zero-value data points so charts still render with flat lines
+  chartHistory.labels.push(timeLabel());
+  if (chartHistory.labels.length > MAX_POINTS) chartHistory.labels.shift();
+  var hKeys = ['changesReceived','pollErrors','processed','filtered','outSuccess','outErrors','outSkipped','deadLetters'];
+  for (var i = 0; i < hKeys.length; i++) {
+    chartHistory[hKeys[i]].push(0);
+    if (chartHistory[hKeys[i]].length > MAX_POINTS) chartHistory[hKeys[i]].shift();
+  }
+  var avgKeys = ['avgPollTime','avgProcessTime','avgOutputTime'];
+  for (var j = 0; j < avgKeys.length; j++) {
+    chartHistory[avgKeys[j]].push(null);
+    if (chartHistory[avgKeys[j]].length > MAX_POINTS) chartHistory[avgKeys[j]].shift();
+  }
+  chartHistory.pending.push(0);
+  if (chartHistory.pending.length > MAX_POINTS) chartHistory.pending.shift();
+  chartHistory.inOutRatio.push(0);
+  if (chartHistory.inOutRatio.length > MAX_POINTS) chartHistory.inOutRatio.shift();
+  renderCharts();
+}
+
+// ── Toast Notification ──────────────────────────────────────
+function showToast(message, type) {
+  var container = document.getElementById("toastContainer");
+  var alertClass =
+    type === "success"
+      ? "alert-success"
+      : type === "error"
+        ? "alert-error"
+        : "alert-info";
+  var toast = document.createElement("div");
+  toast.className = "alert " + alertClass;
+  toast.innerHTML = "<span>" + message + "</span>";
+  container.appendChild(toast);
+  setTimeout(function () {
+    toast.remove();
+  }, 3000);
+}
+
+// ── Pipeline Health ──────────────────────────────────────────
+var jobSparkData = {};    // { jobId: [val, val, ...] }
+var jobSparkCharts = {};  // { jobId: echartsInstance }
+var prevJobDocs = {};     // { jobId: lastDocsProcessed } for delta computation
+var lastHealthMetrics = null;
+var prevHealthIn = null;
+var SPARK_MAX = 20;
+
+function updateHealthFromMetrics(m) {
+  lastHealthMetrics = m;
+  var received  = m['changes_worker_changes_received_total'] || 0;
+  var processed = m['changes_worker_changes_processed_total'] || 0;
+  var filtered  = m['changes_worker_changes_filtered_total'] || 0;
+  var outOk     = m['changes_worker_output_success_total'] || 0;
+  var outErr    = m['changes_worker_output_errors_total'] || 0;
+  var dlq       = m['changes_worker_dead_letter_total'] || 0;
+
+  // Summary ribbon
+  setText('sumTotalIn', fmt(received));
+  var rate = '';
+  if (prevHealthIn != null) {
+    var delta = Math.max(0, received - prevHealthIn);
+    rate = fmt(delta) + '/poll';
+  }
+  prevHealthIn = received;
+  setText('sumInRate', rate);
+
+  setText('sumTotalOut', fmt(outOk));
+  var total = outOk + outErr;
+  var pct = total > 0 ? ((outOk / total) * 100).toFixed(1) + '% success' : '';
+  setText('sumSuccessRate', pct);
+
+  var issues = outErr + dlq;
+  setText('sumIssues', fmt(issues));
+  var el = document.getElementById('sumIssues');
+  if (el) {
+    el.style.color = issues > 0 ? '#f87272' : '';
+  }
+  setText('sumIssueDetail', fmt(dlq) + ' DLQ / ' + fmt(outErr) + ' errors');
+
+  // Aggregate funnel bar
+  var totalFunnel = processed + filtered + outErr + dlq;
+  var bar = document.getElementById('aggFunnelBar');
+  if (bar && totalFunnel > 0) {
+    bar.innerHTML =
+      '<div class="funnel-seg funnel-processed" style="width:' + ((processed / totalFunnel) * 100).toFixed(1) + '%"></div>' +
+      '<div class="funnel-seg funnel-filtered" style="width:' + ((filtered / totalFunnel) * 100).toFixed(1) + '%"></div>' +
+      '<div class="funnel-seg funnel-errors" style="width:' + ((outErr / totalFunnel) * 100).toFixed(1) + '%"></div>' +
+      '<div class="funnel-seg funnel-dlq" style="width:' + ((dlq / totalFunnel) * 100).toFixed(1) + '%"></div>';
+  } else if (bar) {
+    bar.innerHTML = '<div class="funnel-seg funnel-processed" style="width:100%;opacity:0.2"></div>';
+  }
+  setText('aggFunnelIn', fmt(received) + ' in');
+  setText('aggFunnelOut', fmt(outOk) + ' out');
+}
+
+function renderHealthCards(jobs) {
+  var grid = document.getElementById('healthGrid');
+  if (!grid || !jobs || jobs.length === 0) {
+    if (grid) grid.innerHTML = '<div class="text-center opacity-50 py-6">No jobs configured</div>';
+    return;
+  }
+
+  // Update summary dots + count
+  var running = 0;
+  var dotsHtml = '';
+  for (var i = 0; i < jobs.length; i++) {
+    var j = jobs[i];
+    if (j.status === 'running') running++;
+    var dc = j.status === 'running' ? 'dot-green' : j.status === 'error' ? 'dot-red' : '';
+    var dStyle = dc ? '' : ' style="background:#6b7280"';
+    dotsHtml += '<span class="dot ' + dc + '"' + dStyle + '></span>';
+  }
+  setText('sumJobsHealth', running + '/' + jobs.length);
+  document.getElementById('sumJobDots').innerHTML = dotsHtml;
+
+  // Show/hide ribbon vs single card
+  var ribbon = document.getElementById('healthSummaryRibbon');
+  var aggFunnel = document.getElementById('healthAggFunnel');
+  if (selectedJob) {
+    if (ribbon) ribbon.style.display = 'none';
+    if (aggFunnel) aggFunnel.style.display = 'none';
+  } else {
+    if (ribbon) ribbon.style.display = '';
+    if (aggFunnel) aggFunnel.style.display = '';
+  }
+
+  // Filter to selected job if one is chosen
+  var displayJobs = selectedJob ? jobs.filter(function(j) { return j.job_id === selectedJob; }) : jobs;
+
+  var html = '';
+  for (var i = 0; i < displayJobs.length; i++) {
+    var job = displayJobs[i];
+    var jid = job.job_id;
+    var statusDotClass = job.status === 'running' ? 'dot-green' : job.status === 'error' ? 'dot-red' : '';
+    var statusDotStyle = statusDotClass ? '' : ' style="background:#6b7280"';
+    var badgeCls = job.status === 'running' ? 'badge-success' : job.status === 'error' ? 'badge-error' : 'badge-ghost';
+
+    var docsIn = job.docs_processed || 0;
+    var docsOut = job.docs_output_ok || 0;
+    var errs = job.error_count || job.errors || 0;
+    var uptime = job.uptime_seconds ? fmtUptime(job.uptime_seconds) : '--';
+
+    // Track spark data
+    if (!jobSparkData[jid]) jobSparkData[jid] = [];
+    var prevDocs = prevJobDocs[jid] || 0;
+    var delta = Math.max(0, docsIn - prevDocs);
+    prevJobDocs[jid] = docsIn;
+    if (prevDocs > 0 || jobSparkData[jid].length > 0) {
+      jobSparkData[jid].push(delta);
+      if (jobSparkData[jid].length > SPARK_MAX) jobSparkData[jid].shift();
+    }
+
+    // Per-job funnel (simple: docsOut = processed, errs, remaining = filtered-ish)
+    var funnelTotal = docsIn || 1;
+    var pctOut = Math.min(100, (docsOut / funnelTotal) * 100);
+    var pctErr = Math.min(100 - pctOut, (errs / funnelTotal) * 100);
+    var pctRest = Math.max(0, 100 - pctOut - pctErr);
+
+    html += '<div class="card bg-base-100 shadow health-card">' +
+      '<div class="card-body p-4 space-y-3">' +
+      // Header
+      '<div class="flex items-center gap-2">' +
+        '<span class="dot ' + statusDotClass + '"' + statusDotStyle + '></span>' +
+        '<span class="font-semibold text-sm flex-1">' + (job.name || jid) + '</span>' +
+        '<span class="badge badge-sm ' + badgeCls + '">' + job.status + '</span>' +
+      '</div>' +
+      // Funnel bar
+      '<div class="funnel-bar">' +
+        '<div class="funnel-seg funnel-processed" style="width:' + pctOut.toFixed(1) + '%"></div>' +
+        '<div class="funnel-seg funnel-errors" style="width:' + pctErr.toFixed(1) + '%"></div>' +
+        '<div class="funnel-seg funnel-filtered" style="width:' + pctRest.toFixed(1) + '%"></div>' +
+      '</div>' +
+      // Key stats
+      '<div class="key-stats">' +
+        '<div class="key-stat"><div class="ks-val">' + fmt(docsIn) + '</div><div class="ks-label">In</div></div>' +
+        '<div class="key-stat"><div class="ks-val text-success">' + fmt(docsOut) + '</div><div class="ks-label">Out</div></div>' +
+        '<div class="key-stat"><div class="ks-val' + (errs > 0 ? ' text-error' : '') + '">' + fmt(errs) + '</div><div class="ks-label">Err</div></div>' +
+      '</div>' +
+      // Sparkline container
+      '<div class="spark-wrap" id="spark_' + jid.replace(/[^a-zA-Z0-9]/g, '_') + '"></div>' +
+      // Footer
+      '<div class="health-footer">' +
+        '<span>Uptime: ' + uptime + '</span>' +
+        '<span>' + (job.checkpoint_seq ? 'Seq: ' + job.checkpoint_seq.substring(0, 12) + '...' : '') + '</span>' +
+      '</div>' +
+      // Action buttons (right-aligned per STYLE guide)
+      '<div class="flex gap-1 justify-end mt-1">' +
+        '<button class="btn btn-ghost btn-xs text-warning" onclick="killJob(\'' + escapeJs(jid) + '\')" title="Kill (non-graceful)">Kill</button>' +
+        '<button class="btn btn-ghost btn-xs" onclick="restartJob(\'' + escapeJs(jid) + '\')" title="Restart">Restart</button>' +
+        '<button class="btn btn-ghost btn-xs" onclick="stopJob(\'' + escapeJs(jid) + '\')" title="Stop (graceful)">Stop</button>' +
+        '<button class="btn btn-ghost btn-xs" onclick="startJob(\'' + escapeJs(jid) + '\')" title="Start">Start</button>' +
+        '<button class="btn btn-ghost btn-xs" onclick="editJob(\'' + escapeJs(jid) + '\')" title="Edit">Edit</button>' +
+      '</div>' +
+      '</div></div>';
+  }
+  grid.innerHTML = html;
+
+  // Render sparklines
+  setTimeout(function() {
+    for (var i = 0; i < displayJobs.length; i++) {
+      var jid = displayJobs[i].job_id;
+      var elId = 'spark_' + jid.replace(/[^a-zA-Z0-9]/g, '_');
+      var el = document.getElementById(elId);
+      if (!el) continue;
+
+      // Dispose old chart if exists
+      if (jobSparkCharts[jid]) {
+        jobSparkCharts[jid].dispose();
+        jobSparkCharts[jid] = null;
+      }
+
+      var data = jobSparkData[jid] || [];
+      if (data.length < 2) {
+        el.innerHTML = '<div class="flex items-center justify-center h-full text-xs opacity-30">Collecting data...</div>';
+        continue;
+      }
+
+      var chart = echarts.init(el);
+      jobSparkCharts[jid] = chart;
+      var c = chartColors();
+      chart.setOption({
+        backgroundColor: 'transparent',
+        grid: { top: 4, right: 4, bottom: 4, left: 4 },
+        xAxis: { type: 'category', show: false, data: data.map(function(_, i) { return i; }) },
+        yAxis: { type: 'value', show: false, min: 0 },
+        series: [{
+          type: 'line', smooth: true, symbol: 'none',
+          data: data,
+          lineStyle: { width: 1.5, color: '#36d399' },
+          areaStyle: { opacity: 0.12, color: '#36d399' }
+        }],
+        tooltip: { show: false }
+      }, true);
+    }
+  }, 50);
+}
+
+// ── Init ─────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  dbg('=== Dashboard init === debug=true, add ?debug=true to URL to see logs');
+  dbg('Tip: check /api/metrics, /api/config, /api/status in browser to verify endpoints');
+  rebuildCharts();
+  loadCBLStatus();
+  loadConfig();
+  loadMetrics();
+  loadDlqMeta();
+  loadJobStatus();
+  setInterval(loadMetrics, 5000);
+  setInterval(loadDlqMeta, 15000);
+  setInterval(loadCBLStatus, 30000);
+  setInterval(loadJobStatus, 10000);
+});
+</script>
+
+  </main>
+  </div><!-- /sidebar-main -->
+  <script src="/static/js/sidebar.js"></script>
+
+</body>
+</html>
