@@ -703,8 +703,8 @@ function lineOpt(title, series) {
     backgroundColor: 'transparent',
     textStyle: { color: c.text, fontSize: 10 },
     tooltip: { trigger: 'axis', textStyle: { fontSize: 11 }, axisPointer: { type: 'cross', crossStyle: { color: '#666' }, lineStyle: { color: '#666' } }, valueFormatter: function(v) { return v != null ? fmt(v) + '/s' : '--'; } },
-    legend: { bottom: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
-    grid: { top: 8, left: 40, right: 12, bottom: 30 },
+    legend: { top: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+    grid: { top: 30, left: 40, right: 12, bottom: 30 },
     xAxis: {
       type: 'category', data: chartHistory.labels, boundaryGap: false,
       axisLabel: { show: false },
@@ -736,8 +736,8 @@ function lineOptMs(title, series) {
     backgroundColor: 'transparent',
     textStyle: { color: c.text, fontSize: 10 },
     tooltip: { trigger: 'axis', textStyle: { fontSize: 11 }, axisPointer: { type: 'cross', crossStyle: { color: '#666' }, lineStyle: { color: '#666' } }, valueFormatter: function(v) { return v != null ? v.toFixed(2) + ' ms' : '--'; } },
-    legend: { bottom: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
-    grid: { top: 8, left: 46, right: 12, bottom: 30 },
+    legend: { top: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+    grid: { top: 30, left: 46, right: 12, bottom: 30 },
     xAxis: {
       type: 'category', data: chartHistory.labels, boundaryGap: false,
       axisLabel: { show: false },
@@ -1285,8 +1285,8 @@ function renderCharts() {
           return tip;
         }
       },
-      legend: { bottom: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
-      grid: { top: 12, left: 50, right: 55, bottom: 30 },
+      legend: { top: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+      grid: { top: 30, left: 50, right: 55, bottom: 30 },
       xAxis: {
         type: 'category', data: chartHistory.labels, boundaryGap: false,
         axisLabel: { show: false }, axisLine: { lineStyle: { color: c.split } }, axisTick: { show: false }
@@ -1296,14 +1296,14 @@ function renderCharts() {
         { type: 'value', position: 'right', min: 0, max: 100, axisLabel: { fontSize: 9, color: '#f87272', formatter: '{value}%' }, axisLine: { lineStyle: { color: '#f87272' } }, splitLine: { show: false } }
       ],
       series: [
-        { name: 'Received', type: 'line', smooth: true, symbol: 'none', data: chartHistory.changesReceived, lineStyle: { width: 1.5, color: c.green }, itemStyle: { color: c.green }, areaStyle: { opacity: 0.06 } },
+        { name: 'Source', type: 'line', smooth: true, symbol: 'none', data: chartHistory.changesReceived, lineStyle: { width: 1.5, color: c.green }, itemStyle: { color: c.green }, areaStyle: { opacity: 0.06 } },
         { name: 'Output', type: 'line', smooth: true, symbol: 'none', data: chartHistory.outSuccess, lineStyle: { width: 1.5, color: '#3abff8' }, itemStyle: { color: '#3abff8' } },
         { name: 'Pending', type: 'line', smooth: true, symbol: 'none', data: chartHistory.pending, lineStyle: { width: 2, color: '#7c3aed' }, itemStyle: { color: '#7c3aed' }, areaStyle: { opacity: 0.08, color: '#7c3aed' } },
         { name: 'Fail %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.failRate, lineStyle: { width: 2, color: '#f87272', type: 'dashed' }, itemStyle: { color: '#f87272' }, yAxisIndex: 1 },
         { name: 'Thru %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.throughputRate, lineStyle: { width: 2, color: '#36d399', type: 'dashed' }, itemStyle: { color: '#36d399' }, yAxisIndex: 1 },
         { name: 'Skipped %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.skippedRate, lineStyle: { width: 2, color: '#3b82f6', type: 'dotted' }, itemStyle: { color: '#3b82f6' }, yAxisIndex: 1 }
       ]
-    }, true);
+    }, false);
   }
   // Network Traffic chart (bytes/s: Source positive, Output negative)
   if (cTraffic) {
@@ -1324,8 +1324,8 @@ function renderCharts() {
           return tip;
         }
       },
-      legend: { bottom: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
-      grid: { top: 12, left: 55, right: 20, bottom: 30 },
+      legend: { top: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+      grid: { top: 30, left: 55, right: 20, bottom: 30 },
       xAxis: {
         type: 'category', data: chartHistory.labels, boundaryGap: false,
         axisLabel: { show: false }, axisLine: { lineStyle: { color: c.split } }, axisTick: { show: false }
@@ -1336,14 +1336,14 @@ function renderCharts() {
         splitLine: { lineStyle: { color: c.split } }
       },
       series: [
-        { name: 'Source', type: 'line', smooth: true, symbol: 'none', data: chartHistory.bytesIn,
+        { name: 'Bytes In', type: 'line', smooth: true, symbol: 'none', data: chartHistory.bytesIn,
           lineStyle: { width: 2, color: '#36d399' }, itemStyle: { color: '#36d399' },
           areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: 'rgba(54,211,153,0.35)' },
             { offset: 1, color: 'rgba(54,211,153,0.05)' }
           ]) }
         },
-        { name: 'Output', type: 'line', smooth: true, symbol: 'none', data: outNeg,
+        { name: 'Bytes Out', type: 'line', smooth: true, symbol: 'none', data: outNeg,
           lineStyle: { width: 2, color: '#3abff8' }, itemStyle: { color: '#3abff8' },
           areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: 'rgba(58,191,248,0.05)' },
@@ -1351,19 +1351,19 @@ function renderCharts() {
           ]) }
         }
       ]
-    }, true);
+    }, false);
   }
   if (cFeed) {
     cFeed.setOption(lineOpt('Feed', [
       lineSeries('Received', chartHistory.changesReceived, c.green),
       lineSeries('Poll Errors', chartHistory.pollErrors, c.red)
-    ]), true);
+    ]), false);
   }
   if (cProcess) {
     cProcess.setOption(lineOpt('Process', [
       lineSeries('Processed', chartHistory.processed, c.blue),
       lineSeries('Filtered', chartHistory.filtered, c.yellow)
-    ]), true);
+    ]), false);
   }
   if (cOutput) {
     cOutput.setOption(lineOpt('Output', [
@@ -1371,22 +1371,22 @@ function renderCharts() {
       lineSeries('Errors', chartHistory.outErrors, c.red),
       lineSeries('Skipped', chartHistory.outSkipped, c.blue),
       lineSeries('Dead Letters', chartHistory.deadLetters, c.yellow)
-    ]), true);
+    ]), false);
   }
   if (cFeedAvg) {
     cFeedAvg.setOption(lineOptMs('Avg Poll', [
       lineSeries('Avg Poll', chartHistory.avgPollTime, c.blue)
-    ]), true);
+    ]), false);
   }
   if (cProcessAvg) {
     cProcessAvg.setOption(lineOptMs('Avg Process', [
       lineSeries('Avg/doc', chartHistory.avgProcessTime, c.blue)
-    ]), true);
+    ]), false);
   }
   if (cOutputAvg) {
     cOutputAvg.setOption(lineOptMs('Avg Response', [
       lineSeries('Avg Resp', chartHistory.avgOutputTime, c.green)
-    ]), true);
+    ]), false);
   }
 }
 
