@@ -2,6 +2,36 @@
 
 ---
 
+## v2.1.0 — 2026-04-21
+
+### New Features
+
+- **Enhanced job monitoring** — Job state endpoint now includes extended metrics: `cpu_percent`, `memory_mb`, `threads_active`, `restarts_total`, `uptime_seconds`, `last_error`, `last_error_timestamp`.
+
+- **Job pause/resume** — New endpoints for pausing jobs without stopping (`POST /api/jobs/{id}/pause`) and resuming (`POST /api/jobs/{id}/resume`). Paused jobs maintain their state without consuming resources.
+
+- **Configurable job retry policy** — New `retry_policy` object in job documents with `max_retries`, `backoff_base_seconds`, and `backoff_max_seconds`. Exponential backoff with jitter prevents thundering herd during mass restarts.
+
+- **Job dependency tracking** — Jobs can now reference other jobs as dependencies (`depends_on` array). The `PipelineManager` respects dependency order during startup and ensures dependent jobs restart together.
+
+- **Dashboard job grouping** — Jobs can be tagged with categories. Dashboard now includes a job group filter, collapsible group sections, and group-level status indicators.
+
+- **Batch job operations** — New endpoints for bulk job operations: `POST /api/jobs/_start-many` (array of job IDs), `POST /api/jobs/_stop-many`, `POST /api/jobs/_restart-many`. Useful for coordinating related jobs.
+
+### Changes
+
+- **Version bump** — All version references updated from v2.0.0 to v2.1.0.
+
+- **Improved error logging** — Job lifecycle errors now include stack traces at DEBUG level and structured context at INFO level.
+
+### Bug Fixes
+
+- **Job state corruption** — Fixed race condition in `PipelineManager` where concurrent job status updates could corrupt state. Added atomic state transitions with per-job locks.
+
+- **Checkpoint file descriptor leak** — Fixed unclosed file handles in checkpoint fallback when using file-based persistence. All checkpoint files are now properly closed after read/write.
+
+---
+
 ## v2.0.0 — 2026-04-20
 
 ### ⚠️ Breaking Changes

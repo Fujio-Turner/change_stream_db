@@ -10,7 +10,7 @@ bulk_get fallback, async parallel or sequential processing, and
 forwarding results via stdout or HTTP.
 """
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 import argparse
 import asyncio
