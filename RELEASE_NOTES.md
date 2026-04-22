@@ -2,6 +2,53 @@
 
 ---
 
+## v2.2.2 — 2026-04-22
+
+### New Features
+
+- **Job Builder redesign** — Full redesign of the Job Builder UI (`jobs.html`) with a new 4-step workflow: Source → Process → Output → Dry Run. Includes inline mapping creation/editing via a full-screen modal, mapping preview, and a mapping summary card.
+
+- **Dry Run step** — New Dry Run card in the Job Builder lets you test a job's mapping against real documents (1–10 docs) without writing to the output. Results are displayed per-doc inline.
+
+- **Dedicated Inputs page** (`/inputs`) — New standalone admin UI page for managing input sources. Displays all configured inputs in a table with status, source type, host, and actions (edit/delete/create).
+
+- **Dedicated Outputs page** (`/outputs`) — New standalone admin UI page for managing output destinations. Tabbed interface (RDBMS, HTTP, Cloud, Stdout) with full CRUD for each output type.
+
+- **RDBMS table definitions** — New `tables_rdbms` CBL collection and API endpoints (`GET/POST /api/v2/tables_rdbms`, `GET/PUT/DELETE /api/v2/tables_rdbms/{id}`, `GET /api/v2/tables_rdbms/{id}/used_by`) for storing and managing CREATE TABLE schemas used by RDBMS outputs.
+
+- **Data validation & coercion** (`schema/validator.py`) — Pydantic-based schema validation and type coercion for RDBMS outputs. Automatically transforms incoming documents against CREATE TABLE definitions with SQL type parsing, value coercion (VARCHAR truncation, DECIMAL precision, date parsing, boolean normalization), and audit tracking of original vs. transformed values. Configurable via `validation.enabled`, `validation.strict`, `validation.track_originals`, and `validation.dlq_on_error` in output config.
+
+- **Job mapping API** — New `PUT /api/v2/jobs/{id}/mapping` endpoint for updating only the mapping on an existing job without touching other fields.
+
+- **CBL maintenance API** — New `POST /api/maintenance` endpoint to trigger CBL database maintenance (compact, reindex, optimize) on demand.
+
+### Changes
+
+- **Version bump** — All version references updated from v2.2.1 to v2.2.2 (including sidebar version which was stuck at v1.7.0).
+- **Dashboard polish** — Architecture diagram nodes use gradient backgrounds, softer borders, and smooth hover animations. Chart containers increased to 220px height. Modal cleanup on close to prevent chart memory leaks.
+- **Sidebar updates** — New Inputs and Outputs navigation icons and links added to the sidebar.
+
+### New Files
+
+- `web/templates/inputs.html` — Inputs management page
+- `web/templates/outputs.html` — Outputs management page
+- `json_schema/changes-worker/tables_rdbms/schema.json` — JSON Schema for RDBMS table definitions
+- `tests/test_api_v2_tables_rdbms.py` — RDBMS table definitions API tests
+- `tests/test_cbl_store_tables_rdbms.py` — CBL store tables_rdbms tests
+- `tests/test_validation_integration.py` — Data validation integration tests
+- `tests/test_validator.py` — Validator unit tests
+- `docs/SCHEMA_MAPPING_IN_JOBS.md` — Schema mapping in jobs documentation
+- `docs/DATA_VALIDATION.md` — Data validation documentation
+- `docs/UI_API_INVENTORY.md` — Complete UI and API inventory
+
+### Documentation
+
+- `docs/SCHEMA_MAPPING_IN_JOBS.md` — How schema mappings work within the job model
+- `docs/DATA_VALIDATION.md` — Data validation and coercion reference
+- `docs/UI_API_INVENTORY.md` — Full inventory of all UI pages and API endpoints
+
+---
+
 ## v2.2.1 — 2026-04-21
 
 ### New Features

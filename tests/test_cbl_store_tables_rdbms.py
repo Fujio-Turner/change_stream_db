@@ -135,10 +135,13 @@ class TestTablesRdbms(TestCBLStoreBase):
             "type": "tables_rdbms",
             "tables": [SAMPLE_TABLE],
         }.get(k, default)
-        mock_doc.__contains__ = lambda self_doc, key: key in {
-            "type",
-            "tables",
-        }
+        mock_doc.__contains__ = lambda self_doc, key: (
+            key
+            in {
+                "type",
+                "tables",
+            }
+        )
         with patch.object(cbl_store, "_coll_get_doc", return_value=mock_doc):
             result = self.store.load_tables_rdbms()
             self.assertIsNotNone(result)
