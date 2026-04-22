@@ -28,7 +28,7 @@ After the v2.0 redesign, **every piece of worker state** lives in Couchbase Lite
 | Where it left off | `checkpoints` | ...re-processes from `since=0` (full re-sync) |
 | What to process | `jobs` | ...has no jobs to run |
 | Where to read from | `inputs_changes` | ...doesn't know the source |
-| Where to write to | `outputs_rdbms/http/cloud/stdout` | ...doesn't know the destination |
+| Where to write to | `outputs_rdbms/http/cloud` | ...doesn't know the destination |
 | Processing rules | `jobs.schema_mapping` | ...can't map JSON → output |
 | Infrastructure config | `config` | ...uses defaults |
 | Failed documents | `dlq` | ...loses failure history |
@@ -210,7 +210,7 @@ New section in the `config` document:
       "heartbeat_interval_seconds": 10,
       "failover_timeout_seconds": 30,
       "collections": [
-        "inputs_changes", "outputs_rdbms", "outputs_http", "outputs_cloud", "outputs_stdout",
+        "inputs_changes", "outputs_rdbms", "outputs_http", "outputs_cloud",
         "jobs", "checkpoints", "dlq", "data_quality", "enrichments",
         "config", "sessions", "users", "audit_log"
       ],

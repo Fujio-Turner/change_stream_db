@@ -429,7 +429,6 @@
           <label class="form-control w-full">
             <div class="label"><span class="label-text">Mode</span></div>
             <select id="output_mode" class="select select-bordered w-full" onchange="toggleOutputFields()">
-              <option value="stdout">stdout</option>
               <option value="http">http</option>
               <option value="db">db</option>
               <option value="s3">s3 (AWS / MinIO)</option>
@@ -2073,7 +2072,7 @@
     document.getElementById('processing_max_concurrent').value = cfg.processing?.max_concurrent ?? 20;
     document.getElementById('processing_dry_run').checked = cfg.processing?.dry_run || false;
 
-    document.getElementById('output_mode').value = cfg.output?.mode || 'stdout';
+    document.getElementById('output_mode').value = cfg.output?.mode || 'http';
     document.getElementById('output_target_url').value = cfg.output?.target_url || '';
     document.getElementById('output_url_template').value = cfg.output?.url_template || '{target_url}/{doc_id}';
     document.getElementById('output_output_format').value = cfg.output?.output_format || 'json';

@@ -1,6 +1,6 @@
 # Cloud Blob Storage Output – Design Plan
 
-This document outlines the design for forwarding Couchbase `_changes` feed documents into cloud blob/object stores (AWS S3, Google Cloud Storage, Azure Blob Storage) as an alternative output mode alongside the existing REST/HTTP, stdout, and RDBMS outputs.
+This document outlines the design for forwarding Couchbase `_changes` feed documents into cloud blob/object stores (AWS S3, Google Cloud Storage, Azure Blob Storage) as an alternative output mode alongside the existing REST/HTTP and RDBMS outputs.
 
 **Related docs:**
 - [`DESIGN.md`](DESIGN.md) – Overall pipeline architecture, failure modes, DLQ
@@ -12,7 +12,7 @@ This document outlines the design for forwarding Couchbase `_changes` feed docum
 
 ## Goal
 
-The changes_worker already consumes the `_changes` feed and forwards each document to a REST endpoint (`rest/` module), stdout, or an RDBMS (`db/` module). The goal is to add **cloud blob storage output** so the same feed can write each document (or batch of documents) as objects in a cloud object store — no intermediate REST service required.
+The changes_worker already consumes the `_changes` feed and forwards each document to a REST endpoint (`rest/` module) or an RDBMS (`db/` module). The goal is to add **cloud blob storage output** so the same feed can write each document (or batch of documents) as objects in a cloud object store — no intermediate REST service required.
 
 ```
 ┌──────────────────────┐         ┌──────────────────┐         ┌─────────────────────┐
@@ -158,7 +158,7 @@ Cloud storage gets its own `output.mode` value (`"s3"`, `"gcs"`, `"azure"`) with
 ```jsonc
 {
   "output": {
-    "mode": "s3",                           // "stdout" | "http" | "postgres" | "s3" | "gcs" | "azure"
+    "mode": "s3",                           // "http" | "postgres" | "s3" | "gcs" | "azure"
     "s3": {
       "bucket": "my-changes-bucket",
       "region": "us-east-1",               // AWS region
@@ -287,7 +287,7 @@ The `poll_changes()` function in `main.py` currently routes output based on `out
 
 ```python
 # In poll_changes():
-output_mode = out_cfg.get("mode", "stdout")
+output_mode = out_cfg.get("mode", "http")
 
 if output_mode == "db":
     # existing RDBMS routing ...
@@ -298,7 +298,7 @@ elif output_mode in ("s3", "gcs", "azure"):
     cloud_output = output
     log_event(logger, "info", "OUTPUT", f"cloud output ready (provider={output_mode})")
 else:
-    # existing HTTP/stdout routing ...
+    # existing HTTP routing ...
     output = OutputForwarder(session, out_cfg, dry_run, ...)
 ```
 

@@ -233,7 +233,7 @@ grep -rn --include='*.py' --include='*.json' --include='*.yml' \
   Sync Gateway / CouchDB with a handful of docs flowing through the
   `_changes` feed.
 - **Test each output mode you changed** — if you touched postgres output, run
-  it against a real Postgres instance. Same for S3, HTTP, stdout.
+  it against a real Postgres instance. Same for S3, HTTP.
 - **Test Docker** — the CI runs tests natively; always verify the Docker image
   separately since the environment differs (e.g., CBL-C library paths).
 - **Test the Admin UI** — open `http://localhost:8080` and click through the

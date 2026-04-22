@@ -74,8 +74,7 @@
       "enum": [
         "rdbms",
         "http",
-        "cloud",
-        "stdout"
+        "cloud"
       ],
       "description": "Type of output destination"
     },

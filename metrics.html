@@ -435,7 +435,7 @@ increase(changes_worker_changes_received_total[1h])</pre></dd>
     <span class="metric-name">changes_worker_changes_processed_total</span>
     <span class="metric-type badge-counter">counter</span>
   </div>
-  <p class="metric-desc">Total number of changes that passed filtering and were forwarded to the output (stdout or HTTP endpoint).</p>
+  <p class="metric-desc">Total number of changes that passed filtering and were forwarded to the output endpoint.</p>
   <dl class="metric-detail">
     <dt>What it tells you</dt>
     <dd>Your effective processing throughput — the work the output endpoint actually receives. The difference between <code>received</code> and <code>processed</code> equals filtered-out changes.</dd>
@@ -559,7 +559,7 @@ rate(changes_worker_bytes_received_total[5m])
     <span class="metric-name">changes_worker_bytes_output_total</span>
     <span class="metric-type badge-counter">counter</span>
   </div>
-  <p class="metric-desc">Total bytes sent to the output endpoint (or stdout). This is the serialized body size — JSON, XML, msgpack, etc. — for every document forwarded downstream.</p>
+  <p class="metric-desc">Total bytes sent to the output endpoint. This is the serialized body size — JSON, XML, msgpack, etc. — for every document forwarded downstream.</p>
   <dl class="metric-detail">
     <dt>What it tells you</dt>
     <dd>Egress data volume. Compare against <code>bytes_received_total</code> to understand compression/expansion from serialization format changes (e.g., JSON→msgpack shrinks, JSON→XML grows).</dd>
@@ -616,10 +616,10 @@ rate(changes_worker_bytes_output_total[5m])
     <span class="metric-name">changes_worker_output_requests_total</span>
     <span class="metric-type badge-counter">counter</span>
   </div>
-  <p class="metric-desc">Total output requests sent to the downstream endpoint (or stdout writes). Includes both successful and failed requests.</p>
+  <p class="metric-desc">Total output requests sent to the downstream endpoint. Includes both successful and failed requests.</p>
   <dl class="metric-detail">
     <dt>What it tells you</dt>
-    <dd>Total delivery attempts. In <code>mode=stdout</code>, this counts JSON lines written. In <code>mode=http</code>, this counts HTTP requests sent.</dd>
+    <dd>Total delivery attempts. This counts requests sent to the configured HTTP/RDBMS/Cloud endpoint.</dd>
     <dt>Chart suggestion</dt>
     <dd>Line chart with <code>rate()</code>. This is your delivery throughput — docs per second reaching the downstream system.</dd>
     <dt>PromQL</dt>

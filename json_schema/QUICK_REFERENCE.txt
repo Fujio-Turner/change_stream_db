@@ -26,16 +26,12 @@ SCHEMA STANDARD: JSON Schema 2020-12
 │ └─ type: "outputs_cloud"     │ 1 document, singleton                       │
 │ └─ src: [CloudOutput]        │ Contains array of cloud configs             │
 ├──────────────────────────────┼──────────────────────────────────────────────┤
-│ outputs_stdout               │ Console/logging output                       │
-│ └─ type: "outputs_stdout"    │ 1 document, singleton                       │
-│ └─ src: [StdoutOutput]       │ Contains array of log configs               │
-├──────────────────────────────┼──────────────────────────────────────────────┤
 │ jobs                         │ Data pipeline job definitions                │
 │ └─ type: "job"               │ Multiple documents (UUID IDs)               │
 │ └─ id: UUID                  │ Connects inputs → outputs with mapping      │
 │ └─ inputs: [InputSource]     │                                            │
 │ └─ outputs: [OutputDest]     │                                            │
-│ └─ output_type: string       │ Enum: rdbms|http|cloud|stdout              │
+│ └─ output_type: string       │ Enum: rdbms|http|cloud                     │
 │ └─ mapping: Object           │ Data transformation rules                   │
 │ └─ state: Object             │ Job execution state                         │
 └──────────────────────────────┴──────────────────────────────────────────────┘
@@ -148,8 +144,8 @@ SCHEMA STANDARD: JSON Schema 2020-12
 ║ List DLQ:                         - updated_at (ISO 8601)               ║
 ║  SELECT * FROM dlq                                                       ║
 ║   WHERE type = 'dlq'              Enums:                                 ║
-║   ORDER BY time DESC              - output_type: rdbms|http|cloud|      ║
-║                                     stdout                               ║
+║   ORDER BY time DESC              - output_type: rdbms|http|cloud       ║
+║                                                                          ║
 ║ Get checkpoint:                   - job.status: idle|running|paused|    ║
 ║  SELECT * FROM checkpoints         stopped|error                        ║
 ║   WHERE client_id = '{job_id}'    - severity: info|warning|error|       ║

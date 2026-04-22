@@ -741,12 +741,25 @@ async def get_jobs_status(request):
                 uptime = None
                 error_count = 0
 
+            # Extract input/source info
+            inputs = job.get("inputs") or []
+            first_input = inputs[0] if inputs else {}
+            input_name = first_input.get("name") or first_input.get("id") or ""
+            input_type = first_input.get("source_type") or ""
+
+            # Extract output info
+            outputs = job.get("outputs") or []
+            first_output = outputs[0] if outputs else {}
+            output_name = first_output.get("name") or first_output.get("id") or ""
+            output_type = job.get("output_type") or ""
+
+            # Extract threads
+            system = job.get("system") or {}
+            threads = system.get("threads") or job.get("threads") or 1
+
             status_entry = {
                 "job_id": job_id,
-                "name": (job.get("id") or job_id or "")
-                .replace("job::", "")
-                .replace("job:", "")
-                or job_id,
+                "name": job.get("name") or job_id,
                 "enabled": job.get("enabled", True),
                 "status": status,
                 "uptime_seconds": uptime,
@@ -754,6 +767,11 @@ async def get_jobs_status(request):
                 or checkpoint.get("timestamp"),
                 "docs_processed": checkpoint.get("seq", 0),
                 "errors": error_count,
+                "input_name": input_name,
+                "input_type": input_type,
+                "output_name": output_name,
+                "output_type": output_type,
+                "threads": threads,
             }
             result_jobs.append(status_entry)
 

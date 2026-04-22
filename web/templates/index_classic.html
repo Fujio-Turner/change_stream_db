@@ -212,12 +212,7 @@
                 <div class="arch-stat" id="archOutS3Stat">--</div>
                 <div class="arch-tip arch-tip-right" id="archTipS3">Loading…</div>
               </div>
-              <div class="arch-node arch-node-std" id="archOutStd" data-mode="stdout" onclick="showArchDetail('stdout')">
-                <div class="arch-title">stdout</div>
-                <div class="arch-sub">JSON / XML / msgpack</div>
-                <div class="arch-stat" id="archOutStdStat">--</div>
-                <div class="arch-tip arch-tip-right" id="archTipStd">Loading…</div>
-              </div>
+
             </div>
           </div>
         </div>
@@ -763,7 +758,7 @@ function lineOptMs(title, series) {
 var archPrev = {};
 var archPrevTs = 0;
 var archRates = { feed: 0, out: 0 };
-var archNodeColors = { http: '#4caf50', db: '#2196f3', s3: '#ff9800', stdout: '#f4511e', attach: '#e91e63' };
+var archNodeColors = { http: '#4caf50', db: '#2196f3', s3: '#ff9800', attach: '#e91e63' };
 var lastArchM = null; // stash for modal
 
 // Arrow color logic: green=healthy, yellow=slow/warning, red=active but erroring, grey=inactive
@@ -789,8 +784,7 @@ function drawArchArrows() {
   var outs = [
     document.getElementById('archOutHttp'),
     document.getElementById('archOutDb'),
-    document.getElementById('archOutS3'),
-    document.getElementById('archOutStd')
+    document.getElementById('archOutS3')
   ];
   var dlqEl = document.getElementById('archDlq');
   var m = lastArchM || {};
@@ -991,7 +985,6 @@ function updateArchData(m) {
   setText('archOutHttpStat', outMode === 'http' ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
   setText('archOutDbStat',   outMode === 'db'   ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
   setText('archOutS3Stat',   outMode === 's3'   ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
-  setText('archOutStdStat',  outMode === 'stdout' ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
 
   // Attachment node
   var attDetected = m ? (m['changes_worker_attachments_detected_total'] || 0) : 0;
@@ -1040,7 +1033,6 @@ function updateArchData(m) {
   document.getElementById('archTipHttp').innerHTML = outMode === 'http' ? outTip : 'Not active';
   document.getElementById('archTipDb').innerHTML   = outMode === 'db'   ? outTip : 'Not active';
   document.getElementById('archTipS3').innerHTML   = outMode === 's3'   ? outTip : 'Not active';
-  document.getElementById('archTipStd').innerHTML  = outMode === 'stdout' ? outTip : 'Not active';
   document.getElementById('archTipDlq').innerHTML =
     'Dead Letters: <b>' + fmt(dlq) + '</b><br>' +
     'Last Insert: <b>' + fmtEpoch(cachedDlqMeta.last_inserted_at) + '</b><br>' +
@@ -1208,7 +1200,7 @@ function showArchDetail(which) {
   } else {
     // Output nodes
     var outMode = (cachedCfg && cachedCfg.output) ? cachedCfg.output.mode : '';
-    var names = { http: 'HTTP Endpoint', db: 'RDBMS', s3: 'AWS S3', stdout: 'stdout' };
+    var names = { http: 'HTTP Endpoint', db: 'RDBMS', s3: 'AWS S3' };
     title = (names[which] || which) + ' — Output';
     color = archNodeColors[which] || '#475569';
     var isActive = which === outMode;
@@ -1478,7 +1470,7 @@ function computeStatus(m, cfg) {
   setDot('dotProcess', procColor);
 
   // ── Output ───────────────────────────────────────────────
-  var outMode  = (cfg && cfg.output) ? cfg.output.mode : 'stdout';
+  var outMode  = (cfg && cfg.output) ? cfg.output.mode : 'http';
   var epUp     = m['changes_worker_output_endpoint_up'];
   var outErr   = m['changes_worker_output_errors_total'] || 0;
   var outTotal = m['changes_worker_output_requests_total'] || 0;
@@ -1503,14 +1495,7 @@ function computeStatus(m, cfg) {
   };
 
   var outColor = 'red';
-  if (outMode === 'stdout') {
-    outColor = uptime > 0 ? 'green' : 'red';
-    if (uptime > 0) {
-      outChecks.push(diagOk('Output mode is stdout — no external endpoint needed'));
-    } else {
-      outChecks.push(diagErr('Worker not running'));
-    }
-  } else if (epUp === 0) {
+  if (epUp === 0) {
     outColor = 'red';
     outChecks.push(diagErr('Output endpoint is DOWN — the target is unreachable'));
     if (outMode === 'http') {

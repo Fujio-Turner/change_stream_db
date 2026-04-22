@@ -7,7 +7,7 @@ Production-ready _changes feed processor for:
 
 Supports longpoll with configurable intervals, checkpoint management,
 bulk_get fallback, async parallel or sequential processing, and
-forwarding results via stdout or HTTP.
+forwarding results to external systems (HTTP, RDBMS, Cloud).
 """
 
 __version__ = "2.2.2"
@@ -1500,15 +1500,13 @@ async def start_metrics_server(
     app.router.add_put("/api/inputs_changes/{id}", api_put_inputs_changes_entry)
     app.router.add_delete("/api/inputs_changes/{id}", api_delete_inputs_changes_entry)
 
-    app.router.add_get(r"/api/outputs_{type:rdbms|http|cloud|stdout}", api_get_outputs)
-    app.router.add_post(
-        r"/api/outputs_{type:rdbms|http|cloud|stdout}", api_post_outputs
-    )
+    app.router.add_get(r"/api/outputs_{type:rdbms|http|cloud}", api_get_outputs)
+    app.router.add_post(r"/api/outputs_{type:rdbms|http|cloud}", api_post_outputs)
     app.router.add_put(
-        r"/api/outputs_{type:rdbms|http|cloud|stdout}/{id}", api_put_outputs_entry
+        r"/api/outputs_{type:rdbms|http|cloud}/{id}", api_put_outputs_entry
     )
     app.router.add_delete(
-        r"/api/outputs_{type:rdbms|http|cloud|stdout}/{id}", api_delete_outputs_entry
+        r"/api/outputs_{type:rdbms|http|cloud}/{id}", api_delete_outputs_entry
     )
 
     # Register job control endpoints BEFORE generic /api/jobs/{id} routes
@@ -1786,14 +1784,13 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
 
     # -- output ----------------------------------------------------------------
     out_cfg = cfg.get("output", {})
-    out_mode = out_cfg.get("mode", "stdout")
+    out_mode = out_cfg.get("mode")
     _DB_ENGINE_ALIASES = {"postgres", "mysql", "mssql", "oracle"}
-    if (
-        out_mode not in ("stdout", "http", "db", "s3")
-        and out_mode not in _DB_ENGINE_ALIASES
-    ):
+    if out_mode is None:
+        errors.append("output.mode is required (http, db, s3, or a db engine name)")
+    elif out_mode not in ("http", "db", "s3") and out_mode not in _DB_ENGINE_ALIASES:
         errors.append(
-            f"output.mode must be 'stdout', 'http', 'db', 's3', or a db engine name "
+            f"output.mode must be 'http', 'db', 's3', or a db engine name "
             f"(postgres/mysql/mssql/oracle), got '{out_mode}'"
         )
     if out_mode == "http" and not out_cfg.get("target_url"):
@@ -2091,7 +2088,7 @@ def migrate_legacy_config_to_job(db: CBLStore, cfg: dict) -> dict | None:
             "enabled": True,
             "inputs": [gw],
             "outputs": [out],
-            "output_type": out.get("mode", "stdout"),
+            "output_type": out.get("mode", "http"),
             "mapping": None,
             "system": cfg.get("system", {}),
             "retry": cfg.get("retry", {}),
@@ -2480,7 +2477,7 @@ async def poll_changes(
             http.set_metrics(metrics)
         http.set_shutdown_event(stop_event)
 
-        output_mode = out_cfg.get("mode", "stdout")
+        output_mode = out_cfg.get("mode")
         db_output = None  # track DB forwarder for cleanup
         cloud_output = None  # track cloud forwarder for cleanup
 
@@ -3044,7 +3041,9 @@ async def test_connection(cfg: dict, src: str) -> bool:
                 )
                 ok = False
         else:
-            print(f"  [–] Output mode=stdout (no endpoint to check)")
+            print(
+                f"  [–] Output mode={out_cfg.get('mode', '?')} (no endpoint to check)"
+            )
 
     print(f"\n{'=' * 60}")
     if ok:

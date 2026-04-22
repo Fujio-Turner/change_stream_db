@@ -61,7 +61,7 @@ URL: /schema?job_mode=true&input_id=sg-us-prices&output_type=rdbms&output_id=pg-
 |---|---|---|
 | `job_mode` | Yes | Switches schema.html into embedded mode |
 | `input_id` | No | Pre-selects the input source for "Live Sample" fetch |
-| `output_type` | No | Pre-selects output type (rdbms, http, cloud, stdout) |
+| `output_type` | No | Pre-selects output type (rdbms, http, cloud) |
 | `output_id` | No | Pre-selects the specific output (for DB introspection) |
 | `mapping_name` | No | Loads an existing mapping for editing |
 | `job_id` | No | Associates this mapping with a specific job (for edit flows) |
@@ -1622,7 +1622,6 @@ Adding `tables_rdbms` to the v2.0 collections from `DESIGN_2_0.md`:
 | `outputs_rdbms` | 1 document | Array of RDBMS output configs (connection only — tables move to `tables_rdbms`) |
 | `outputs_http` | 1 document | Array of HTTP/REST output configs |
 | `outputs_cloud` | 1 document | Array of cloud blob output configs |
-| `outputs_stdout` | 1 document | Array of stdout output configs |
 | **`tables_rdbms`** | **1 document** | **Array of reusable RDBMS table definitions (DDL + parsed columns)** |
 | `jobs` | N documents | Each job connects input → output with tables + mapping |
 | `checkpoints` | N documents | Per-job checkpoint state |

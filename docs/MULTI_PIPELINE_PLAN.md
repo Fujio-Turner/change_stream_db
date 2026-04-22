@@ -16,7 +16,7 @@ This document outlines the design for supporting **multiple concurrent pipelines
 ┌──────────────┐       ┌───────────┐       ┌──────────────┐
 │  1 SOURCE    │──────►│ 1 PROCESS │──────►│  1 OUTPUT    │
 │  _changes    │       │  filter,  │       │  HTTP / DB / │
-│  feed        │       │  fetch,   │       │  stdout      │
+│  feed        │       │  fetch,   │       │  Cloud       │
 │              │       │  transform│       │              │
 └──────────────┘       └───────────┘       └──────────────┘
 ```
@@ -36,7 +36,7 @@ Support **N independent pipelines** running concurrently via Python threads, whe
 Thread 1:  SG/db.us.prices/_changes  ──► filter/transform ──► PostgreSQL (prices table)
 Thread 2:  SG/db.us.orders/_changes  ──► filter/transform ──► PostgreSQL (orders table)
 Thread 3:  SG/db.eu.prices/_changes  ──► filter/transform ──► REST API endpoint
-Thread 4:  Edge/inventory/_changes   ──► filter/transform ──► stdout
+Thread 4:  Edge/inventory/_changes   ──► filter/transform ──► Cloud Storage
 ```
 
 Each thread runs its own asyncio event loop and is fully isolated — its own HTTP session, checkpoint, metrics, and output connection.
@@ -133,7 +133,7 @@ main()
   │     ├── Thread-3: Pipeline("eu-prices-to-pg")
   │     │     └── asyncio.run(poll_changes(pipeline_cfg_3))
   │     │
-  │     └── Thread-4: Pipeline("inventory-to-stdout")
+  │     └── Thread-4: Pipeline("inventory-to-cloud")
   │           └── asyncio.run(poll_changes(pipeline_cfg_4))
   │
   ├── wait for shutdown signal

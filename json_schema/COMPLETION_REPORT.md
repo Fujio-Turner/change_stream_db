@@ -8,20 +8,19 @@
 
 ## Executive Summary
 
-Successfully created comprehensive JSON Schema 2020-12 definitions for all 16 collections in the `changes-worker` scope of the Couchbase Lite database. Includes 16 detailed schema files and 4 comprehensive documentation guides.
+Successfully created comprehensive JSON Schema 2020-12 definitions for all 15 collections in the `changes-worker` scope of the Couchbase Lite database. Includes 15 detailed schema files and 4 comprehensive documentation guides.
 
 ---
 
 ## Deliverables
 
-### ✅ JSON Schema Files (16 collections)
+### ✅ JSON Schema Files (15 collections)
 
-**Core Pipeline Collections** (5)
+**Core Pipeline Collections** (4)
 - [x] `inputs_changes/schema.json` — Input source definitions
 - [x] `outputs_rdbms/schema.json` — Relational database destinations
 - [x] `outputs_http/schema.json` — HTTP/REST endpoints
 - [x] `outputs_cloud/schema.json` — Cloud storage destinations
-- [x] `outputs_stdout/schema.json` — Console output
 
 **Jobs & Orchestration** (1)
 - [x] `jobs/schema.json` — Data pipeline jobs
@@ -96,7 +95,6 @@ json_schema/
     ├── outputs_rdbms/schema.json
     ├── outputs_http/schema.json
     ├── outputs_cloud/schema.json
-    ├── outputs_stdout/schema.json
     ├── jobs/schema.json
     ├── checkpoints/schema.json
     ├── dlq/schema.json
@@ -161,11 +159,11 @@ All schemas include:
 
 | Category | Count | Collections |
 |----------|-------|-------------|
-| Production | 9 | inputs_changes, outputs_*, jobs, checkpoints, dlq, config |
+| Production | 8 | inputs_changes, outputs_*, jobs, checkpoints, dlq, config |
 | Runtime | 2 | data_quality, enrichments |
 | Future | 4 | users, sessions, audit_log, notifications |
 | Deprecated | 1 | mappings |
-| **Total** | **16** | **All CBL collections** |
+| **Total** | **15** | **All CBL collections** |
 
 ---
 
@@ -230,13 +228,13 @@ All endpoints validate against schemas:
 
 ## Quality Metrics
 
-- **Total Files**: 20
+- **Total Files**: 19
 - **Total Size**: 128 KB
-- **Schema Files**: 16 (valid JSON)
+- **Schema Files**: 15 (valid JSON)
 - **Documentation Files**: 4
 - **Lines of Documentation**: 2000+
 - **Examples Provided**: 20+
-- **Collections Documented**: 16/16 (100%)
+- **Collections Documented**: 15/15 (100%)
 - **Required Fields Specified**: 100%
 
 ---
@@ -306,7 +304,6 @@ All endpoints validate against schemas:
 - [x] outputs_rdbms/schema.json
 - [x] outputs_http/schema.json
 - [x] outputs_cloud/schema.json
-- [x] outputs_stdout/schema.json
 - [x] jobs/schema.json
 
 ### Schemas - Runtime ✅
@@ -385,7 +382,7 @@ All endpoints validate against schemas:
 
 ✅ **PROJECT COMPLETE**
 
-All 16 collections in the `changes-worker` scope have been documented with JSON Schema 2020-12 definitions. Comprehensive documentation (128 KB) provides usage guides, examples, and integration instructions.
+All 15 collections in the `changes-worker` scope have been documented with JSON Schema 2020-12 definitions. Comprehensive documentation (128 KB) provides usage guides, examples, and integration instructions.
 
 **Status**: Ready for production use  
 **Date Completed**: April 20, 2024  

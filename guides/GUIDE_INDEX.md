@@ -131,7 +131,6 @@ Complete documentation for JSON schema standards and implementation in the chang
 | outputs_rdbms | Output config | 12 | ✅ Compliant |
 | outputs_http | Output config | 11 | ✅ Compliant |
 | outputs_cloud | Output config | 11 | ✅ Compliant |
-| outputs_stdout | Output config | 5 | ✅ Compliant |
 | jobs | Pipeline job | 14 | ✅ Compliant |
 | checkpoints | Progress tracking | 7 | ✅ Compliant |
 | dlq | Error queue | 13 | ✅ Compliant |

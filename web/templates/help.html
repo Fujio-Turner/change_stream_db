@@ -48,7 +48,7 @@
     <div id="overview" class="card bg-base-100 shadow rounded-2xl">
       <div class="card-body p-6">
         <h2 class="text-xl font-bold mb-3">Overview</h2>
-        <p class="opacity-80">Changes Worker is a production-ready <code class="bg-base-200 px-1 rounded">_changes</code> feed processor for <strong>Couchbase Sync Gateway</strong>, <strong>Capella App Services</strong>, <strong>Edge Server</strong>, and <strong>CouchDB</strong>. It consumes document changes in real-time or via polling, optionally transforms and maps them using 58 built-in functions, and forwards the results to HTTP endpoints, stdout, or relational databases (PostgreSQL, MySQL, MS SQL, Oracle).</p>
+        <p class="opacity-80">Changes Worker is a production-ready <code class="bg-base-200 px-1 rounded">_changes</code> feed processor for <strong>Couchbase Sync Gateway</strong>, <strong>Capella App Services</strong>, <strong>Edge Server</strong>, and <strong>CouchDB</strong>. It consumes document changes in real-time or via polling, optionally transforms and maps them using 58 built-in functions, and forwards the results to HTTP endpoints, cloud storage, or relational databases (PostgreSQL, MySQL, MS SQL, Oracle).</p>
         <p class="opacity-80 mt-2">The system supports at-least-once delivery semantics, checkpoint-based resumption, automatic retries with exponential backoff, and a dead letter queue for failed documents.</p>
       </div>
     </div>
@@ -73,7 +73,7 @@
               </tr>
               <tr>
                 <td class="font-semibold text-warning">Output (RIGHT)</td>
-                <td>Forwards each document to the configured output: HTTP endpoint (configurable method: PUT/POST/PATCH/DELETE), stdout, or RDBMS (UPSERT/DELETE with optional multi-table transactions). Tracks success/failure per document.</td>
+                <td>Forwards each document to the configured output: HTTP endpoint (configurable method: PUT/POST/PATCH/DELETE), cloud storage, or RDBMS (UPSERT/DELETE with optional multi-table transactions). Tracks success/failure per document.</td>
               </tr>
             </tbody>
           </table>
@@ -96,7 +96,7 @@
               <tr><td class="font-semibold">Auth</td><td><code>method</code> (basic / session / bearer / none), <code>username</code>, <code>password</code>, <code>bearer_token</code>, <code>session_cookie</code></td></tr>
               <tr><td class="font-semibold">Changes Feed</td><td><code>feed_type</code>, <code>poll_interval_seconds</code>, <code>active_only</code>, <code>include_docs</code>, <code>channels</code> (array), <code>throttle_feed</code>, <code>http_timeout_seconds</code></td></tr>
               <tr><td class="font-semibold">Processing</td><td><code>sequential</code> (true = in-order), <code>max_concurrent</code> (parallel limit), <code>ignore_delete</code>, <code>ignore_remove</code>, <code>dry_run</code></td></tr>
-              <tr><td class="font-semibold">Output (HTTP)</td><td><code>mode</code> (stdout / http / db), <code>target_url</code>, <code>output_format</code> (json / xml / form / msgpack / csv), <code>write_method</code> (PUT / POST), <code>halt_on_failure</code></td></tr>
+              <tr><td class="font-semibold">Output (HTTP)</td><td><code>mode</code> (http / db / s3), <code>target_url</code>, <code>output_format</code> (json / xml / form / msgpack / csv), <code>write_method</code> (PUT / POST), <code>halt_on_failure</code></td></tr>
               <tr><td class="font-semibold">Output (DB)</td><td><code>engine</code> (postgres / mysql / mssql / oracle), <code>host</code>, <code>port</code>, <code>database</code>, <code>schema</code>, <code>table</code>, <code>pool_size</code>, <code>ssl</code>, <code>mapping.mode</code> (jsonb / columns)</td></tr>
               <tr><td class="font-semibold">Checkpoint</td><td><code>enabled</code>, <code>client_id</code>, <code>every_n_docs</code> (sub-batch checkpointing, sequential only)</td></tr>
               <tr><td class="font-semibold">Admin UI</td><td><code>enabled</code> (default true; set false for headless/metrics-only mode), <code>host</code> (bind address), <code>port</code> (default 8080)</td></tr>

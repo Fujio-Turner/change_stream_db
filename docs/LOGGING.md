@@ -111,7 +111,7 @@ Every `log_event()` call requires a **log_key**.  These are the valid keys:
 | `CHANGES`      | `_changes` feed input (polling, parsing, batching)  |
 | `PROCESSING`   | Filtering, routing, batch orchestration             |
 | `MAPPING`      | Schema mapping (doc → SQL ops)                      |
-| `OUTPUT`       | stdout / HTTP / DB / cloud output forwarding        |
+| `OUTPUT`       | HTTP / DB / cloud output forwarding                 |
 | `HTTP`         | HTTP request/response details (non-output)          |
 | `CHECKPOINT`   | Checkpoint load / save                              |
 | `RETRY`        | Retry / backoff decisions                           |
@@ -179,7 +179,7 @@ The `RedactingFormatter` recognizes these extra fields and renders them as
 | `host`           | str         | `"0.0.0.0"`                       |
 | `port`           | int         | `9090`                            |
 | `storage`        | str         | `"sg"`, `"cbl"`, `"file"`, `"fallback"` |
-| `mode`           | str         | `"http"`, `"stdout"`, `"db"`      |
+| `mode`           | str         | `"http"`, `"db"`                  |
 | `db_name`        | str         | `"changes_worker_db"`             |
 | `db_path`        | str         | `"/app/data"`                     |
 | `db_size_mb`     | float       | `12.5`                            |

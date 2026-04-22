@@ -91,19 +91,6 @@ Field Review:
 
 ---
 
-### ✅ outputs_stdout
-
-**Status**: COMPLIANT
-
-Field Review:
-- `format` ✅ Enum (json, jsonl, pretty, csv)
-- `level` ✅ Enum (debug, info, warn, error)
-- `batch_size`, `include_metadata` ✅ Correct types
-
-**Notes**: Simple structure, well-documented.
-
----
-
 ### ✅ jobs
 
 **Status**: COMPLIANT
@@ -112,7 +99,7 @@ Field Review:
 - `id` ✅ UUID v4 format
 - `name` ✅ String
 - `inputs`, `outputs` ✅ Array structure
-- `output_type` ✅ Enum (rdbms, http, cloud, stdout)
+- `output_type` ✅ Enum (rdbms, http, cloud)
 - `mapping` ✅ Object with rules
 - `state` ✅ Object with status enum
 - `created_at`, `updated_at` ✅ ISO-8601 format
@@ -353,7 +340,7 @@ All enum fields reviewed for compliance:
 |-----------|--------|------|--------|
 | `type` | job, checkpoint, dlq, etc | const per collection | ✅ Correct |
 | `status` | idle, running, paused, stopped, error | lowercase | ✅ Correct |
-| `output_type` | rdbms, http, cloud, stdout | snake_case | ✅ Correct |
+| `output_type` | rdbms, http, cloud | snake_case | ✅ Correct |
 | `database_type` | mysql, postgres, mssql, oracle | lowercase | ✅ Correct |
 | `source_type` | sync_gateway, app_services, edge_server, couchdb | snake_case | ✅ Correct |
 | `cloud_provider` | aws_s3, gcs, azure_blob, oracle_ocs | snake_case | ✅ Correct |
@@ -466,7 +453,6 @@ All 20 example documents in schemas validated:
 ✅ **outputs_rdbms examples**: Valid  
 ✅ **outputs_http examples**: Valid  
 ✅ **outputs_cloud examples**: Valid  
-✅ **outputs_stdout examples**: Valid  
 ✅ **jobs examples**: Valid  
 ✅ **checkpoints examples**: Valid  
 ✅ **dlq examples**: Valid  

@@ -35,7 +35,7 @@
         <a class="tab tab-active" id="tabRdbms" onclick="switchTab('rdbms')">🗄️ RDBMS <span class="badge badge-sm ml-1" id="tabCountRdbms">0</span></a>
         <a class="tab" id="tabHttp" onclick="switchTab('http')">📡 HTTP <span class="badge badge-sm ml-1" id="tabCountHttp">0</span></a>
         <a class="tab" id="tabCloud" onclick="switchTab('cloud')">☁️ Cloud <span class="badge badge-sm ml-1" id="tabCountCloud">0</span></a>
-        <a class="tab" id="tabStdout" onclick="switchTab('stdout')">📺 Stdout <span class="badge badge-sm ml-1" id="tabCountStdout">0</span></a>
+
       </div>
 
       <!-- ═══════ RDBMS Panel ═══════ -->
@@ -256,57 +256,6 @@
         </div>
       </div>
 
-      <!-- ═══════ Stdout Panel ═══════ -->
-      <div id="panelStdout" class="hidden">
-        <div class="card bg-base-100 shadow rounded-2xl">
-          <div class="card-body p-4">
-            <div class="flex items-center gap-2 mb-3">
-              <h3 class="text-sm font-semibold">Stdout Outputs</h3>
-              <button class="btn btn-primary btn-sm ml-auto" onclick="showOutputForm('stdout')">+ New Stdout</button>
-            </div>
-            <div class="overflow-x-auto">
-              <table class="table table-sm table-zebra w-full">
-                <thead><tr class="bg-base-200">
-                  <th class="text-xs font-semibold">Status</th>
-                  <th class="text-xs font-semibold">Name</th>
-                  <th class="text-xs font-semibold">Format</th>
-                  <th class="text-xs font-semibold">Used By</th>
-                  <th class="text-xs font-semibold text-right">Actions</th>
-                </tr></thead>
-                <tbody id="tableStdout"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <div id="formStdout" class="hidden card bg-base-100 shadow-sm rounded-2xl mt-4">
-          <div class="card-body p-4">
-            <h3 class="text-sm font-bold mb-3" id="formStdoutTitle">New Stdout Output</h3>
-            <div class="space-y-4">
-              <div class="grid grid-cols-2 gap-4">
-                <div><label class="label label-text text-xs font-semibold">Output ID</label>
-                  <input id="stdoutId" type="text" class="input input-bordered input-sm w-full" placeholder="e.g. stdout-dev" /></div>
-                <div><label class="label label-text text-xs font-semibold">Name</label>
-                  <input id="stdoutName" type="text" class="input input-bordered input-sm w-full" placeholder="Display name" /></div>
-              </div>
-              <div class="grid grid-cols-2 gap-4">
-                <div><label class="label label-text text-xs font-semibold">Format</label>
-                  <select id="stdoutFormat" class="select select-bordered select-sm w-full">
-                    <option value="json">JSON (pretty)</option><option value="json-compact">JSON (compact)</option><option value="text">Text</option>
-                  </select></div>
-                <div><label class="label cursor-pointer justify-start gap-2 mt-6"><span class="label-text text-xs font-semibold">Enabled</span>
-                  <input id="stdoutEnabled" type="checkbox" class="toggle toggle-sm toggle-success" checked /></label></div>
-              </div>
-              <div class="flex gap-2 mt-2">
-                <button class="btn btn-success btn-sm" onclick="saveOutput('stdout')">Save Output</button>
-                <button class="btn btn-ghost btn-sm" onclick="hideOutputForm('stdout')">Cancel</button>
-                <span id="formStdoutStatus" class="text-sm opacity-60 self-center"></span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
     </main>
     <div id="toastContainer" class="toast toast-end toast-bottom z-50"></div>
   </div>
@@ -335,7 +284,7 @@
 
     // ===== Tab Switching =====
     function switchTab(type) {
-      var types = ['rdbms', 'http', 'cloud', 'stdout'];
+      var types = ['rdbms', 'http', 'cloud'];
       activeTab = type;
       types.forEach(function(t) {
         var tab = document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1));
@@ -399,7 +348,7 @@
           tbody.innerHTML = '';
 
           if (src.length === 0) {
-            var cols = type === 'rdbms' ? 9 : type === 'http' ? 8 : type === 'cloud' ? 8 : 5;
+            var cols = type === 'rdbms' ? 9 : type === 'http' ? 8 : 8;
             tbody.innerHTML = '<tr><td colspan="' + cols + '" class="text-center opacity-50 py-6">No ' + type.toUpperCase() + ' outputs configured yet.</td></tr>';
             return;
           }
@@ -453,15 +402,6 @@
                 '<td class="text-right"><div class="flex gap-1 justify-end">' +
                   '<button class="btn btn-ghost btn-xs" onclick="showOutputForm(\'cloud\',\'' + oid + '\')">Edit</button>' +
                   delBtn + '</div></td>';
-            } else if (type === 'stdout') {
-              var fmt = out.pretty_print ? 'JSON' : (out.format || 'text');
-              row.innerHTML = '<td>' + statusBadge + '</td>' +
-                '<td class="font-semibold">' + oname + '</td>' +
-                '<td><span class="badge badge-ghost badge-xs">' + escHtml(fmt) + '</span></td>' +
-                '<td>' + usedByHtml(out.id) + '</td>' +
-                '<td class="text-right"><div class="flex gap-1 justify-end">' +
-                  '<button class="btn btn-ghost btn-xs" onclick="showOutputForm(\'stdout\',\'' + oid + '\')">Edit</button>' +
-                  delBtn + '</div></td>';
             }
             tbody.appendChild(row);
           });
@@ -471,7 +411,7 @@
 
     // ===== Load all tab counts =====
     function loadAllCounts() {
-      var types = ['rdbms', 'http', 'cloud', 'stdout'];
+      var types = ['rdbms', 'http', 'cloud'];
       types.forEach(function(t) {
         fetch('/api/outputs_' + t)
           .then(function(r){ return r.json(); })
@@ -486,7 +426,7 @@
     function showOutputForm(type, outputId) {
       var formEl = document.getElementById('form' + type.charAt(0).toUpperCase() + type.slice(1));
       var titleEl = document.getElementById('form' + type.charAt(0).toUpperCase() + type.slice(1) + 'Title');
-      var idField = document.getElementById(type === 'rdbms' ? 'rdbmsId' : type === 'http' ? 'httpId' : type === 'cloud' ? 'cloudId' : 'stdoutId');
+      var idField = document.getElementById(type === 'rdbms' ? 'rdbmsId' : type === 'http' ? 'httpId' : 'cloudId');
 
       if (outputId) {
         editingId[type] = outputId;
@@ -553,11 +493,6 @@
         document.getElementById('cloudBucket').value = '';
         document.getElementById('cloudPrefix').value = '';
         document.getElementById('cloudEnabled').checked = true;
-      } else if (type === 'stdout') {
-        document.getElementById('stdoutId').value = '';
-        document.getElementById('stdoutName').value = '';
-        document.getElementById('stdoutFormat').value = 'json';
-        document.getElementById('stdoutEnabled').checked = true;
       }
     }
 
@@ -598,11 +533,6 @@
         document.getElementById('cloudBucket').value = entry.bucket || '';
         document.getElementById('cloudPrefix').value = entry.prefix || '';
         document.getElementById('cloudEnabled').checked = entry.enabled !== false;
-      } else if (type === 'stdout') {
-        document.getElementById('stdoutId').value = entry.id || '';
-        document.getElementById('stdoutName').value = entry.name || '';
-        document.getElementById('stdoutFormat').value = entry.pretty_print ? 'json' : (entry.format || 'text');
-        document.getElementById('stdoutEnabled').checked = entry.enabled !== false;
       }
     }
 
@@ -650,15 +580,6 @@
           region: document.getElementById('cloudRegion').value.trim(),
           bucket: document.getElementById('cloudBucket').value.trim(),
           prefix: document.getElementById('cloudPrefix').value.trim()
-        };
-      } else if (type === 'stdout') {
-        var fmt = document.getElementById('stdoutFormat').value;
-        return {
-          id: document.getElementById('stdoutId').value.trim(),
-          name: document.getElementById('stdoutName').value.trim(),
-          enabled: document.getElementById('stdoutEnabled').checked,
-          pretty_print: (fmt === 'json'),
-          format: fmt
         };
       }
     }
@@ -785,7 +706,7 @@
       var params = new URLSearchParams(window.location.search);
       var tab = params.get('tab');
       var editId = params.get('edit');
-      var startTab = (tab && ['rdbms','http','cloud','stdout'].indexOf(tab) >= 0) ? tab : 'rdbms';
+      var startTab = (tab && ['rdbms','http','cloud'].indexOf(tab) >= 0) ? tab : 'rdbms';
 
       loadJobs().then(function(){
         switchTab(startTab);

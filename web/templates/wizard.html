@@ -280,8 +280,7 @@
          <a class="tab tab-active" id="outTabRdbms" onclick="switchOutputTab('rdbms')">🗄️ RDBMS</a>
          <a class="tab" id="outTabHttp" onclick="switchOutputTab('http')">📡 HTTP</a>
          <a class="tab" id="outTabCloud" onclick="switchOutputTab('cloud')">☁️ Cloud</a>
-         <a class="tab" id="outTabStdout" onclick="switchOutputTab('stdout')">📺 Stdout</a>
-       </div>
+         </div>
 
        <!-- RDBMS Outputs -->
        <div id="outPanelRdbms" class="space-y-6">
@@ -611,76 +610,6 @@
          </div>
        </div>
 
-       <!-- Stdout Outputs -->
-       <div id="outPanelStdout" class="hidden space-y-6">
-         <!-- Existing Stdout Outputs -->
-         <div class="card bg-base-100 shadow-sm rounded-2xl border-l-4 border-secondary">
-           <div class="card-body">
-             <div class="flex items-center justify-between mb-3">
-               <h3 class="text-lg font-bold">📺 Saved Stdout Outputs</h3>
-               <span id="outStdoutCount" class="badge badge-secondary text-xs">0</span>
-             </div>
-             <div class="overflow-x-auto">
-               <table class="table table-xs table-zebra w-full">
-                 <thead>
-                   <tr class="bg-base-200">
-                     <th class="text-xs font-semibold">ID</th>
-                     <th class="text-xs font-semibold">Name</th>
-                     <th class="text-xs font-semibold">Format</th>
-                     <th class="text-xs font-semibold text-right">Actions</th>
-                   </tr>
-                 </thead>
-                 <tbody id="outStdoutTableBody"></tbody>
-               </table>
-             </div>
-             <div class="mt-3 flex gap-2">
-               <button class="btn btn-primary btn-xs" onclick="outputsStdoutAddNew()">+ New Stdout</button>
-               <button class="btn btn-warning btn-xs" onclick="outputsClearAll('stdout')">Clear All</button>
-             </div>
-           </div>
-         </div>
-
-         <!-- Stdout Form -->
-         <div id="outStdoutFormCard" class="hidden card bg-base-100 shadow-sm rounded-2xl">
-           <div class="card-body">
-             <h2 class="text-xl font-bold mb-4">Stdout Output Configuration</h2>
-             <div class="space-y-4">
-               <div class="grid grid-cols-2 gap-4">
-                 <div>
-                   <label class="label"><span class="label-text font-semibold">Output ID</span></label>
-                   <input id="outStdoutId" type="text" class="input input-bordered w-full" placeholder="e.g. stdout-dev" />
-                 </div>
-                 <div>
-                   <label class="label"><span class="label-text font-semibold">Name</span></label>
-                   <input id="outStdoutName" type="text" class="input input-bordered w-full" placeholder="Display name" />
-                 </div>
-               </div>
-
-               <div class="grid grid-cols-2 gap-4">
-                 <div>
-                   <label class="label"><span class="label-text font-semibold">Format</span></label>
-                   <select id="outStdoutFormat" class="select select-bordered w-full">
-                     <option value="json">JSON (pretty)</option>
-                     <option value="json-compact">JSON (compact)</option>
-                     <option value="text">Text</option>
-                   </select>
-                 </div>
-                 <div>
-                   <label class="label">
-                     <span class="label-text font-semibold">Enabled</span>
-                     <input id="outStdoutEnabled" type="checkbox" class="checkbox checkbox-sm" checked />
-                   </label>
-                 </div>
-               </div>
-
-               <div class="flex gap-2 mt-6">
-                 <button class="btn btn-success" onclick="outputsStdoutSave()">Save Output</button>
-                 <button class="btn btn-ghost" onclick="outputsCancel('stdout')">Cancel</button>
-               </div>
-             </div>
-           </div>
-         </div>
-       </div>
       </div>
 
       <!-- ═══════════════════════════════════════════════════════ -->
@@ -1186,21 +1115,13 @@
 
           <!-- Output Mode Tabs -->
           <div class="tabs tabs-boxed mb-4">
-            <a class="tab tab-active" id="outTabStdout" onclick="switchOutputTab('stdout')">Stdout</a>
-            <a class="tab" id="outTabHttp" onclick="switchOutputTab('http')">HTTP</a>
+            <a class="tab tab-active" id="outTabHttp" onclick="switchOutputTab('http')">HTTP</a>
             <a class="tab" id="outTabDb" onclick="switchOutputTab('db')">RDBMS</a>
             <a class="tab" id="outTabS3" onclick="switchOutputTab('s3')">S3 / Cloud</a>
           </div>
 
-          <!-- Stdout panel -->
-          <div id="outPanelStdout">
-            <div class="alert alert-info shadow-sm">
-              <span>Documents will be printed to stdout (console / logs). No additional configuration required.</span>
-            </div>
-          </div>
-
           <!-- HTTP panel -->
-          <div id="outPanelHttp" class="hidden">
+          <div id="outPanelHttp">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label class="label label-text text-xs font-semibold">Target URL</label>
@@ -1527,7 +1448,7 @@
                     <input id="wizMatchValue" type="text" placeholder="value (e.g. order)" class="input input-bordered input-sm flex-1" />
                   </div>
 
-                  <!-- JSON mapping mode (for stdout / HTTP) -->
+                  <!-- JSON mapping mode (for HTTP) -->
                   <div id="wizJsonMode" class="flex-1 flex flex-col">
                     <div class="flex items-center gap-2 mb-2">
                       <h4 class="text-sm font-semibold">JSON Field Mappings</h4>
@@ -1667,7 +1588,7 @@
                  <option value="rdbms">RDBMS</option>
                  <option value="http">HTTP</option>
                  <option value="cloud">Cloud Storage</option>
-                 <option value="stdout">Stdout</option>
+
                </select>
              </div>
              <div>
@@ -3575,7 +3496,7 @@ async function saveSettingsConfig() {
 var currentStep = 1;
 var wizardSampleDoc = null;
 var wizSourceFieldsList = [];
-var wizOutputMode = 'stdout';   // 'stdout', 'http', 'db', 's3'
+var wizOutputMode = 'http';     // 'http', 'db', 's3'
 var wizJsonFields = [];         // [{key, path, transform}]
 var wizTables = [];
 var wizActiveTableIdx = 0;
@@ -3850,11 +3771,9 @@ function wizGenerateSampleFromSchema(schema) {
 // ── Step 2: Output Tab Switching ─────────────────────────────
 function switchOutputTab(mode) {
   wizOutputMode = mode;
-  document.getElementById('outTabStdout').classList.toggle('tab-active', mode === 'stdout');
   document.getElementById('outTabHttp').classList.toggle('tab-active', mode === 'http');
   document.getElementById('outTabDb').classList.toggle('tab-active', mode === 'db');
   document.getElementById('outTabS3').classList.toggle('tab-active', mode === 's3');
-  document.getElementById('outPanelStdout').classList.toggle('hidden', mode !== 'stdout');
   document.getElementById('outPanelHttp').classList.toggle('hidden', mode !== 'http');
   document.getElementById('outPanelDb').classList.toggle('hidden', mode !== 'db');
   document.getElementById('outPanelS3').classList.toggle('hidden', mode !== 's3');
@@ -4432,9 +4351,7 @@ function buildConfig() {
   };
 
   // Output-specific config
-  if (wizOutputMode === 'stdout') {
-    config.output = { mode: 'stdout', output_format: 'json' };
-  } else if (wizOutputMode === 'http') {
+  if (wizOutputMode === 'http') {
     var outAuth = document.getElementById('outAuthMethod').value;
     config.output = {
       mode: 'http',
@@ -4972,7 +4889,7 @@ function startOutputsWizard() {
 }
 
 function switchOutputTab(type) {
-  var tabs = ['rdbms', 'http', 'cloud', 'stdout'];
+  var tabs = ['rdbms', 'http', 'cloud'];
   tabs.forEach(function(t) {
     var tab = document.getElementById('outTab' + t.charAt(0).toUpperCase() + t.slice(1));
     var panel = document.getElementById('outPanel' + t.charAt(0).toUpperCase() + t.slice(1));
@@ -5026,15 +4943,6 @@ function outputsLoadExisting(type) {
                  '<button class="btn btn-xs btn-ghost text-error" onclick="outputsDelete(\'' + 
                  esc(out.id) + '\', \'cloud\')">Delete</button></td></tr>';
         }).join('');
-      } else if (type === 'stdout') {
-        tbody.innerHTML = src.map(function(out) {
-          return '<tr><td>' + esc(out.id) + '</td><td>' + esc(out.name || '–') + '</td><td>' + 
-                 esc(out.pretty_print ? 'json' : 'text') + '</td>' +
-                 '<td class="text-right"><button class="btn btn-xs btn-ghost" onclick="outputsEdit(\'' + 
-                 esc(out.id) + '\', \'stdout\')">Edit</button> ' +
-                 '<button class="btn btn-xs btn-ghost text-error" onclick="outputsDelete(\'' + 
-                 esc(out.id) + '\', \'stdout\')">Delete</button></td></tr>';
-        }).join('');
       }
     })
     .catch(e => console.error('Error loading outputs', e));
@@ -5083,14 +4991,6 @@ function outputsCloudAddNew() {
   document.getElementById('outCloudPrefix').value = '';
   document.getElementById('outCloudEnabled').checked = true;
   document.getElementById('outCloudFormCard').classList.remove('hidden');
-}
-
-function outputsStdoutAddNew() {
-  document.getElementById('outStdoutId').value = '';
-  document.getElementById('outStdoutName').value = '';
-  document.getElementById('outStdoutFormat').value = 'json';
-  document.getElementById('outStdoutEnabled').checked = true;
-  document.getElementById('outStdoutFormCard').classList.remove('hidden');
 }
 
 function outputsCancel(type) {
@@ -5145,12 +5045,6 @@ function outputsEdit(outId, type) {
         document.getElementById('outCloudPrefix').value = src.prefix || '';
         document.getElementById('outCloudEnabled').checked = src.enabled !== false;
         document.getElementById('outCloudFormCard').classList.remove('hidden');
-      } else if (type === 'stdout') {
-        document.getElementById('outStdoutId').value = src.id || '';
-        document.getElementById('outStdoutName').value = src.name || '';
-        document.getElementById('outStdoutFormat').value = src.pretty_print ? 'json' : 'text';
-        document.getElementById('outStdoutEnabled').checked = src.enabled !== false;
-        document.getElementById('outStdoutFormCard').classList.remove('hidden');
       }
     });
 }
@@ -5226,22 +5120,6 @@ function outputsCloudSave() {
   outputsSaveEntry('cloud', {
     id: id, name: name, enabled: enabled, provider: provider,
     region: region, bucket: bucket, prefix: prefix
-  });
-}
-
-function outputsStdoutSave() {
-  var id = document.getElementById('outStdoutId').value.trim();
-  var name = document.getElementById('outStdoutName').value.trim();
-  var format = document.getElementById('outStdoutFormat').value;
-  var enabled = document.getElementById('outStdoutEnabled').checked;
-  
-  if (!id) {
-    alert('ID is required');
-    return;
-  }
-  
-  outputsSaveEntry('stdout', {
-    id: id, name: name, enabled: enabled, pretty_print: (format === 'json')
   });
 }
 
@@ -5338,7 +5216,7 @@ function jobsHideManager() {
 let jobsState = {
   jobs: [],
   inputs: [],
-  outputs: { rdbms: [], http: [], cloud: [], stdout: [] },
+  outputs: { rdbms: [], http: [], cloud: [] },
   mappings: [],
   currentJob: null,
   isEditing: false

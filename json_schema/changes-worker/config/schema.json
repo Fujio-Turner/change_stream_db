@@ -37,7 +37,6 @@
         "output": {
           "type": ["string", "null"],
           "enum": [
-            "stdout",
             "stderr",
             "file",
             "syslog"
@@ -159,7 +158,7 @@
       "logging": {
         "level": "info",
         "format": "json",
-        "output": "stdout"
+        "output": "http"
       },
       "database": {
         "max_connections": 100,

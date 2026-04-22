@@ -53,7 +53,6 @@ All worker data lives in the `changes-worker` scope. The full v2.0 collection li
 | `changes-worker` | `outputs_rdbms` | `outputs_rdbms` | Array of RDBMS output connection configs |
 | `changes-worker` | `outputs_http` | `outputs_http` | Array of HTTP/REST output configs |
 | `changes-worker` | `outputs_cloud` | `outputs_cloud` | Array of cloud blob output configs |
-| `changes-worker` | `outputs_stdout` | `outputs_stdout` | Array of stdout output configs |
 | `changes-worker` | `tables_rdbms` | `tables_rdbms` | Reusable RDBMS table definitions library (DDL + parsed columns) |
 | `changes-worker` | `jobs` | `job::{uuid}` | Pipeline job definitions (input → output with tables + mapping) |
 | `changes-worker` | `checkpoints` | `checkpoint::{uuid}` | Per-job checkpoint state |

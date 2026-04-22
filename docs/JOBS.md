@@ -26,7 +26,7 @@ The **job ID** is the label that makes this possible. It flows through all three
 │  ┌──────────────┐       ┌───────────────┐       ┌────────────────────────┐   │
 │  │   SOURCE     │──────►│   PROCESS     │──────►│   OUTPUT               │   │
 │  │  _changes    │       │  filter,      │       │  PostgreSQL / MySQL /  │   │
-│  │  feed        │       │  fetch,       │       │  Oracle / HTTP / stdout│   │
+│  │  feed        │       │  fetch,       │       │  Oracle / HTTP / Cloud │   │
 │  │              │       │  transform    │       │                        │   │
 │  └──────────────┘       └───────────────┘       └────────────────────────┘   │
 │                                                                              │
@@ -231,7 +231,7 @@ A **job document** is a self-contained record stored in Couchbase Lite. It holds
     }
   ],
 
-  "output_type": "rdbms",                  // One of: "rdbms", "http", "cloud", "stdout"
+  "output_type": "rdbms",                  // One of: "rdbms", "http", "cloud"
 
   "mapping": {                             // Optional — schema mapping definition
     // ...

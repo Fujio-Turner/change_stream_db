@@ -203,7 +203,7 @@ class OutputEndpointDown(Exception):
 
 class OutputForwarder:
     """
-    Manages sending processed docs to the consumer endpoint (or stdout).
+    Manages sending processed docs to the consumer endpoint.
 
     When mode=http:
       - Has its own RetryableHTTP with output-specific retry settings
@@ -213,9 +213,6 @@ class OutputForwarder:
             main loop stops processing and does NOT advance the checkpoint
           * If halt_on_failure=false → logs the error and continues
       - Handles 3xx as non-retryable errors
-
-    When mode=stdout:
-      - Writes JSON to stdout, no failure handling needed
     """
 
     def __init__(
@@ -228,7 +225,7 @@ class OutputForwarder:
         build_auth_headers_fn=None,
         retryable_http_cls=None,
     ):
-        self._mode = out_cfg.get("mode", "stdout")
+        self._mode = out_cfg.get("mode", "http")
         self._target_url = out_cfg.get("target_url", "").rstrip("/")
         self._dry_run = dry_run
         self._halt_on_failure = out_cfg.get("halt_on_failure", True)
@@ -307,36 +304,6 @@ class OutputForwarder:
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {"ok": True, "doc_id": "unknown", "method": method, "skipped": True}
-
-        if self._mode == "stdout":
-            try:
-                self._send_stdout(doc)
-            except (OSError, TypeError, ValueError) as exc:
-                ic("send: stdout serialization/write error", exc)
-                log_event(
-                    logger,
-                    "error",
-                    "OUTPUT",
-                    "stdout write failed",
-                    doc_id=doc.get("_id", doc.get("id", "unknown")),
-                    error_detail=f"{type(exc).__name__}: {exc}",
-                )
-                return {
-                    "ok": False,
-                    "doc_id": doc.get("_id", doc.get("id", "unknown")),
-                    "method": method,
-                    "status": 0,
-                    "error": str(exc)[:500],
-                }
-            if self._metrics:
-                self._metrics.inc("output_requests_total")
-                mk = self._method_key(method)
-                self._metrics.inc(f"output_{mk}_total")
-            return {
-                "ok": True,
-                "doc_id": doc.get("_id", doc.get("id", "unknown")),
-                "method": method,
-            }
 
         doc_id = doc.get("_id", doc.get("id", "unknown"))
         encoded_doc_id = urllib.parse.quote(str(doc_id), safe="")
@@ -952,15 +919,6 @@ class OutputForwarder:
             return False
 
     # -- Internal --------------------------------------------------------------
-
-    def _send_stdout(self, doc: dict) -> None:
-        body, _ = serialize_doc(doc, self._output_format)
-        if isinstance(body, bytes):
-            sys.stdout.buffer.write(body + b"\n")
-            sys.stdout.buffer.flush()
-        else:
-            sys.stdout.write(body + "\n")
-            sys.stdout.flush()
 
     async def _record_time(self, ms: float) -> None:
         if self._log_response_times:

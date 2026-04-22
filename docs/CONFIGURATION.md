@@ -53,7 +53,7 @@ All settings live in a single `config.json` file. Here is a complete reference w
   },
 
   "output": {
-    "mode": "stdout",                // "stdout" | "http" | "db" | "s3"
+    "mode": "http",                  // "http" | "db" | "s3"
     "target_url": "",                // HTTP endpoint for mode=http
     "target_auth": {                 // Auth for the output endpoint
       "method": "none",              // "basic" | "session" | "bearer" | "none"
@@ -156,7 +156,7 @@ Each output entry must include:
 
 | Field      | Required | Notes |
 |------------|----------|-------|
-| `mode`     | **yes**  | Output engine name: `"postgres"`, `"mysql"`, `"mssql"`, `"oracle"`, etc. Without this the pipeline defaults to `stdout`. |
+| `mode`     | **yes**  | Output engine name: `"postgres"`, `"mysql"`, `"mssql"`, `"oracle"`, etc. This field is required. |
 | `username` | preferred | Use `username` instead of `user`. An empty string falls through to engine defaults. |
 | all connection fields | — | Place `host`, `port`, `database`, `password`, etc. at the **top level** of the entry — not nested under `db` or engine-specific keys. |
 

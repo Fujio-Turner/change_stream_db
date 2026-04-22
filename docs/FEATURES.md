@@ -229,7 +229,7 @@ pip install pymongo     # for output_format=bson
 pip install pyyaml      # for output_format=yaml
 ```
 
-The format applies to **both** `mode=stdout` and `mode=http`. Binary formats write to `sys.stdout.buffer` when piping. Startup validation **blocks launch** if the required library isn't installed.
+The format applies to `mode=http` and other output modes. Startup validation **blocks launch** if the required library isn't installed.
 
 ### Prometheus Metrics (`/_metrics`)
 

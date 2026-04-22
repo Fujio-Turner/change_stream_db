@@ -91,7 +91,7 @@
 |--------------------------------------------|--------|--------------------------------------------|
 | `/api/jobs/status`                         | GET    | Load all jobs with runtime status          |
 | `/api/inputs_changes`                      | GET    | Load all input resources (for source picker)|
-| `/api/outputs_{type}` (rdbms/http/cloud/stdout) | GET | Load outputs per type (for output picker) |
+| `/api/outputs_{type}` (rdbms/http/cloud) | GET | Load outputs per type (for output picker) |
 | `/api/wizard/test-source`                  | POST   | Test connectivity to a source              |
 | `/api/inputs_changes/{id}`                 | DELETE | Delete a single input resource             |
 | `/api/outputs_{type}/{id}`                 | DELETE | Delete a single output resource            |
@@ -132,7 +132,7 @@
 - Attachment Settings (max size, store inline) — shown only when DA selected
 
 ##### Output Card (amber border)
-- Output type picker: RDBMS, HTTP, Cloud Storage, Stdout
+- Output type picker: RDBMS, HTTP, Cloud Storage
 - Each shows count badge (from `/api/outputs_{type}`)
 - Drill-down table varies by type:
   - **HTTP:** Name, Target URL, Methods, Format, Auth, In Job, Actions
@@ -294,18 +294,6 @@
 
 **API:** `GET/POST /api/outputs_cloud`  
 **Table columns:** ID, Name, Provider, Bucket, Actions
-
-#### Stdout Output Fields
-
-| Field        | HTML ID            | Required | Default |
-|--------------|--------------------|----------|---------|
-| Output ID    | `outStdoutId`      | ✅        |         |
-| Name         | `outStdoutName`    |          |         |
-| Format       | `outStdoutFormat`  |          | json    |
-| Enabled      | `outStdoutEnabled` |          | true    |
-
-**API:** `GET/POST /api/outputs_stdout`  
-**Table columns:** ID, Name, Format, Actions
 
 ### Data Source Wizard (Legacy)
 
@@ -616,17 +604,6 @@
 }
 ```
 
-### Output Entry — Stdout (saved in `outputs_stdout.src[]`)
-
-```json
-{
-  "id": "stdout-dev",
-  "name": "Dev Console",
-  "enabled": true,
-  "pretty_print": true
-}
-```
-
 ### Job Document (saved as `job::{id}`)
 
 ```json
@@ -636,7 +613,7 @@
   "name": "My Sync Job",
   "inputs": [ { /* full copy of input entry */ } ],
   "outputs": [ { /* full copy of output entry */ } ],
-  "output_type": "rdbms | http | cloud | stdout",
+  "output_type": "rdbms | http | cloud",
   "system": {
     "threads": 4,
     "attachments_enabled": false

@@ -36,7 +36,6 @@ COLL_INPUTS_CHANGES = "inputs_changes"
 COLL_OUTPUTS_RDBMS = "outputs_rdbms"
 COLL_OUTPUTS_HTTP = "outputs_http"
 COLL_OUTPUTS_CLOUD = "outputs_cloud"
-COLL_OUTPUTS_STDOUT = "outputs_stdout"
 COLL_JOBS = "jobs"
 COLL_TABLES_RDBMS = "tables_rdbms"
 
@@ -511,7 +510,6 @@ class CBLStore:
                 COLL_OUTPUTS_RDBMS,
                 COLL_OUTPUTS_HTTP,
                 COLL_OUTPUTS_CLOUD,
-                COLL_OUTPUTS_STDOUT,
                 COLL_JOBS,
                 COLL_CHECKPOINTS,
                 COLL_DLQ,
@@ -1911,12 +1909,11 @@ class CBLStore:
         )
 
     def load_outputs(self, output_type: str) -> dict | None:
-        """Load output definitions for a given type (rdbms/http/cloud/stdout)."""
+        """Load output definitions for a given type (rdbms/http/cloud)."""
         coll_map = {
             "rdbms": COLL_OUTPUTS_RDBMS,
             "http": COLL_OUTPUTS_HTTP,
             "cloud": COLL_OUTPUTS_CLOUD,
-            "stdout": COLL_OUTPUTS_STDOUT,
         }
         if output_type not in coll_map:
             raise ValueError(f"Invalid output_type: {output_type}")
@@ -1957,12 +1954,11 @@ class CBLStore:
         return result
 
     def save_outputs(self, output_type: str, data: dict) -> None:
-        """Save output definitions for a given type (rdbms/http/cloud/stdout)."""
+        """Save output definitions for a given type (rdbms/http/cloud)."""
         coll_map = {
             "rdbms": COLL_OUTPUTS_RDBMS,
             "http": COLL_OUTPUTS_HTTP,
             "cloud": COLL_OUTPUTS_CLOUD,
-            "stdout": COLL_OUTPUTS_STDOUT,
         }
         if output_type not in coll_map:
             raise ValueError(f"Invalid output_type: {output_type}")
@@ -2903,14 +2899,8 @@ class CBLStore:
                     **output_cfg.get("s3", {}),
                 }
             elif mode == "stdout":
-                output_type = "stdout"
-                output_entry = {
-                    "id": "output_stdout",
-                    "name": "Migrated stdout output",
-                    "enabled": True,
-                    "output_format": output_cfg.get("output_format", "json"),
-                    "pretty_print": False,
-                }
+                # stdout output removed — skip migration (stdout is no longer supported)
+                logger.info("Skipping stdout output migration — stdout mode removed")
 
             if output_type and output_entry:
                 outputs_doc = {
@@ -2982,7 +2972,7 @@ class CBLStore:
             "enabled": True,
             "inputs": [inputs_changes_doc["src"][0]] if inputs_changes_doc else [],
             "outputs": [output_entry] if output_entry else [],
-            "output_type": output_type or "stdout",
+            "output_type": output_type or "http",
             "system": {
                 "threads": config.get("threads", 4),
                 "processing": config.get("processing", {}),
