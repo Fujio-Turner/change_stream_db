@@ -847,7 +847,7 @@ function drawArchArrows() {
   var sx = rx(src), sy = cy(src), wx = lx(work), wy = cy(work);
   var fk = colorKey(feedColor);
   html += '<path d="'+hBezier(sx,sy,wx,wy)+'" fill="none" stroke="'+feedColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+fk+')" filter="url(#glow_'+fk+')"/>';
-  html += rateBadge((sx+wx)/2, (sy+wy)/2, archRates.feed, feedColor);
+  html += rateBadge((sx+wx)/2, (sy+wy)/2, archRates.feed, feedColor, archRates.feedBytes);
 
   // ─── Worker → Attachments → Outputs (if attachments enabled) ───
   var attachEl = document.getElementById('archAttach');
@@ -877,7 +877,7 @@ function drawArchArrows() {
       if (active) {
         var ok = colorKey(activeOutColor);
         html += '<path d="'+hBezier(aRx,aCy,ox,oy)+'" fill="none" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')" filter="url(#glow_'+ok+')"/>';
-        html += rateBadge((aRx+ox)/2, (aCy+oy)/2, archRates.out, activeOutColor);
+        html += rateBadge((aRx+ox)/2, (aCy+oy)/2, archRates.out, activeOutColor, archRates.outBytes);
       } else {
         html += '<path d="'+hBezier(aRx,aCy,ox,oy)+'" fill="none" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
       }
@@ -893,7 +893,7 @@ function drawArchArrows() {
       if (active) {
         var ok = colorKey(activeOutColor);
         html += '<path d="'+hBezier(wxR,wyC,ox,oy)+'" fill="none" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')" filter="url(#glow_'+ok+')"/>';
-        html += rateBadge((wxR+ox)/2, (wyC+oy)/2, archRates.out, activeOutColor);
+        html += rateBadge((wxR+ox)/2, (wyC+oy)/2, archRates.out, activeOutColor, archRates.outBytes);
       } else {
         html += '<path d="'+hBezier(wxR,wyC,ox,oy)+'" fill="none" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
       }
@@ -917,16 +917,34 @@ function drawArchArrows() {
 }
 
 function fmtRate(r) {
-  if (r <= 0) return '0/s';
-  if (r >= 1e6) return (r / 1e6).toFixed(2) + 'M/s';
-  if (r >= 1e3) return (r / 1e3).toFixed(2) + 'K/s';
-  if (r >= 1)   return r.toFixed(1) + '/s';
-  return r.toFixed(1) + '/s';
+  if (r <= 0) return '0/ops';
+  if (r >= 1e6) return (r / 1e6).toFixed(2) + 'M/ops';
+  if (r >= 1e3) return (r / 1e3).toFixed(2) + 'K/ops';
+  if (r >= 1)   return r.toFixed(1) + '/ops';
+  return r.toFixed(1) + '/ops';
 }
 
-function rateBadge(x, y, rate, color) {
+function fmtByteRate(b) {
+  if (b <= 0) return '0/MBs';
+  var mb = b / (1024 * 1024);
+  if (mb >= 1000) return (mb / 1000).toFixed(2) + '/GBs';
+  if (mb >= 1) return mb.toFixed(1) + '/MBs';
+  return (b / 1024).toFixed(1) + '/KBs';
+}
+
+function rateBadge(x, y, rate, color, byteRate) {
   var label = fmtRate(rate);
-  var w = Math.max(64, label.length * 9.5 + 22);
+  var bLabel = (byteRate != null) ? fmtByteRate(byteRate) : null;
+  var topLabel = bLabel || label;
+  var maxLen = bLabel ? Math.max(label.length, bLabel.length) : label.length;
+  var w = Math.max(64, maxLen * 9.5 + 22);
+  if (bLabel) {
+    var h = 42;
+    return '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="14" fill="#1e1e2e" opacity="0.88"/>'
+         + '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="14" fill="none" stroke="'+color+'" stroke-width="1.5" opacity="0.5"/>'
+         + '<text x="'+x+'" y="'+(y-3)+'" text-anchor="middle" font-size="12" font-weight="700" font-family="monospace" fill="#e2e8f0">'+label+'</text>'
+         + '<text x="'+x+'" y="'+(y+13)+'" text-anchor="middle" font-size="12" font-weight="700" font-family="monospace" fill="#e2e8f0">'+bLabel+'</text>';
+  }
   var h = 28;
   return '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="14" fill="#1e1e2e" opacity="0.88"/>'
        + '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="14" fill="none" stroke="'+color+'" stroke-width="1.5" opacity="0.5"/>'
@@ -959,9 +977,13 @@ function updateArchData(m) {
   if (dt > 0 && archPrev._received != null) {
     archRates.feed = Math.max(0, received - archPrev._received) / dt;
     archRates.out  = Math.max(0, outOk - archPrev._outOk) / dt;
+    archRates.feedBytes = Math.max(0, bytesIn - (archPrev._bytesIn || 0)) / dt;
+    archRates.outBytes  = Math.max(0, bytesOut - (archPrev._bytesOut || 0)) / dt;
   }
   archPrev._received = received;
   archPrev._outOk    = outOk;
+  archPrev._bytesIn  = bytesIn;
+  archPrev._bytesOut = bytesOut;
 
   // Node stat labels
   var attachEnabled = cachedCfg && cachedCfg.attachments && cachedCfg.attachments.enabled;
