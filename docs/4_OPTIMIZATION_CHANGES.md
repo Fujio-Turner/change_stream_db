@@ -231,28 +231,16 @@ All 775 tests pass. Changes are backward-compatible.
 ## Optimization #6: Single-Doc `_bulk_get` Skip
 
 **File:** `rest/changes_http.py` (`fetch_docs`, line ~317)
-**Impact:** 🔴 High — Eliminates unnecessary `POST _bulk_get` for single-document batches
+**Impact:** 🔴 High — Eliminates `POST _bulk_get` envelope overhead for single-document batches
 
 ### Problem
-When only 1 document needs fetching (common in continuous/websocket real-time mode), the worker was still issuing a `POST _bulk_get` request — a multi-document API designed for batch operations. The overhead of constructing the bulk request body, parsing the response envelope, and handling the multi-doc response format is wasted on a single document.
+`_bulk_get` for a single document is a heavy operation: construct a JSON request body, POST it, parse the nested `results[].docs[].ok` response envelope — all for one document. A simple `GET /{doc_id}?rev={rev}` returns the document directly with no wrapping.
 
 ### Change
-```python
-elif len(batch) == 1:
-    row = batch[0]
-    doc_id = row["id"]
-    rev = row["changes"][0]["rev"] if row.get("changes") else ""
-    doc = await _fetch_single_doc_with_retry(
-        http, base_url, doc_id, rev, auth, headers, metrics=metrics
-    )
-    results = [doc] if doc is not None else []
-```
+When a batch contains exactly 1 document, the worker uses `GET /{keyspace}/{doc_id}?rev={rev}` with exponential backoff retry instead of `_bulk_get`. For batches of 2+ documents, `_bulk_get` is used as normal.
 
-### Result
-- Single-doc fetches use `GET /{keyspace}/{doc_id}?rev={rev}` — simpler request, smaller response
-- Includes exponential backoff retry (up to 5 attempts)
-- Falls through to `_bulk_get` only when batch has 2+ documents
-- Particularly impactful during steady-state streaming when changes arrive one at a time
+### Why This Works Now (Greedy Drain)
+Previously, this optimization caused a regression because the old 100ms/100-item stream buffering timer caused nearly *all* batches to be single-doc, turning everything into individual GETs. With the greedy drain strategy (Optimization #7), single-doc batches only occur when there genuinely is just one change available — the drain collects all rows already in the socket buffer before flushing.
 
 ---
 
@@ -269,18 +257,19 @@ WebSocket mode processed each incoming message immediately — one change at a t
 
 The continuous stream mode already had buffering (collecting rows until `get_batch_number` or `stream_batch_timeout_ms`), but WebSocket did not.
 
-### Change
-Added identical buffering to `_consume_websocket_stream`:
-- Buffer collects incoming change rows
-- Flushes when `get_batch_number` rows accumulate (default 100) **or** `stream_batch_timeout_ms` elapses (default 100ms)
-- Uses the same `_flush_buffer` → `_process_changes_batch` → `_maybe_backpressure` pipeline as continuous mode
+### Change (Updated — Greedy Drain)
+Both continuous and websocket streams now use a **greedy drain** strategy:
+- Block indefinitely on the first row/message
+- Once a row arrives, drain everything already in the socket buffer using a very short timeout (`stream_batch_timeout_ms`, default 5ms)
+- Flush as soon as nothing more is immediately available, or `get_batch_number` rows accumulate (default 100)
+- Uses the same `_flush_buffer` → `_process_changes_batch` → `_maybe_backpressure` pipeline
 - Buffer is flushed on `last_seq`, connection close, or error (no data loss)
 
 ### Result
-- **Before:** 100 individual messages → 100 `_bulk_get` calls + 100 checkpoint saves
-- **After:** 100 messages buffered → 1 `_bulk_get` call + 1 checkpoint save
-- Matches continuous mode's performance characteristics
-- `stream_batch_timeout_ms` (default 100ms) ensures low latency even during quiet periods
+- **Before:** Fixed 100ms/100-item timer caused artificial latency on idle streams
+- **After:** Zero delay for single docs, automatic batching under load
+- Self-tunes based on actual network throughput — no magic numbers
+- The original 100ms timer was replaced because it, combined with the single-doc GET optimization, caused nearly all fetches to become individual GETs.  With greedy drain, single-doc batches only occur when there genuinely is one change available, so the single-doc GET optimization now works as intended
 
 ---
 
@@ -368,9 +357,9 @@ async def _maybe_backpressure(metrics, shutdown_event,
 
 | # | Optimization | File | Impact |
 |---|---|---|---|
-| 6 | Single-doc `_bulk_get` skip | rest/changes_http.py | 🔴 High — skip bulk API for 1-doc batches |
-| 7 | WebSocket stream buffering | rest/changes_http.py | 🔴 High — batch messages like continuous mode |
+| 6 | Single-doc `_bulk_get` skip | rest/changes_http.py | 🔴 High — simple GET for 1-doc batches (works correctly with greedy drain) |
+| 7 | Greedy-drain stream buffering (continuous + WebSocket) | rest/changes_http.py | 🔴 High — zero-delay single docs, auto-batching under load |
 | 8 | orjson hot-path JSON parsing | rest/changes_http.py, rest/attachments.py | 🟡 Medium — 3–10× faster deserialization |
 | 9 | Output backpressure monitoring | rest/changes_http.py | 🔴 High — adaptive throttling prevents cascading failures |
 
-All changes are backward-compatible. Stream buffering and backpressure are automatic with no configuration required (defaults: `stream_batch_timeout_ms=100`, `backpressure_threshold=2.0×`, `max_delay=5s`).
+All changes are backward-compatible. Stream buffering and backpressure are automatic with no configuration required (defaults: `stream_batch_timeout_ms=5`, `backpressure_threshold=2.0×`, `max_delay=5s`).

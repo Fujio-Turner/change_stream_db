@@ -99,21 +99,22 @@ Docs are fetched in batches of `get_batch_number` (default 100) to avoid overwhe
 "get_batch_number": 100   // 950 docs = 10 batches (9×100 + 1×50)
 ```
 
-When a batch contains only 1 document, the worker skips `_bulk_get` entirely and fetches it directly via `GET /{keyspace}/{doc_id}?rev={rev}` with exponential backoff retry. This avoids the overhead of a `POST _bulk_get` request for a single document.
+When a batch contains only 1 document, the worker uses a simple `GET /{keyspace}/{doc_id}?rev={rev}` with exponential backoff retry instead of `_bulk_get`. This avoids the overhead of the bulk request/response envelope. With the greedy drain buffering strategy, single-doc batches only occur when there genuinely is just one change available.
 
-### Stream Buffering (`stream_batch_timeout_ms`)
+### Stream Buffering (`stream_batch_timeout_ms`) — Greedy Drain
 
-Continuous and WebSocket modes buffer incoming change rows before processing them as a batch, reducing per-message overhead and enabling more efficient `_bulk_get` calls:
+Continuous and WebSocket modes use a **greedy drain** strategy to buffer incoming change rows before processing them as a batch:
 
-- Rows accumulate in memory until either `get_batch_number` rows arrive (default 100) or `stream_batch_timeout_ms` elapses (default 100ms)
+- **Block indefinitely** on the first row/message (no CPU waste when idle)
+- Once a row arrives, **drain** everything already in the socket buffer using a very short timeout (`stream_batch_timeout_ms`, default 5ms)
+- Flush as soon as nothing more is immediately available, or `get_batch_number` rows accumulate (default 100)
 - On flush, the batch is processed identically to a longpoll batch (filter → fetch docs → forward → checkpoint)
-- If only 1 doc is in the batch, it uses the single-doc GET optimization (no `_bulk_get`)
 
-This means WebSocket mode no longer fires a `_bulk_get` for every individual message — instead it collects nearby messages and fetches them in a single request.
+This gives zero artificial delay for single-document changes and automatic batching under load — the system self-tunes based on actual network throughput.
 
 ```jsonc
 "changes_feed": {
-  "stream_batch_timeout_ms": 100  // flush partial buffer after 100ms (default)
+  "stream_batch_timeout_ms": 5  // greedy drain timeout in ms (default 5)
 }
 ```
 

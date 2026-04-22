@@ -344,7 +344,8 @@ async def _fetch_single_doc_with_retry(
 ) -> dict | None:
     """Fetch a single doc via GET with exponential backoff.
 
-    Used as a fallback when _bulk_get is missing documents.
+    Used for single-doc batches (cheaper than _bulk_get) and as a
+    fallback when _bulk_get is missing documents.
     """
     url = f"{base_url}/{doc_id}"
     params: dict[str, str] = {}
@@ -369,23 +370,23 @@ async def _fetch_single_doc_with_retry(
         except ClientHTTPError as exc:
             if exc.status in (401, 403):
                 raise
-            ic("bulk_get fallback: client error", doc_id, exc.status, attempt)
+            ic("single doc GET: client error", doc_id, exc.status, attempt)
             log_event(
                 logger,
                 "warn",
                 "HTTP",
-                "bulk_get fallback GET failed (client error)",
+                "single doc GET failed (client error)",
                 doc_id=doc_id,
                 status=exc.status,
                 attempt=attempt,
             )
         except Exception as exc:
-            ic("bulk_get fallback: error", doc_id, type(exc).__name__, attempt)
+            ic("single doc GET: error", doc_id, type(exc).__name__, attempt)
             log_event(
                 logger,
                 "warn",
                 "RETRY",
-                "bulk_get fallback GET failed",
+                "single doc GET failed",
                 doc_id=doc_id,
                 attempt=attempt,
                 error_detail=f"{type(exc).__name__}: {exc}",
@@ -394,12 +395,12 @@ async def _fetch_single_doc_with_retry(
             delay = min(backoff_base * (2 ** (attempt - 1)), 60)
             await asyncio.sleep(delay)
 
-    ic("bulk_get fallback: exhausted retries", doc_id)
+    ic("single doc GET: exhausted retries", doc_id)
     log_event(
         logger,
         "error",
         "HTTP",
-        "failed to get doc from failed _bulk_get after retries",
+        "single doc GET failed after retries",
         doc_id=doc_id,
         attempt=max_retries,
     )
@@ -1621,10 +1622,12 @@ async def _consume_continuous_stream(
             metrics.inc("stream_reconnects_total")
         failure_count = 0
 
-        # Buffering: collect rows for up to stream_batch_timeout_ms or
-        # get_batch_number docs before processing as one batch.
+        # Greedy-drain buffering: block on the first row, then drain
+        # everything already sitting in the socket buffer before flushing.
+        # This gives zero latency for single docs and automatic batching
+        # under load — no arbitrary timer or count needed.
         batch_max = proc_cfg.get("get_batch_number", 100)
-        batch_timeout = feed_cfg.get("stream_batch_timeout_ms", 100) / 1000.0
+        drain_timeout = feed_cfg.get("stream_batch_timeout_ms", 5) / 1000.0
         buffer: list[dict] = []
         buffer_last_seq = since
 
@@ -1667,58 +1670,63 @@ async def _consume_continuous_stream(
             await _maybe_backpressure(metrics, shutdown_event)
             return result
 
+        def _parse_line(raw_line: bytes) -> dict | None:
+            """Parse a raw line into a change row, returning None on skip."""
+            if metrics:
+                metrics.inc("bytes_received_total", len(raw_line))
+            line = raw_line.strip()
+            if not line:
+                return None  # heartbeat / blank line
+            try:
+                row = _json_loads(line)
+                if metrics:
+                    metrics.inc("stream_messages_total")
+                return row
+            except (json.JSONDecodeError, ValueError):
+                logger.warning("Continuous stream: unparseable line: %s", line[:200])
+                if metrics:
+                    metrics.inc("stream_parse_errors_total")
+                return None
+
         try:
             while not shutdown_event.is_set():
-                # If buffer has rows, use timeout; otherwise block indefinitely
-                read_timeout = batch_timeout if buffer else None
-                try:
-                    raw_line = await asyncio.wait_for(
-                        resp.content.readline(), timeout=read_timeout
-                    )
-                except asyncio.TimeoutError:
-                    # Batch timeout reached – flush what we have
-                    since, output_failed = await _flush_buffer()
-                    if output_failed:
-                        logger.warning(
-                            "Output failed during continuous stream – dropping to catch-up"
-                        )
-                        break
-                    continue
+                # Block indefinitely for the first row
+                raw_line = await resp.content.readline()
 
                 if raw_line == b"":
-                    # EOF – flush remaining buffer before exiting
                     if buffer:
                         await _flush_buffer()
                     logger.warning("Continuous stream closed by server (EOF)")
                     break
 
-                if metrics:
-                    metrics.inc("bytes_received_total", len(raw_line))
+                row = _parse_line(raw_line)
+                if row is not None:
+                    row_seq = str(row.get("seq", since))
+                    ic(row.get("id"), row_seq, "continuous row")
+                    buffer.append(row)
+                    buffer_last_seq = row_seq
 
-                line = raw_line.strip()
-                if not line:
-                    continue  # heartbeat / blank line
+                # Greedy drain: grab everything already in the socket buffer
+                while len(buffer) < batch_max:
+                    try:
+                        raw_line = await asyncio.wait_for(
+                            resp.content.readline(), timeout=drain_timeout
+                        )
+                    except asyncio.TimeoutError:
+                        break  # nothing waiting — flush now
 
-                try:
-                    row = _json_loads(line)
-                    if metrics:
-                        metrics.inc("stream_messages_total")
-                except (json.JSONDecodeError, ValueError):
-                    logger.warning(
-                        "Continuous stream: unparseable line: %s", line[:200]
-                    )
-                    if metrics:
-                        metrics.inc("stream_parse_errors_total")
-                    continue
+                    if raw_line == b"":
+                        break  # EOF
 
-                row_seq = str(row.get("seq", since))
-                ic(row.get("id"), row_seq, "continuous row")
+                    row = _parse_line(raw_line)
+                    if row is not None:
+                        row_seq = str(row.get("seq", since))
+                        ic(row.get("id"), row_seq, "continuous row")
+                        buffer.append(row)
+                        buffer_last_seq = row_seq
 
-                buffer.append(row)
-                buffer_last_seq = row_seq
-
-                # Flush if buffer is full
-                if len(buffer) >= batch_max:
+                # Flush whatever we collected
+                if buffer:
                     since, output_failed = await _flush_buffer()
                     if output_failed:
                         logger.warning(
@@ -1851,10 +1859,10 @@ async def _consume_websocket_stream(
             else:
                 ws_idle_timeout = max(timeout_ms * 2 / 1000.0, 300.0)
 
-            # Buffering: collect rows for up to stream_batch_timeout_ms or
-            # batch_max docs before processing as one batch (same as continuous).
+            # Greedy-drain buffering (same strategy as continuous stream):
+            # block on the first message, then drain whatever is ready.
             batch_max = proc_cfg.get("get_batch_number", 100)
-            batch_timeout = feed_cfg.get("stream_batch_timeout_ms", 100) / 1000.0
+            drain_timeout = feed_cfg.get("stream_batch_timeout_ms", 5) / 1000.0
             buffer: list[dict] = []
             buffer_last_seq = since
 
@@ -1898,81 +1906,106 @@ async def _consume_websocket_stream(
                 await _maybe_backpressure(metrics, shutdown_event)
                 return result
 
-            while not shutdown_event.is_set():
-                # If buffer has rows, use batch_timeout; otherwise use idle timeout
-                read_timeout = batch_timeout if buffer else ws_idle_timeout
+            def _parse_ws_msg(msg) -> tuple[list[dict], bool]:
+                """Parse a WS TEXT message. Returns (change_rows, is_last_seq)."""
+                if not msg.data or not msg.data.strip():
+                    return [], False
+                if metrics:
+                    metrics.inc("bytes_received_total", len(msg.data))
                 try:
-                    msg = await asyncio.wait_for(ws.receive(), timeout=read_timeout)
+                    parsed = _json_loads(msg.data)
+                    if metrics:
+                        metrics.inc("stream_messages_total")
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning(
+                        "WebSocket: unparseable message (length=%d)", len(msg.data)
+                    )
+                    if metrics:
+                        metrics.inc("stream_parse_errors_total")
+                    return [], False
+
+                # Check for final message: dict with "last_seq" and no "id"
+                if (
+                    isinstance(parsed, dict)
+                    and "last_seq" in parsed
+                    and "id" not in parsed
+                ):
+                    return [], True
+
+                rows = parsed if isinstance(parsed, list) else [parsed]
+                change_rows = [r for r in rows if isinstance(r, dict) and "id" in r]
+                return change_rows, False
+
+            while not shutdown_event.is_set():
+                # Block for the first message (use idle timeout for liveness)
+                try:
+                    msg = await asyncio.wait_for(ws.receive(), timeout=ws_idle_timeout)
                 except asyncio.TimeoutError:
-                    if buffer:
-                        # Batch timeout reached – flush what we have
-                        since, output_failed = await _flush_ws_buffer()
-                        payload["since"] = since
-                        if output_failed:
-                            logger.warning(
-                                "Output failed during WebSocket stream – reconnecting"
-                            )
-                            break
-                        continue
-                    else:
-                        # Idle timeout – no data at all
-                        failure_count += 1
-                        logger.warning(
-                            "WebSocket idle timeout (%.0fs) – reconnecting (failure #%d)",
-                            ws_idle_timeout,
-                            failure_count,
-                        )
-                        if metrics:
-                            metrics.inc("poll_errors_total")
-                        break
+                    failure_count += 1
+                    logger.warning(
+                        "WebSocket idle timeout (%.0fs) – reconnecting (failure #%d)",
+                        ws_idle_timeout,
+                        failure_count,
+                    )
+                    if metrics:
+                        metrics.inc("poll_errors_total")
+                    break
 
                 if msg.type == aiohttp.WSMsgType.TEXT:
-                    # SG sends empty frames as heartbeats – skip them
-                    if not msg.data or not msg.data.strip():
-                        continue
-
-                    if metrics:
-                        metrics.inc("bytes_received_total", len(msg.data))
-
-                    try:
-                        parsed = _json_loads(msg.data)
-                        if metrics:
-                            metrics.inc("stream_messages_total")
-                    except (json.JSONDecodeError, ValueError):
-                        logger.warning(
-                            "WebSocket: unparseable message (length=%d)", len(msg.data)
-                        )
-                        if metrics:
-                            metrics.inc("stream_parse_errors_total")
-                        continue
-
-                    # SG may send a single dict or an array of change rows
-                    rows = parsed if isinstance(parsed, list) else [parsed]
-
-                    # Check for final message: dict with "last_seq" and no "id"
-                    if (
-                        isinstance(parsed, dict)
-                        and "last_seq" in parsed
-                        and "id" not in parsed
-                    ):
-                        # Flush remaining buffer before closing
+                    change_rows, is_last = _parse_ws_msg(msg)
+                    if is_last:
                         if buffer:
                             await _flush_ws_buffer()
-                        since = str(parsed["last_seq"])
+                        since = str(_json_loads(msg.data)["last_seq"])
                         ic(since, "websocket last_seq received")
                         payload["since"] = since
                         break
+                    if change_rows:
+                        buffer.extend(change_rows)
+                        buffer_last_seq = str(change_rows[-1].get("seq", since))
 
-                    # Filter out any last_seq-only sentinel dicts in an array
-                    change_rows = [r for r in rows if isinstance(r, dict) and "id" in r]
-                    if not change_rows:
+                    # Greedy drain: grab more messages already queued
+                    while len(buffer) < batch_max:
+                        try:
+                            msg = await asyncio.wait_for(
+                                ws.receive(), timeout=drain_timeout
+                            )
+                        except asyncio.TimeoutError:
+                            break  # nothing waiting — flush now
+
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            change_rows, is_last = _parse_ws_msg(msg)
+                            if is_last:
+                                if buffer:
+                                    await _flush_ws_buffer()
+                                since = str(_json_loads(msg.data)["last_seq"])
+                                ic(since, "websocket last_seq received")
+                                payload["since"] = since
+                                break
+                            if change_rows:
+                                buffer.extend(change_rows)
+                                buffer_last_seq = str(change_rows[-1].get("seq", since))
+                        elif msg.type in (
+                            aiohttp.WSMsgType.CLOSED,
+                            aiohttp.WSMsgType.CLOSING,
+                        ):
+                            break
+                        elif msg.type == aiohttp.WSMsgType.ERROR:
+                            break
+                    else:
+                        # Inner while finished normally (no break) — flush
+                        if buffer:
+                            since, output_failed = await _flush_ws_buffer()
+                            payload["since"] = since
+                            if output_failed:
+                                logger.warning(
+                                    "Output failed during WebSocket stream – reconnecting"
+                                )
+                                break
                         continue
 
-                    buffer.extend(change_rows)
-                    buffer_last_seq = str(change_rows[-1].get("seq", since))
-
-                    # Flush if buffer is full
-                    if len(buffer) >= batch_max:
+                    # Inner while broke out — flush and decide next step
+                    if buffer:
                         since, output_failed = await _flush_ws_buffer()
                         payload["since"] = since
                         if output_failed:

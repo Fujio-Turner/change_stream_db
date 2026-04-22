@@ -346,21 +346,33 @@ In continuous and websocket modes the worker uses a two-phase approach:
 The catch-up phase re-uses the same chunked logic as the initial sync
 but with the user's `active_only` and `include_docs` settings.
 
-### Stream Buffering (Continuous & WebSocket)
+### Stream Buffering (Continuous & WebSocket) — Greedy Drain
 
-Both continuous and websocket streams use identical buffering logic.
-Incoming change rows are collected in a buffer and flushed when either
-condition is met:
+Both continuous and websocket streams use identical **greedy drain**
+buffering logic.  Instead of a fixed timer, the worker uses the socket's
+state to decide when to flush:
 
-- **Batch size reached:** `get_batch_number` docs accumulate (default 100)
-- **Timeout elapsed:** `stream_batch_timeout_ms` elapses (default 100ms)
+1. **Block indefinitely** on the first row/message (no CPU waste when idle).
+2. Once a row arrives, **drain** everything already sitting in the socket
+   buffer using a very short timeout (`stream_batch_timeout_ms`, default 5ms).
+3. As soon as nothing more is immediately available **or** `get_batch_number`
+   rows accumulate (default 100), flush the batch.
 
-This means individual change events — including single-doc websocket
-messages — are batched together for more efficient `_bulk_get` calls.
+This gives:
 
-> **History:** Previously, websocket mode processed each message
-> individually with no buffering, which caused excessive single-doc
-> fetches.  The unified buffering strategy eliminates this inefficiency.
+- **Zero artificial delay** for single-document changes (low-traffic periods).
+- **Natural batching under load** — rows arriving back-to-back are drained
+  into one batch before flushing.
+- **No magic numbers** — the system self-tunes based on actual network throughput.
+
+> **History:** The original implementation used a fixed 100ms/100-item
+> "whichever comes first" timer.  This added unnecessary latency on idle
+> streams and, combined with the single-doc GET optimization, caused
+> nearly all fetches to become individual GETs instead of `_bulk_get`.
+> The greedy drain strategy fixes the root cause: single-doc batches now
+> only occur when there genuinely is one change available, so the
+> single-doc GET optimization works as intended — lighter than `_bulk_get`
+> for true singletons, while bursts are naturally batched.
 
 ---
 
@@ -374,10 +386,13 @@ worker must fetch full document bodies separately.
 - Eligible change rows are grouped into batches of `get_batch_number`
   (default 100).
 - Each batch is sent as a `POST _bulk_get` request.
-- **Single-doc optimization:** When a batch contains only one document,
-  the worker skips `_bulk_get` entirely and fetches the document directly
-  via `GET /{keyspace}/{doc_id}?rev={rev}`.  This avoids the overhead of
-  a `POST _bulk_get` request for a single document.
+- **Single-doc optimization:** When a batch contains exactly one document,
+  the worker uses a simple `GET /{keyspace}/{doc_id}?rev={rev}` instead
+  of `_bulk_get`.  This avoids the overhead of constructing and parsing
+  the bulk request/response envelope for a single document.  Combined
+  with the greedy drain buffering strategy, single-doc batches only occur
+  when there genuinely is just one change — not as a side effect of
+  timer-based batching.
 - If the response is missing documents, the worker falls back to
   individual `GET` requests for the missing IDs.
 
@@ -463,8 +478,8 @@ two risks:
 |---|---|
 | **`throttle_feed`** (default 5,000) | Caps each `_changes` request to N rows.  The worker loops immediately for the next bite, so throughput stays high but memory per batch is bounded. |
 | **`continuous_catchup_limit`** (default 5,000) | Same cap for the catch-up phase of continuous/websocket mode. |
-| **Continuous mode buffered streaming** | In Phase 2, incoming changes are collected in a buffer and flushed when `get_batch_number` docs accumulate or `stream_batch_timeout_ms` elapses.  TCP backpressure naturally slows the server.  Memory stays flat regardless of flood size. |
-| **WebSocket mode buffered streaming** | Same buffering as continuous mode.  Incoming websocket messages are batched together before processing, preventing excessive single-doc fetches. |
+| **Continuous mode greedy-drain buffering** | In Phase 2, the worker blocks on the first row, then drains everything already in the socket buffer (5ms drain timeout) before flushing as a batch.  This self-tunes: high load → big batches, low load → instant single-doc processing.  TCP backpressure naturally slows the server.  Memory stays flat regardless of flood size. |
+| **WebSocket mode greedy-drain buffering** | Same greedy-drain buffering as continuous mode.  Incoming websocket messages are drained and batched together before processing. |
 | **`every_n_docs` + `sequential`** | Sub-batch checkpointing limits replay on crash (e.g., `every_n_docs: 1000` means at most 1,000 docs replayed). |
 | **Checkpoint hold** | The checkpoint only advances after a batch is fully processed.  If the worker crashes or OOMs, it restarts from `since=<last_saved_seq>` — no data is lost. |
 
@@ -572,7 +587,7 @@ The following `config.json` fields control `_changes` processing:
     "http_timeout_seconds": 300,
     "throttle_feed": 5000,
     "flood_threshold": 10000,
-    "stream_batch_timeout_ms": 100,
+    "stream_batch_timeout_ms": 5,
     "channels": []
   },
   "processing": {
@@ -598,7 +613,7 @@ The following `config.json` fields control `_changes` processing:
 | `get_batch_number` | Batch size for `_bulk_get` requests (default 100) |
 | `active_only` | Forced to `true` during initial sync (Couchbase); ignored for CouchDB |
 | `flood_threshold` | Batch size above which a FLOOD warning is logged and `flood_batches_total` metric is incremented (default 10,000) |
-| `stream_batch_timeout_ms` | How long the stream buffer waits before flushing a partial batch in continuous/websocket mode (default 100ms) |
+| `stream_batch_timeout_ms` | Greedy drain timeout: after the first row arrives, how long to wait for more rows already in the socket buffer before flushing (default 5ms) |
 | `include_docs` | Forced to `false` during initial sync |
 | `feed_type` | Overridden to `normal` during initial sync |
 
