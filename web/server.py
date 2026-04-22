@@ -33,6 +33,13 @@ from rest.api_v2 import (
     api_delete_job,
     api_refresh_job_input,
     api_refresh_job_output,
+    api_put_job_mapping,
+    api_get_tables_rdbms,
+    api_post_tables_rdbms,
+    api_get_table_rdbms_entry,
+    api_put_table_rdbms_entry,
+    api_delete_table_rdbms_entry,
+    api_get_table_rdbms_used_by,
 )
 
 logger = logging.getLogger("changes_worker")
@@ -100,6 +107,14 @@ async def page_wizard(request):
 
 async def page_jobs(request):
     return web.FileResponse(WEB / "templates" / "jobs.html")
+
+
+async def page_inputs(request):
+    return web.FileResponse(WEB / "templates" / "inputs.html")
+
+
+async def page_outputs(request):
+    return web.FileResponse(WEB / "templates" / "outputs.html")
 
 
 async def page_help(request):
@@ -783,6 +798,33 @@ async def get_metrics(request):
                 )
     except Exception as exc:
         return json_response({"error": "metrics_unreachable", "detail": str(exc)})
+
+
+# --- Maintenance API ---
+
+
+async def post_maintenance(request):
+    """POST /api/maintenance — Run CBL maintenance now (compact + optimize)."""
+    if not USE_CBL:
+        return error_response("CBL is not enabled", 503)
+    try:
+        store = CBLStore()
+        results = {}
+        results["compact"] = store.compact()
+        results["reindex"] = store.reindex()
+        results["optimize"] = store.optimize()
+        all_ok = all(results.values())
+        return json_response(
+            {
+                "ok": all_ok,
+                "results": results,
+                "message": "maintenance completed"
+                if all_ok
+                else "some operations failed",
+            }
+        )
+    except Exception as exc:
+        return json_response({"ok": False, "error": str(exc)}, status=500)
 
 
 # --- Worker Control API ---
@@ -2149,6 +2191,8 @@ def create_app():
     app.router.add_get("/", page_index)
     app.router.add_get("/settings", page_config)
     app.router.add_get("/jobs", page_jobs)
+    app.router.add_get("/inputs", page_inputs)
+    app.router.add_get("/outputs", page_outputs)
     app.router.add_get("/schema", page_schema)
     app.router.add_get("/glossary", page_transforms)
     app.router.add_get("/wizard", page_wizard)
@@ -2183,6 +2227,9 @@ def create_app():
     app.router.add_post("/api/dlq/{id}/retry", retry_dlq_entry)
     app.router.add_delete("/api/dlq/{id}", delete_dlq_entry)
     app.router.add_delete("/api/dlq", clear_dlq)
+
+    # Maintenance API
+    app.router.add_post("/api/maintenance", post_maintenance)
 
     # Status API
     app.router.add_get("/api/status", get_status)
@@ -2254,6 +2301,15 @@ def create_app():
     app.router.add_delete("/api/v2/jobs/{id}", api_delete_job)
     app.router.add_post("/api/v2/jobs/{id}/refresh-input", api_refresh_job_input)
     app.router.add_post("/api/v2/jobs/{id}/refresh-output", api_refresh_job_output)
+    app.router.add_put("/api/v2/jobs/{id}/mapping", api_put_job_mapping)
+
+    # API v2.0 - RDBMS Table Definitions
+    app.router.add_get("/api/v2/tables_rdbms", api_get_tables_rdbms)
+    app.router.add_post("/api/v2/tables_rdbms", api_post_tables_rdbms)
+    app.router.add_get("/api/v2/tables_rdbms/{id}/used-by", api_get_table_rdbms_used_by)
+    app.router.add_get("/api/v2/tables_rdbms/{id}", api_get_table_rdbms_entry)
+    app.router.add_put("/api/v2/tables_rdbms/{id}", api_put_table_rdbms_entry)
+    app.router.add_delete("/api/v2/tables_rdbms/{id}", api_delete_table_rdbms_entry)
 
     # Static files
     app.router.add_static("/static/", WEB / "static", show_index=False)

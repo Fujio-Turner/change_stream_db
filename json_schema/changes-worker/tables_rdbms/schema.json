@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/changes-worker/tables_rdbms.schema.json",
+  "title": "RDBMS Table Definitions",
+  "description": "Reusable library of RDBMS table definitions (DDL + parsed columns). Tables are copied into jobs on selection; the job owns its copy. Supports parent/child relationships via foreign keys.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "tables_rdbms",
+      "description": "Document type identifier"
+    },
+    "tables": {
+      "type": "array",
+      "description": "Array of RDBMS table definitions",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this table definition (e.g., tbl-orders)"
+          },
+          "name": {
+            "type": "string",
+            "description": "SQL table name in the target database (e.g., orders)"
+          },
+          "engine_hint": {
+            "type": ["string", "null"],
+            "enum": ["postgres", "mysql", "mssql", "oracle", null],
+            "description": "Which RDBMS engine the DDL was written for. Does not prevent use with a different engine."
+          },
+          "sql": {
+            "type": ["string", "null"],
+            "description": "Raw CREATE TABLE DDL statement. Executed against the target DB to create/alter the table."
+          },
+          "columns": {
+            "type": "array",
+            "description": "Parsed column definitions extracted from DDL or DB introspection. Used by the UI for column pickers, mapping editor, and dry-run type validation.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Column name"
+                },
+                "type": {
+                  "type": "string",
+                  "description": "SQL data type (e.g., TEXT, INTEGER, NUMERIC(10,2), VARCHAR(255))"
+                },
+                "primary_key": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Whether this column is part of the primary key"
+                },
+                "nullable": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Whether this column allows NULL values"
+                }
+              },
+              "required": ["name", "type"],
+              "additionalProperties": true
+            }
+          },
+          "parent_table": {
+            "type": ["string", "null"],
+            "description": "ID of the parent table in this library (e.g., tbl-orders). Used for auto-suggesting child tables when the parent is added to a job."
+          },
+          "foreign_key": {
+            "type": ["object", "null"],
+            "description": "Foreign key relationship to the parent table",
+            "properties": {
+              "column": {
+                "type": "string",
+                "description": "Column name in this child table that references the parent (e.g., order_doc_id)"
+              },
+              "references_table": {
+                "type": "string",
+                "description": "SQL table name of the parent (e.g., orders)"
+              },
+              "references_column": {
+                "type": "string",
+                "description": "Column name in the parent table being referenced (e.g., doc_id)"
+              }
+            },
+            "required": ["column", "references_table", "references_column"],
+            "additionalProperties": false
+          },
+          "meta": {
+            "type": ["object", "null"],
+            "description": "Metadata about this table definition",
+            "properties": {
+              "created_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "ISO 8601 timestamp when this table was first defined"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "ISO 8601 timestamp of last modification"
+              },
+              "source": {
+                "type": "string",
+                "enum": ["ddl_upload", "db_introspect", "manual", "migration_v1"],
+                "description": "How this table definition was created"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "required": ["id", "name"],
+        "additionalProperties": true
+      }
+    },
+    "meta": {
+      "type": ["object", "null"],
+      "description": "Document-level metadata for tracking and audit purposes"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update to this document"
+    }
+  },
+  "required": ["type", "tables"],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "type": "tables_rdbms",
+      "tables": [
+        {
+          "id": "tbl-orders",
+          "name": "orders",
+          "engine_hint": "postgres",
+          "sql": "CREATE TABLE IF NOT EXISTS orders (doc_id TEXT PRIMARY KEY, rev TEXT, status TEXT, customer_id TEXT, total NUMERIC(10,2))",
+          "columns": [
+            { "name": "doc_id", "type": "TEXT", "primary_key": true, "nullable": false },
+            { "name": "rev", "type": "TEXT", "primary_key": false, "nullable": true },
+            { "name": "status", "type": "TEXT", "primary_key": false, "nullable": true },
+            { "name": "customer_id", "type": "TEXT", "primary_key": false, "nullable": true },
+            { "name": "total", "type": "NUMERIC(10,2)", "primary_key": false, "nullable": true }
+          ],
+          "meta": {
+            "created_at": "2026-04-20T10:00:00Z",
+            "updated_at": "2026-04-22T14:30:00Z",
+            "source": "ddl_upload"
+          }
+        },
+        {
+          "id": "tbl-order-items",
+          "name": "order_items",
+          "engine_hint": "postgres",
+          "parent_table": "tbl-orders",
+          "foreign_key": {
+            "column": "order_doc_id",
+            "references_table": "orders",
+            "references_column": "doc_id"
+          },
+          "sql": "CREATE TABLE IF NOT EXISTS order_items (id SERIAL PRIMARY KEY, order_doc_id TEXT REFERENCES orders(doc_id), product_id TEXT, qty INTEGER, price NUMERIC(10,2))",
+          "columns": [
+            { "name": "id", "type": "SERIAL", "primary_key": true, "nullable": false },
+            { "name": "order_doc_id", "type": "TEXT", "primary_key": false, "nullable": false },
+            { "name": "product_id", "type": "TEXT", "primary_key": false, "nullable": true },
+            { "name": "qty", "type": "INTEGER", "primary_key": false, "nullable": true },
+            { "name": "price", "type": "NUMERIC(10,2)", "primary_key": false, "nullable": true }
+          ],
+          "meta": {
+            "created_at": "2026-04-20T10:00:00Z",
+            "updated_at": "2026-04-22T14:30:00Z",
+            "source": "ddl_upload"
+          }
+        }
+      ],
+      "updated_at": "2026-04-22T14:30:00Z"
+    }
+  ]
+}

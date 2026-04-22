@@ -24,15 +24,16 @@ git checkout -b release-x.x.x
 
 ### HTML / Web UI
 
-Grep for the **old** version string across all HTML files and update any
+| File | Location | What to change |
+|---|---|---|
+| `web/static/js/sidebar.js` | line ~100 | `<div class="sidebar-version">vx.x.x</div>` |
+
+Grep for the **old** version string across all HTML and JS files and update any
 occurrences (footers, titles, badges, etc.):
 
 ```bash
-grep -rn "OLD_VERSION" web/templates/ metrics.html
+grep -rn "OLD_VERSION" web/ metrics.html
 ```
-
-> Currently there are no hard-coded version strings in the HTML templates, but
-> always double-check after adding new pages.
 
 ### Documentation
 

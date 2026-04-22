@@ -104,7 +104,24 @@ Defines console/logging output.
 
 ---
 
-#### 6. **jobs**
+#### 6. **tables_rdbms**
+**Location**: `json_schema/changes-worker/tables_rdbms/schema.json`
+
+Reusable library of RDBMS table definitions. Stores raw DDL and parsed column metadata. Tables are copied into jobs on selection — the job owns its copy.
+
+**Key Fields**:
+- `id`: Unique table definition ID (e.g., `tbl-orders`)
+- `name`: SQL table name in the target database
+- `engine_hint`: Which RDBMS engine the DDL targets (postgres, mysql, mssql, oracle)
+- `sql`: Raw `CREATE TABLE` DDL statement
+- `columns[]`: Parsed column definitions (name, type, primary_key, nullable)
+- `parent_table`: ID of parent table for FK relationships
+- `foreign_key`: FK column, referenced table, referenced column
+- `meta.source`: How the definition was created (ddl_upload, db_introspect, manual, migration_v1)
+
+---
+
+#### 7. **jobs**
 **Location**: `json_schema/changes-worker/jobs/schema.json`
 
 Defines data pipeline jobs connecting inputs to outputs.
@@ -124,7 +141,7 @@ Defines data pipeline jobs connecting inputs to outputs.
 
 ### Runtime Collections
 
-#### 7. **checkpoints**
+#### 8. **checkpoints**
 **Location**: `json_schema/changes-worker/checkpoints/schema.json`
 
 Tracks the last processed sequence number for resuming change feeds.
@@ -137,7 +154,7 @@ Tracks the last processed sequence number for resuming change feeds.
 
 ---
 
-#### 8. **dlq** (Dead Letter Queue)
+#### 9. **dlq** (Dead Letter Queue)
 **Location**: `json_schema/changes-worker/dlq/schema.json`
 
 Stores documents that failed processing for later retry or analysis.
@@ -156,7 +173,7 @@ Stores documents that failed processing for later retry or analysis.
 
 ---
 
-#### 9. **data_quality**
+#### 10. **data_quality**
 **Location**: `json_schema/changes-worker/data_quality/schema.json`
 
 Tracks data quality metrics and anomalies.
@@ -169,7 +186,7 @@ Tracks data quality metrics and anomalies.
 
 ---
 
-#### 10. **enrichments**
+#### 11. **enrichments**
 **Location**: `json_schema/changes-worker/enrichments/schema.json`
 
 Stores enrichment rules and transformation metadata.
@@ -187,7 +204,7 @@ Stores enrichment rules and transformation metadata.
 
 ### Infrastructure Collections
 
-#### 11. **config**
+#### 12. **config**
 **Location**: `json_schema/changes-worker/config/schema.json`
 
 Global system configuration.
@@ -204,7 +221,7 @@ Global system configuration.
 
 ### Auth & Identity Collections (Future)
 
-#### 12. **users**
+#### 13. **users**
 **Location**: `json_schema/changes-worker/users/schema.json`
 
 User accounts for authentication and access control.
@@ -219,7 +236,7 @@ User accounts for authentication and access control.
 
 ---
 
-#### 13. **sessions**
+#### 14. **sessions**
 **Location**: `json_schema/changes-worker/sessions/schema.json`
 
 User session tokens and authentication state.
@@ -235,7 +252,7 @@ User session tokens and authentication state.
 
 ### Observability Collections (Future)
 
-#### 14. **audit_log**
+#### 15. **audit_log**
 **Location**: `json_schema/changes-worker/audit_log/schema.json`
 
 Audit trail for tracking changes and operations.
@@ -251,7 +268,7 @@ Audit trail for tracking changes and operations.
 
 ---
 
-#### 15. **notifications**
+#### 16. **notifications**
 **Location**: `json_schema/changes-worker/notifications/schema.json`
 
 System notifications and alerts.
@@ -270,7 +287,7 @@ System notifications and alerts.
 
 ### Legacy Collections
 
-#### 16. **mappings** (Deprecated)
+#### 17. **mappings** (Deprecated)
 **Location**: `json_schema/changes-worker/mappings/schema.json`
 
 Legacy schema mapping. **Deprecated in v2.0** — mappings now embedded in jobs.

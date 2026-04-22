@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Changes Worker -- Config Editor</title>
+  <title>PouchPipes -- Config Editor</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
@@ -811,6 +811,36 @@
               <div class="mt-3">
                 <a href="/schema" class="btn btn-sm btn-outline">Edit Schema Mappings →</a>
               </div>
+
+              <!-- Data Validation (optional) -->
+              <div class="divider text-xs opacity-60">Data Validation & Coercion</div>
+              <div class="form-control mb-3">
+                <label class="label cursor-pointer justify-start gap-4">
+                  <span class="label-text">Auto-Validate Against Table Schema</span>
+                  <input type="checkbox" id="output_db_validation_enabled" onchange="toggleValidationOptions()" class="toggle toggle-success" />
+                </label>
+                <p class="text-xs opacity-70 mt-2">Automatically validate and coerce incoming data against CREATE TABLE definitions. Track original values before transformation.</p>
+              </div>
+              <div id="output_db_validation_options" class="hidden pl-4 border-l-2 border-primary">
+                <div class="form-control mb-3">
+                  <label class="label cursor-pointer justify-start gap-4">
+                    <span class="label-text">Strict Mode (reject unknown columns)</span>
+                    <input type="checkbox" id="output_db_validation_strict" class="toggle toggle-sm" />
+                  </label>
+                </div>
+                <div class="form-control mb-3">
+                  <label class="label cursor-pointer justify-start gap-4">
+                    <span class="label-text">Track Original Values (in logs)</span>
+                    <input type="checkbox" id="output_db_validation_track_originals" class="toggle toggle-sm" checked />
+                  </label>
+                </div>
+                <div class="form-control mb-3">
+                  <label class="label cursor-pointer justify-start gap-4">
+                    <span class="label-text">Send invalid docs to DLQ</span>
+                    <input type="checkbox" id="output_db_validation_dlq_on_error" class="toggle toggle-sm" checked />
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1566,6 +1596,14 @@
             <div class="label"><span class="label-text">Maintenance Interval (hours)</span></div>
             <input type="number" id="cbl_maintenance_interval" class="input input-bordered w-full" min="1" step="0.5" value="24" />
           </label>
+
+          <div class="flex items-center gap-3 mt-4">
+            <button id="btnMaintenanceNow" class="btn btn-ghost btn-sm gap-2" onclick="runMaintenanceNow()">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+              Maintenance Now
+            </button>
+            <span id="maintenanceNowStatus" class="text-sm opacity-60"></span>
+          </div>
         </div>
       </div>
 
@@ -1976,6 +2014,11 @@
     document.getElementById('output_db_columns_fields').classList.toggle('hidden', mode !== 'columns');
   }
 
+  function toggleValidationOptions() {
+    var enabled = document.getElementById('output_db_validation_enabled').checked;
+    document.getElementById('output_db_validation_options').classList.toggle('hidden', !enabled);
+  }
+
   // Show toast
   function showToast(message, type) {
     var container = document.getElementById('toastContainer');
@@ -2119,6 +2162,14 @@
     document.getElementById('output_db_schema_mappings_path').value = sm.path || 'mappings/';
     document.getElementById('output_db_schema_mappings_default_mode').value = sm.default_mode || 'jsonb';
     document.getElementById('output_db_schema_mappings_strict').checked = sm.strict || false;
+
+    // Data validation config
+    var val = db.validation || {};
+    document.getElementById('output_db_validation_enabled').checked = val.enabled || false;
+    document.getElementById('output_db_validation_strict').checked = val.strict || false;
+    document.getElementById('output_db_validation_track_originals').checked = val.track_originals ?? true;
+    document.getElementById('output_db_validation_dlq_on_error').checked = val.dlq_on_error ?? true;
+    toggleValidationOptions();
 
     toggleOutputFields();
     toggleDbMappingFields();
@@ -2472,6 +2523,13 @@
               default_mode: document.getElementById('output_db_schema_mappings_default_mode').value,
               strict: document.getElementById('output_db_schema_mappings_strict').checked
             };
+            // Data validation config (available for columns mode)
+            dbCfg.validation = {
+              enabled: document.getElementById('output_db_validation_enabled').checked,
+              strict: document.getElementById('output_db_validation_strict').checked,
+              track_originals: document.getElementById('output_db_validation_track_originals').checked,
+              dlq_on_error: document.getElementById('output_db_validation_dlq_on_error').checked
+            };
           }
           o.db = dbCfg;
         }
@@ -2731,15 +2789,14 @@
       });
       var data = await res.json();
       if (data.error) {
-        status.textContent = (data.detail || data.error);
-        status.className = 'text-sm text-error';
+        showToast(data.detail || data.error, 'error');
       } else {
-        status.textContent = 'Connected! Got ' + (data.pool_size || 1) + ' docs';
-        status.className = 'text-sm text-success';
+        showToast('✓ Connected! Got ' + (data.pool_size || 1) + ' docs', 'success');
       }
+      status.textContent = '';
     } catch (e) {
-      status.textContent = e.message;
-      status.className = 'text-sm text-error';
+      showToast(e.message, 'error');
+      status.textContent = '';
     }
     btn.classList.remove('loading');
   }
@@ -2768,15 +2825,14 @@
       });
       var data = await res.json();
       if (data.ok) {
-        status.textContent = 'Reachable! HTTP ' + (data.status || '200');
-        status.className = 'text-sm text-success';
+        showToast('✓ Reachable! HTTP ' + (data.status || '200'), 'success');
       } else {
-        status.textContent = (data.error || 'Unreachable');
-        status.className = 'text-sm text-error';
+        showToast(data.error || 'Unreachable', 'error');
       }
+      status.textContent = '';
     } catch (e) {
-      status.textContent = e.message;
-      status.className = 'text-sm text-error';
+      showToast(e.message, 'error');
+      status.textContent = '';
     }
     btn.classList.remove('loading');
   }
@@ -2805,15 +2861,14 @@
       });
       var data = await res.json();
       if (data.ok) {
-        status.textContent = 'Connected to ' + (document.getElementById('output_db_engine').value) + '!';
-        status.className = 'text-sm text-success';
+        showToast('✓ Connected to ' + (document.getElementById('output_db_engine').value) + '!', 'success');
       } else {
-        status.textContent = (data.error || 'Connection failed');
-        status.className = 'text-sm text-error';
+        showToast(data.error || 'Connection failed', 'error');
       }
+      status.textContent = '';
     } catch (e) {
-      status.textContent = e.message;
-      status.className = 'text-sm text-error';
+      showToast(e.message, 'error');
+      status.textContent = '';
     }
     btn.classList.remove('loading');
   }
@@ -2841,15 +2896,38 @@
       });
       var data = await res.json();
       if (data.ok) {
-        status.textContent = 'Connected to bucket!';
-        status.className = 'text-sm text-success';
+        showToast('✓ Connected to bucket!', 'success');
       } else {
-        status.textContent = (data.error || 'Connection failed');
-        status.className = 'text-sm text-error';
+        showToast(data.error || 'Connection failed', 'error');
+      }
+      status.textContent = '';
+    } catch (e) {
+      showToast(e.message, 'error');
+      status.textContent = '';
+    }
+    btn.classList.remove('loading');
+  }
+
+  // ── Maintenance Now ──
+  async function runMaintenanceNow() {
+    var btn = document.getElementById('btnMaintenanceNow');
+    var status = document.getElementById('maintenanceNowStatus');
+    btn.classList.add('loading');
+    status.textContent = 'Running…';
+    try {
+      var res = await fetch('/api/maintenance', { method: 'POST' });
+      var data = await res.json();
+      if (data.ok) {
+        var ops = Object.keys(data.results || {}).filter(function(k){ return data.results[k]; }).join(', ');
+        showToast('✓ Maintenance completed' + (ops ? ' (' + ops + ')' : ''), 'success');
+        status.textContent = '';
+      } else {
+        showToast('✗ ' + (data.error || data.message || 'Maintenance failed'), 'error');
+        status.textContent = '';
       }
     } catch (e) {
-      status.textContent = e.message;
-      status.className = 'text-sm text-error';
+      showToast('✗ ' + e.message, 'error');
+      status.textContent = '';
     }
     btn.classList.remove('loading');
   }

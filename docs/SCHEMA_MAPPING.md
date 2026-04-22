@@ -6,6 +6,7 @@ This document describes how the `schema/` module maps Couchbase JSON documents f
 - [`RDBMS_PLAN.md`](RDBMS_PLAN.md) -- RDBMS output architecture, config, engine-specific notes
 - [`RDBMS_IMPLEMENTATION.md`](RDBMS_IMPLEMENTATION.md) -- Implementation guide: single-table vs. multi-table writes, transactions, insert-vs-update strategy
 - [`ADMIN_UI.md`](ADMIN_UI.md) -- Schema Mappings visual editor with drag-and-drop field mapping
+- [`SCHEMA_MAPPING_IN_JOBS.md`](SCHEMA_MAPPING_IN_JOBS.md) -- Integrating schema mapping into the Job Builder, `tables_rdbms` collection, dry-run feature
 
 ---
 

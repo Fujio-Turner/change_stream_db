@@ -20,6 +20,12 @@ Complete reference guide for all JSON schema files in the `changes-worker` scope
 | [outputs_cloud/schema.json](changes-worker/outputs_cloud/schema.json) | outputs_cloud | Cloud storage (S3, GCS, Azure) | `outputs_cloud` |
 | [outputs_stdout/schema.json](changes-worker/outputs_stdout/schema.json) | outputs_stdout | Console/log output | `outputs_stdout` |
 
+#### Table Definitions
+
+| File | Collection | Purpose | Doc ID |
+|------|-----------|---------|--------|
+| [tables_rdbms/schema.json](changes-worker/tables_rdbms/schema.json) | tables_rdbms | Reusable RDBMS table definitions (DDL + columns) | `tables_rdbms` |
+
 #### Pipeline & Jobs
 
 | File | Collection | Purpose | Doc ID |
@@ -70,6 +76,7 @@ Complete reference guide for all JSON schema files in the `changes-worker` scope
 **Core Pipeline** (Production)
 - `inputs_changes` — Where data comes from
 - `outputs_*` — Where data goes (4 types)
+- `tables_rdbms` — RDBMS table definitions library
 - `jobs` — How data flows (transform)
 
 **Runtime** (Production)
@@ -242,13 +249,13 @@ When creating/updating documents:
 ## File Statistics
 
 ```
-Total Collections: 16
-- Production: 9 (inputs, outputs×4, jobs, checkpoints, dlq, config)
+Total Collections: 17
+- Production: 10 (inputs, outputs×4, tables_rdbms, jobs, checkpoints, dlq, config)
 - Runtime: 2 (data_quality, enrichments)
 - Future: 4 (users, sessions, audit_log, notifications)
 - Deprecated: 1 (mappings)
 
-Total Schema Files: 16
+Total Schema Files: 17
 All Valid JSON: ✓
 ```
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Changes Worker -- Schema Mappings</title>
+  <title>PouchPipes -- Schema Mappings</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
   <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
@@ -78,7 +78,7 @@
   <main class="flex flex-col w-full p-6 gap-4" style="min-height: calc(100vh - 32px);">
 
     <!-- Top action bar -->
-    <div class="card bg-base-100 shadow-sm rounded-2xl">
+    <div id="topActionBar" class="card bg-base-100 shadow-sm rounded-2xl">
       <div class="card-body p-4 flex-row items-center gap-3 flex-wrap">
         <!-- Left-aligned group -->
         <div class="flex items-center gap-2">
@@ -126,7 +126,7 @@
     </div>
 
     <!-- Saved Mappings Table -->
-    <div class="card bg-base-100 shadow-sm rounded-2xl border-process">
+    <div id="savedMappingsCard" class="card bg-base-100 shadow-sm rounded-2xl border-process">
       <div class="card-body p-4">
         <div class="flex items-center gap-2 mb-2">
           <h3 class="font-semibold text-base">Saved Mappings</h3>
@@ -550,6 +550,17 @@ function _attachThemeChartListener() {
 // Defer until after sidebar.js has run
 if (document.getElementById('themeToggle')) _attachThemeChartListener();
 else document.addEventListener('DOMContentLoaded', _attachThemeChartListener);
+
+// ── Toast helper ─────────────────────────────────────────────
+function showToast(message, type) {
+  var container = document.getElementById('toastContainer');
+  var alertClass = type === 'success' ? 'alert-success' : 'alert-error';
+  var toast = document.createElement('div');
+  toast.className = 'alert ' + alertClass;
+  toast.innerHTML = '<span>' + message + '</span>';
+  container.appendChild(toast);
+  setTimeout(function() { toast.remove(); }, 3000);
+}
 
 // ── State ────────────────────────────────────────────────────
 var tables = [];
@@ -2686,15 +2697,14 @@ async function testDbConnection() {
     });
     var data = await res.json();
     if (data.ok) {
-      status.textContent = 'Connected! ' + (data.version || '').substring(0, 60);
-      status.className = 'text-sm self-center text-success';
+      showToast('✓ Connected! ' + (data.version || '').substring(0, 60), 'success');
     } else {
-      status.textContent = 'Error: ' + (data.error || 'Connection failed');
-      status.className = 'text-sm self-center text-error';
+      showToast('Error: ' + (data.error || 'Connection failed'), 'error');
     }
+    status.textContent = '';
   } catch (e) {
-    status.textContent = 'Error: ' + e.message;
-    status.className = 'text-sm self-center text-error';
+    showToast('Error: ' + e.message, 'error');
+    status.textContent = '';
   }
   btn.classList.remove('loading');
 }
@@ -2712,20 +2722,20 @@ async function introspectDb() {
     });
     var data = await res.json();
     if (data.error) {
-      status.textContent = 'Error: ' + (data.detail || data.error);
-      status.className = 'text-sm self-center text-error';
+      showToast('Error: ' + (data.detail || data.error), 'error');
+      status.textContent = '';
       btn.classList.remove('loading');
       return;
     }
     introspectedTables = data.tables || [];
-    status.textContent = 'Found ' + introspectedTables.length + ' table(s)';
-    status.className = 'text-sm self-center text-success';
+    showToast('✓ Found ' + introspectedTables.length + ' table(s)', 'success');
+    status.textContent = '';
     renderDbTableList(introspectedTables);
     document.getElementById('dbTableList').classList.remove('hidden');
     document.getElementById('btnImportSelected').disabled = false;
   } catch (e) {
-    status.textContent = 'Error: ' + e.message;
-    status.className = 'text-sm self-center text-error';
+    showToast('Error: ' + e.message, 'error');
+    status.textContent = '';
   }
   btn.classList.remove('loading');
 }
@@ -3801,6 +3811,109 @@ async function loadGlobalConfig() {
   } catch (e) { /* config not available */ }
 }
 
+// ── Job Mode (embedded in jobs.html via iframe) ──────────────
+var urlParams = new URLSearchParams(window.location.search);
+var JOB_MODE = urlParams.get('job_mode') === 'true';
+
+if (JOB_MODE) {
+  document.addEventListener('DOMContentLoaded', function() {
+    // Hide standalone UI elements
+    var topBar = document.getElementById('topActionBar');
+    if (topBar) topBar.classList.add('hidden');
+    var savedCard = document.getElementById('savedMappingsCard');
+    if (savedCard) savedCard.classList.add('hidden');
+
+    // Show job-mode footer
+    var footer = document.getElementById('jobModeFooter');
+    if (footer) footer.classList.remove('hidden');
+
+    // Pre-seed from query params
+    var mappingName = urlParams.get('mapping_name');
+    if (mappingName) {
+      loadExistingMapping(mappingName);
+    }
+  });
+}
+
+function applyMappingToJob() {
+  saveCurrentTableEdits();
+  var mappingJson = buildMappingJson();
+  window.parent.postMessage({
+    type: 'schema-mapping-result',
+    action: 'apply',
+    mapping: mappingJson,
+    mappingName: document.getElementById('filenameInput').value || ''
+  }, '*');
+}
+
+function cancelJobModeMapping() {
+  window.parent.postMessage({
+    type: 'schema-mapping-result',
+    action: 'cancel'
+  }, '*');
+}
+
+// Listen for mapping data from parent (job builder edit flow)
+window.addEventListener('message', function(event) {
+  if (!event.data || event.data.type !== 'load-mapping') return;
+  if (!JOB_MODE) return;
+  loadMappingFromObject(event.data.mapping);
+  if (event.data.mappingName) {
+    document.getElementById('filenameInput').value = event.data.mappingName;
+  }
+});
+
+function loadMappingFromObject(mapping) {
+  if (!mapping) return;
+  // Reset current state
+  tables = [];
+  columnTypes = {};
+
+  // Load source match/filter if present
+  if (mapping.source && mapping.source.match) {
+    var m = mapping.source.match;
+    document.getElementById('filterField').value = m.field || '';
+    document.getElementById('filterValue').value = m.value || '';
+  }
+
+  // Load output_format
+  if (mapping.output_format) {
+    var fmtEl = document.getElementById('outputFormat');
+    if (fmtEl) fmtEl.value = mapping.output_format;
+  }
+
+  // Load tables
+  if (mapping.tables && mapping.tables.length) {
+    mapping.tables.forEach(function(t) {
+      var tableObj = {
+        name: t.name || 'table_' + tables.length,
+        columns: {},
+        operation: t.operation || 'UPSERT',
+        parent_table: t.parent_table || null,
+        array_path: t.array_path || null,
+        doc_id_column: t.doc_id_column || 'doc_id',
+        where: t.where || null,
+        engine_hint: t.engine_hint || null
+      };
+      if (t.columns) {
+        Object.keys(t.columns).forEach(function(colName) {
+          tableObj.columns[colName] = t.columns[colName];
+        });
+      }
+      if (t.column_types) {
+        Object.keys(t.column_types).forEach(function(colName) {
+          columnTypes[tableObj.name + '.' + colName] = t.column_types[colName];
+        });
+      }
+      tables.push(tableObj);
+    });
+    activeTableIdx = 0;
+    renderTableTabs();
+    renderTableEditor();
+    onMappingChange();
+  }
+}
+
 // ── Init ─────────────────────────────────────────────────────
 loadFileList(true);
 loadDbDrivers();
@@ -3808,6 +3921,14 @@ loadGlobalConfig();
 updateSteps();
 </script>
 
+    <!-- Job-mode footer (shown when embedded in jobs.html iframe) -->
+    <div id="jobModeFooter" class="hidden sticky bottom-0 z-50 p-3 bg-base-100 border-t border-base-300 flex items-center justify-between">
+      <span class="text-sm opacity-60">Mapping will be saved with the job</span>
+      <div class="flex gap-2">
+        <button class="btn btn-ghost btn-sm" onclick="cancelJobModeMapping()">Cancel</button>
+        <button class="btn btn-success btn-sm" onclick="applyMappingToJob()">Apply to Job</button>
+      </div>
+    </div>
   </main>
   </div><!-- /sidebar-main -->
   <script src="/static/js/sidebar.js"></script>

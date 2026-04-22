@@ -13,9 +13,13 @@
     { type: 'section', label: 'Overview' },
     { href: '/',           label: 'Dashboard',       icon: '/static/icons/dashboard.svg' },
 
-    { type: 'section', label: 'Tools' },
+    { type: 'section', label: 'Pipeline' },
     { href: '/jobs',       label: 'Job Builder',      icon: '/static/icons/jobs.svg'     },
+    { href: '/inputs',     label: 'Inputs',           icon: '/static/icons/inputs.svg'   },
+    { href: '/outputs',    label: 'Outputs',          icon: '/static/icons/outputs.svg'  },
     { href: '/schema',     label: 'Schema Mapping',   icon: '/static/icons/schema.svg'   },
+
+    { type: 'section', label: 'Guided' },
     { href: '/wizard',     label: 'Wizards',          icon: '/static/icons/wizard.svg'   },
 
     { type: 'divider' },
@@ -57,7 +61,9 @@
     '<aside id="sidebar" class="sidebar">' +
       '<div class="sidebar-brand" id="sidebarBrand">' +
         '<img src="/static/favicon.svg" alt="Logo" />' +
-        '<span class="sidebar-brand-text">Changes Worker</span>' +
+        '<div class="tooltip tooltip-right" data-tip="Portable Over Unreliable Changes Handler Passing Instant Pipelines for Events and Streams">' +
+          '<span class="sidebar-brand-text">PouchPipes</span>' +
+        '</div>' +
       '</div>' +
       '<button id="sidebarToggle" class="sidebar-toggle">' +
         '<img src="/static/icons/menu.svg" alt="Toggle" /></button>' +
@@ -91,7 +97,7 @@
             '<span class="sidebar-theme-label" id="themeLabel">Dark</span>' +
           '</button>' +
         '</div>' +
-        '<div class="sidebar-version">v1.7.0</div>' +
+        '<div class="sidebar-version">v2.2.2</div>' +
       '</div>' +
     '</aside>';
 
@@ -181,7 +187,7 @@
   }
 
   restartBtn.addEventListener('click', function () {
-    if (!confirm('Restart the Changes Worker? The feed will reconnect with the current config.')) return;
+    if (!confirm('Restart PouchPipes? The feed will reconnect with the current config.')) return;
     sidebarToast('Restarting worker...', 'info');
     fetch('/api/restart', { method: 'POST' })
       .then(function (res) { return res.json(); })
@@ -245,7 +251,7 @@
   var shutdownBtn = document.getElementById('navShutdown');
   if (shutdownBtn) {
     shutdownBtn.addEventListener('click', function () {
-      if (!confirm('Shutdown the Changes Worker? This will gracefully stop the feed and exit the process.')) return;
+      if (!confirm('Shutdown PouchPipes? This will gracefully stop the feed and exit the process.')) return;
       sidebarToast('Shutting down worker...', 'info');
       fetch('/api/shutdown', { method: 'POST' })
         .then(function (res) { return res.json(); })

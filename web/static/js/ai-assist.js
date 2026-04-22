@@ -9,7 +9,7 @@
    ─────────────────────────────────────────────────────────────────────── */
 
 var AI_INSTRUCTIONS = [
-  'You are generating a Changes Worker schema mapping JSON.',
+  'You are generating a PouchPipes schema mapping JSON.',
   'Return ONLY valid JSON — no markdown, no code fences, no commentary outside the JSON.',
   '',
   '## STRICT OUTPUT RULES (violations will break the import parser)',
@@ -35,7 +35,7 @@ var AI_INSTRUCTIONS = [
   '',
   '## How mappings work',
   '',
-  'A mapping tells the Changes Worker how to transform a Couchbase/Sync Gateway document into SQL rows or a JSON object.',
+  'A mapping tells PouchPipes how to transform a Couchbase/Sync Gateway document into SQL rows or a JSON object.',
   '',
   '### Tables mode (output_mode = "tables")',
   '',
