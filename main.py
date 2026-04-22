@@ -1034,6 +1034,36 @@ class MetricsCollector:
             "Downloads where digest didn't match (re-downloaded).",
             self.attachments_digest_mismatch_total,
         )
+        _counter(
+            "changes_worker_attachments_stale_total",
+            "Attachments skipped because the parent doc revision was superseded.",
+            self.attachments_stale_total,
+        )
+        _counter(
+            "changes_worker_attachments_post_process_skipped_total",
+            "Post-processing steps skipped (e.g. no matching rule).",
+            self.attachments_post_process_skipped_total,
+        )
+        _counter(
+            "changes_worker_attachments_conflict_retries_total",
+            "Attachment conflict retries (revision conflict during post-process).",
+            self.attachments_conflict_retries_total,
+        )
+        _counter(
+            "changes_worker_attachments_orphaned_uploads_total",
+            "Uploads that became orphaned (parent doc deleted or superseded).",
+            self.attachments_orphaned_uploads_total,
+        )
+        _counter(
+            "changes_worker_attachments_partial_success_total",
+            "Documents where some but not all attachments succeeded.",
+            self.attachments_partial_success_total,
+        )
+        _counter(
+            "changes_worker_attachments_temp_files_cleaned_total",
+            "Temporary attachment files cleaned up from disk.",
+            self.attachments_temp_files_cleaned_total,
+        )
 
         # ── SYSTEM metrics (psutil / gc / threading) ────────────────────
         try:
