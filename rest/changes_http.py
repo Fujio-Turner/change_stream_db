@@ -1096,7 +1096,7 @@ async def _process_changes_batch(
                                 logger,
                                 "warn",
                                 "OUTPUT",
-                                "data error – skipping doc (data_error_action=skip)",
+                                "data error – skipped doc (data_error_action=skip)",
                                 doc_id=change.get("id", ""),
                             )
                         else:
@@ -1179,7 +1179,7 @@ async def _process_changes_batch(
                                 logger,
                                 "warn",
                                 "OUTPUT",
-                                "data error – skipping doc (data_error_action=skip)",
+                                "data error – skipped doc (data_error_action=skip)",
                                 doc_id=change.get("id", ""),
                             )
                         else:
@@ -1209,7 +1209,7 @@ async def _process_changes_batch(
                                 logger,
                                 "warn",
                                 "OUTPUT",
-                                "data error – skipping doc (data_error_action=skip)",
+                                "data error – skipped doc (data_error_action=skip)",
                                 doc_id=result.get("doc_id", ""),
                             )
                         else:

@@ -382,6 +382,7 @@ Buttons should never sit flush against screen edges or be pinned to far corners.
 2. **All action buttons in a group should be the same size** (`btn-sm` or the default). Do not make the primary action physically larger than its siblings — use color/variant to distinguish it instead.
 3. **Left-align action groups** when possible. If right-aligning, ensure the button group is inside a card with padding so the button never touches the card edge.
 4. **Group related actions together** — don't scatter Save on the right and Cancel on the left of a wide bar.
+5. **Destructive actions first, constructive actions last** — in table row action groups, order buttons from most destructive (Delete, Kill) on the left to most constructive (Edit) on the right. Example order: `Delete → Kill → Stop → Restart → Start → Mapping → Edit`.
 
 ### ✅ Good — buttons inside card with consistent sizing
 

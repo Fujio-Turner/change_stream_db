@@ -1870,6 +1870,25 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
                 f"output.data_error_action must be 'dlq' or 'skip', got '{data_error_action}'"
             )
 
+    # -- non-sequential + no DLQ -----------------------------------------------
+    proc_cfg = cfg.get("processing", cfg.get("gateway", {}).get("processing", {}))
+    is_sequential = proc_cfg.get("sequential", False)
+    dlq_path = cfg.get("output", {}).get("dead_letter_path", "")
+    has_dlq = bool(dlq_path)
+    # CBL is always available as DLQ backend, so only warn when no CBL either
+    try:
+        from cbl_store import USE_CBL as _use_cbl_check
+    except ImportError:
+        _use_cbl_check = False
+    if not is_sequential and not has_dlq and not _use_cbl_check:
+        warnings.append(
+            "RISK: non-sequential (parallel) mode is enabled WITHOUT a Dead Letter Queue. "
+            "If the output goes down or the worker shuts down mid-batch, in-flight documents "
+            "will be lost — there is no DLQ to catch them and no way to replay them. "
+            "Either enable the DLQ (set output.dead_letter_path) or switch to sequential mode "
+            "(set processing.sequential=true)."
+        )
+
     # -- retry -----------------------------------------------------------------
     retry_cfg = cfg.get("retry", {})
     max_retries = retry_cfg.get("max_retries", 5)
@@ -2542,6 +2561,18 @@ async def poll_changes(
             dlq_cfg=out_cfg.get("dlq"),
         )
         every_n_docs = cfg.get("checkpoint", {}).get("every_n_docs", 0)
+
+        # Warn at runtime if non-sequential + no DLQ
+        is_seq = proc_cfg.get("sequential", False)
+        if not is_seq and not dlq.enabled:
+            log_event(
+                logger,
+                "warn",
+                "PROCESSING",
+                "RISK: running in non-sequential (parallel) mode WITHOUT a Dead Letter Queue. "
+                "If the output goes down mid-batch, in-flight documents may be lost. "
+                "Enable the DLQ or switch to sequential mode.",
+            )
 
         # If output is HTTP, verify the endpoint is reachable before starting
         if output_mode == "http":

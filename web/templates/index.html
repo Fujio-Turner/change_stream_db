@@ -115,6 +115,10 @@
   <div class="sidebar-main">
   <main class="w-full mx-auto p-6 space-y-6">
 
+    <!-- Persistent Config Warning Banner -->
+    <div id="configWarningBanner" class="hidden">
+    </div>
+
     <!-- Status Bar -->
     <div class="card bg-base-100 shadow">
       <div class="card-body py-3 px-6">
@@ -198,7 +202,7 @@
               <div class="arch-node arch-node-work" id="archWork" onclick="showArchDetail('work')">
                 <div class="arch-title">changes_worker</div>
                 <div class="arch-sub">checkpoint · retry · mapping</div>
-                <div class="arch-stat" id="archWorkStat">Processed: -- | Filtered: --</div>
+                <div class="arch-stat" id="archWorkStat">Processed: -- | Filtered: --<br>Skipped: -- | DLQ: --</div>
                 <div class="arch-tip" id="archTipWork">Loading…</div>
               </div>
               <div class="arch-node arch-node-dlq" id="archDlq" onclick="showArchDetail('dlq')">
@@ -983,7 +987,7 @@ function updateArchData(m) {
   var attachEnabled = cachedCfg && cachedCfg.attachments && cachedCfg.attachments.enabled;
   setText('archSrcStat', 'Received: ' + fmt(received) + ' · ' + fmtBytes(bytesIn));
   var modeLabel = attachEnabled ? '📎 ' : '';
-  setText('archWorkStat', modeLabel + 'Processed: ' + fmt(processed) + ' | Filtered: ' + fmt(filtered) + ' | DLQ: ' + fmt(dlq));
+  document.getElementById('archWorkStat').innerHTML = modeLabel + 'Processed: ' + fmt(processed) + ' | Filtered: ' + fmt(filtered) + '<br>Skipped: ' + fmt(outSkip) + ' | DLQ: ' + fmt(dlq);
 
   // Output nodes — active vs dimmed
   var outEls = document.querySelectorAll('[data-mode]');
@@ -1149,21 +1153,23 @@ function showArchDetail(which) {
     rows = [
       ['Docs Processed', fmt(processed)],
       ['Docs Filtered', fmt(filtered)],
+      ['Docs Skipped', fmt(outSkip)],
       ['Dead Letters', fmt(dlq)],
       ['Checkpoint Saves', fmt(chkSaves)],
       ['Retries', fmt(retries)],
       ['Uptime', fmtUptime(uptime)]
     ];
-    // Chart 1: bar — processed vs filtered vs DLQ
-    chart1Opt = barOpt('Document Fate', ['Processed','Filtered','Dead Letter'], [
-      { name: 'Count', type: 'bar', data: [processed, filtered, dlq],
-        itemStyle: { color: function(p) { return ['#6c56a4','#fbbd23','#f87272'][p.dataIndex]; } },
+    // Chart 1: bar — processed vs filtered vs skipped vs DLQ
+    chart1Opt = barOpt('Document Fate', ['Processed','Filtered','Skipped','Dead Letter'], [
+      { name: 'Count', type: 'bar', data: [processed, filtered, outSkip, dlq],
+        itemStyle: { color: function(p) { return ['#6c56a4','#fbbd23','#a3a3a3','#f87272'][p.dataIndex]; } },
         barWidth: '50%', label: { show: true, position: 'top', color: c.text, fontSize: 10 } }
     ]);
     // Chart 2: line — processing history
     chart2Opt = lineOpt('Processing Over Time', [
       lineSeries('Processed', chartHistory.processed, '#6c56a4'),
-      lineSeries('Filtered', chartHistory.filtered, c.yellow)
+      lineSeries('Filtered', chartHistory.filtered, c.yellow),
+      lineSeries('Skipped', chartHistory.outSkipped, '#a3a3a3')
     ]);
   } else if (which === 'attach') {
     title = 'Attachments — Processing';
@@ -1648,7 +1654,7 @@ function computeStatus(m, cfg) {
     outChecks.push(diagWarn(fmt(mapErr) + ' schema mapper error(s) — check mapping definitions'));
   }
   if (outSkip > 0) {
-    outChecks.push(diagInfo(fmt(outSkip) + ' document(s) skipped (no mapper match or null doc)'));
+    outChecks.push(diagInfo(fmt(outSkip) + ' document(s) skipped — did not reach output (no mapper match, null doc, or empty mapping result). Check Logs page for details.'));
   }
   statusDiag.output = { color: outColor, checks: outChecks, metrics: outMetrics };
   setDot('dotOutput', outColor);
@@ -1778,6 +1784,7 @@ function loadConfig() {
       var src = { sync_gateway: 0, app_services: 0, edge_server: 0, couchdb: 0 };
       var proc = { data: 0, data_attach: 0, async: 0 };
       var out = { cloud: 0, rdbms: 0, http: 0 };
+      var configWarnings = [];
 
       for (var i = 0; i < jobDocs.length; i++) {
         var jd = jobDocs[i];
@@ -1801,7 +1808,26 @@ function loadConfig() {
         if (isAsync) { proc.async++; }
         else if (hasAttach) { proc.data_attach++; }
         else { proc.data++; }
+
+        // Check for risky config: non-sequential + no DLQ
+        var jobOutputs = jd.outputs || [];
+        var jobOut = jobOutputs[0] || {};
+        var hasDlqPath = !!jobOut.dead_letter_path;
+        var hasCbl = !!(cfg.couchbase_lite && cfg.couchbase_lite.enabled);
+        var jobName = jd.name || jd._id || jd.id || ('Job ' + (i + 1));
+        if (isAsync && !hasDlqPath && !hasCbl) {
+          configWarnings.push(
+            '<strong>' + escapeHtml(jobName) + '</strong> is running in non-sequential (parallel) mode ' +
+            '<strong>without a Dead Letter Queue</strong>. If the output goes down or the worker shuts down mid-batch, ' +
+            'in-flight documents will be lost — there is no DLQ to catch them and the checkpoint will not advance past them. ' +
+            'Either enable the DLQ (<code>output.dead_letter_path</code>) or switch to sequential mode (<code>processing.sequential: true</code>). ' +
+            '<a href="/help#pending" class="link link-primary">Learn more</a>'
+          );
+        }
       }
+
+      // Show persistent config warning banner if issues found
+      showConfigWarnings(configWarnings);
 
       // Update badge counts + dim badges with 0 count
       function setBadge(id, count) {
@@ -2097,6 +2123,26 @@ function setUnknown() {
   chartHistory.inOutRatio.push(0);
   if (chartHistory.inOutRatio.length > MAX_POINTS) chartHistory.inOutRatio.shift();
   renderCharts();
+}
+
+// ── Persistent Config Warning Banner ────────────────────────
+function showConfigWarnings(warnings) {
+  var banner = document.getElementById('configWarningBanner');
+  if (!banner) return;
+  if (!warnings || warnings.length === 0) {
+    banner.classList.add('hidden');
+    banner.innerHTML = '';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < warnings.length; i++) {
+    html += '<div class="alert alert-warning shadow-lg mb-2 text-sm">'
+      + '<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>'
+      + '<span>⚠️ <strong>Config Risk:</strong> ' + warnings[i] + '</span>'
+      + '</div>';
+  }
+  banner.innerHTML = html;
+  banner.classList.remove('hidden');
 }
 
 // ── Toast Notification ──────────────────────────────────────

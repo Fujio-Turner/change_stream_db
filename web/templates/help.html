@@ -35,6 +35,8 @@
           <a href="#processing" class="badge badge-accent badge-outline">Processing</a>
           <a href="#checkpoint" class="badge badge-primary badge-outline">Checkpoints</a>
           <a href="#failures" class="badge badge-error badge-outline">Failure Modes</a>
+          <a href="#skipped" class="badge badge-ghost badge-outline">Skipped Documents</a>
+          <a href="#pending" class="badge badge-primary badge-outline">Pending</a>
           <a href="#dlq" class="badge badge-warning badge-outline">Dead Letter Queue</a>
           <a href="#endpoints" class="badge badge-info badge-outline">API Endpoints</a>
           <a href="#metrics" class="badge badge-accent badge-outline">Metrics</a>
@@ -216,13 +218,309 @@
       </div>
     </div>
 
+    <!-- Skipped Documents -->
+    <div id="skipped" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-ghost">Skipped</span> Skipped Documents
+        </h2>
+        <p class="opacity-80 mb-3">A document is <strong>skipped</strong> when the pipeline receives it from the change feed but determines there is nothing to send to the output. <strong>Skipped documents do not reach the output</strong> — they are silently dropped. This is different from errors: skipped documents are <em>not</em> failures, and the checkpoint still advances past them. The <code>output_skipped_total</code> metric tracks how many documents were skipped.</p>
+
+        <h3 class="font-semibold mt-4 mb-2">Skipped vs Filtered vs Errors</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-36">Outcome</th><th>Where</th><th>Reaches Output?</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><span class="badge badge-warning badge-sm">Filtered</span></td>
+                <td>Changes feed</td>
+                <td>❌ No</td>
+                <td>Removed at the source — deletes and removes are stripped before processing begins.</td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-ghost badge-sm">Skipped</span></td>
+                <td>Worker / Mapper</td>
+                <td>❌ No</td>
+                <td>Made it to the worker but was dropped — no mapper match, null doc, empty mapping result, or ignored delete.</td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-error badge-sm">Error → DLQ</span></td>
+                <td>Output</td>
+                <td>✅ Attempted</td>
+                <td>Reached the output, delivery was attempted, but it failed. Sent to the Dead Letter Queue for retry.</td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-success badge-sm">Success</span></td>
+                <td>Output</td>
+                <td>✅ Yes</td>
+                <td>Delivered successfully to the target endpoint or database.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="font-semibold mt-4 mb-2">When Does a Skip Happen?</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-48">Condition</th><th>Description</th><th class="w-64">Log Message</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-semibold">Null Document</td>
+                <td>The change feed entry has no document body. This can happen with tombstoned or purged documents where the body is unavailable.</td>
+                <td><code class="text-xs">OUTPUT: received None doc – skipped</code></td>
+              </tr>
+              <tr>
+                <td class="font-semibold">No Mapper Match</td>
+                <td>The document does not match any configured JSONPath filter in the schema mapping. If your mapping uses a <code>filter</code> expression (e.g. <code>$.type == "order"</code>), documents that don't satisfy it are skipped.</td>
+                <td><code class="text-xs">MAPPING: doc does not match any mapping filter – skipped</code></td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Empty Operations</td>
+                <td>The mapper matched the document, but transforms or field filters resulted in zero database operations. For example, all mapped fields were <code>null</code> or excluded by a condition.</td>
+                <td><code class="text-xs">MAPPING: mapper matched but produced no operations – skipped</code></td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Delete Ignored</td>
+                <td>Cloud / HTTP output mode with <code>on_delete: "ignore"</code>. Delete events are intentionally discarded instead of being forwarded.</td>
+                <td><code class="text-xs">OUTPUT: delete ignored (on_delete=ignore) – skipped</code></td>
+              </tr>
+              <tr>
+                <td class="font-semibold">No Mapping Loaded</td>
+                <td>No schema mapping files were found or all mapping definitions are inactive. Every document is skipped until a valid mapping is configured.</td>
+                <td><code class="text-xs">MAPPING: no schema mapping loaded – skipping doc</code></td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Data Error (skip mode)</td>
+                <td>A data error occurred and <code>data_error_action</code> is set to <code>skip</code>. The document is dropped instead of going to the DLQ.</td>
+                <td><code class="text-xs">OUTPUT: data error – skipped doc (data_error_action=skip)</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="font-semibold mt-4 mb-2">Most Common Causes</h3>
+        <p class="opacity-80">In practice, the vast majority of skips are <strong>No Mapper Match</strong> and <strong>Empty Operations</strong>. This simply means the document doesn't match your mapping configuration, so there is nothing to write to the output. This is normal when your mapping targets a subset of document types (e.g. only <code>type: "order"</code>) and the change feed also contains other types.</p>
+
+        <h3 class="font-semibold mt-4 mb-2">Debugging Skipped Documents</h3>
+        <div class="alert alert-info mt-4 text-sm">
+          <span><strong>Tip:</strong> All skip events are now logged at <code>INFO</code> level with the <code>doc_id</code> and reason. Go to the <a href="/logs" class="link link-primary">Logs</a> page and search for <strong>"skipped"</strong> to see every skipped document. You can filter by the <code>MAPPING</code> or <code>OUTPUT</code> log keys to narrow results.</span>
+        </div>
+        <div class="alert mt-2 text-sm">
+          <span><strong>Note:</strong> Skipped documents also appear in the <strong>Document Fate</strong> chart on the Dashboard when you click the <em>changes_worker</em> node. If the skipped count is unexpectedly high, check that your schema mapping filters and transform names are correct.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pending -->
+    <div id="pending" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-primary">Pending</span> Pending Documents
+        </h2>
+        <p class="opacity-80 mb-3"><strong>Pending</strong> is a calculated value — not a queue or a buffer — that represents the number of documents the pipeline has received but has not yet accounted for. It tells you whether the system is keeping up with the incoming change feed.</p>
+
+        <h3 class="font-semibold mt-4 mb-2">How Is Pending Calculated?</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-52">Formula</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-mono text-xs font-semibold" style="color:#7c3aed;">Pending = Received<br>− Success<br>− Errors − DLQ<br>− Skipped</td>
+                <td>
+                  <p><strong>Received</strong> = total docs from the changes feed (<code>changes_received_total</code>).</p>
+                  <p class="mt-1"><strong>Success</strong> = docs successfully written to output (<code>output_success_total</code>).</p>
+                  <p class="mt-1"><strong>Errors + DLQ</strong> = docs that failed delivery (<code>output_errors_total</code> + <code>dead_letter_total</code>).</p>
+                  <p class="mt-1"><strong>Skipped</strong> = docs that did not reach output (<code>output_skipped_total</code>). See <a href="#skipped" class="link link-primary">Skipped Documents</a>.</p>
+                  <p class="mt-1 opacity-60">Note: <em>Filtered</em> docs (deletes/removes) are stripped before <code>changes_received_total</code> is incremented, so they do not affect the Pending count.</p>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="font-semibold mt-4 mb-2">How to Read the Pending Number</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-52">Pending Behaviour</th><th>What It Means</th><th>Action</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-semibold" style="color:#36d399;">Flat at 0</td>
+                <td>Every received document has been accounted for (success + error + skip). The pipeline is healthy and keeping up.</td>
+                <td>None — this is the ideal state.</td>
+              </tr>
+              <tr>
+                <td class="font-semibold" style="color:#fbbd23;">Rising steadily</td>
+                <td>Input is outpacing output. Documents are being received faster than they can be processed and delivered.</td>
+                <td>Check output latency, batch size, and target endpoint performance.</td>
+              </tr>
+              <tr>
+                <td class="font-semibold" style="color:#f87272;">Rising + high Fail %</td>
+                <td>Errors are causing the backlog. Failed documents that aren't being resolved are accumulating.</td>
+                <td>Check the <a href="#dlq" class="link link-primary">DLQ</a>, output endpoint health, and error logs.</td>
+              </tr>
+              <tr>
+                <td class="font-semibold" style="color:#3abff8;">Dropping</td>
+                <td>The system is catching up — output rate exceeds input rate. The backlog is draining.</td>
+                <td>None — the system is recovering.</td>
+              </tr>
+              <tr>
+                <td class="font-semibold" style="color:#fbbd23;">Stuck at a fixed number &gt; 0</td>
+                <td>A batch of documents was received but never processed. This can happen if the worker restarted mid-batch or if some documents are stuck in processing.</td>
+                <td>Check worker logs for errors. Restart the worker if needed — the checkpoint will resume from the last saved position.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="font-semibold mt-4 mb-2">Where Pending Appears</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-44">Page</th><th>How It's Shown</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-semibold">Dashboard</td>
+                <td>The <strong>Activity Timeline</strong> chart shows Pending as a <span style="color:#7c3aed;">purple</span> area line. Hover over any point to see the exact count.</td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Logs</td>
+                <td>The <strong>Activity Timeline</strong> chart on the Logs page also shows a Pending line, derived from log entries (docs in vs docs out per time bucket).</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="font-semibold mt-4 mb-2">Pending and Checkpoints — What Happens If Something Goes Wrong?</h3>
+        <p class="opacity-80 mb-3">Pending documents are documents the worker has <strong>received but not yet checkpointed</strong>. The checkpoint only advances after a batch is fully processed. This means pending documents are "at risk" — if the worker crashes or the output goes down, those documents have not been saved as complete.</p>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-52">Mode</th><th>What Happens to Pending Docs</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-semibold">Sequential<br><code class="text-xs">sequential: true</code></td>
+                <td>
+                  <p>Documents are processed one at a time, in order. The checkpoint advances after each <code>every_n_docs</code> sub-batch.</p>
+                  <p class="mt-1"><strong>On failure:</strong> The checkpoint has not advanced past the current batch. On restart, the worker resumes from the last saved checkpoint and <strong>re-processes</strong> all pending documents. No data is lost.</p>
+                </td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Non-Sequential (parallel)<br><code class="text-xs">sequential: false</code></td>
+                <td>
+                  <p>Documents are dispatched as concurrent tasks. The checkpoint advances only after <strong>all</strong> docs in the batch complete.</p>
+                  <p class="mt-1"><strong>On failure:</strong> Failed individual docs go to the <a href="#dlq" class="link link-primary">DLQ</a> (if <code>halt_on_failure: false</code>). If the output goes completely down or the worker shuts down, pending docs that were in-flight are DLQ'd (when <code>dlq_inflight_on_shutdown: true</code>) and the checkpoint is <strong>not advanced</strong>.</p>
+                </td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Output Down</td>
+                <td>
+                  <p>If the output endpoint becomes unreachable mid-batch, the worker stops processing and does <strong>not advance the checkpoint</strong>. The log message reads: <code class="text-xs">OUTPUT DOWN – not advancing checkpoint past since=…</code></p>
+                  <p class="mt-1">On the next poll cycle (or restart), the worker retries from the last good checkpoint, re-processing all pending documents.</p>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="alert alert-warning mt-3 text-sm">
+          <span><strong>Key point:</strong> Pending documents are safe. The checkpoint guarantees at-least-once delivery — if anything goes wrong, the worker will re-process from where it left off. Documents are never silently lost; they either succeed, go to the DLQ, or are retried on restart.</span>
+        </div>
+
+        <div class="alert alert-info mt-3 text-sm">
+          <span><strong>Tip:</strong> Pending is not a metric exported to Prometheus — it is derived in the UI from other counters. If you need to alert on backlog size in an external monitoring system, compute it as: <code>changes_received_total − output_success_total − output_errors_total − dead_letter_total − output_skipped_total</code>.</span>
+        </div>
+        <div class="alert mt-2 text-sm">
+          <span><strong>Note:</strong> Pending can never go below zero. If the subtraction yields a negative number (e.g. due to counter resets after a restart), the UI clamps it to 0.</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Dead Letter Queue -->
     <div id="dlq" class="card bg-base-100 shadow rounded-2xl">
       <div class="card-body p-6">
         <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
           <span class="badge badge-warning">DLQ</span> Dead Letter Queue
         </h2>
-        <p class="opacity-80 mb-3">When <code>halt_on_failure: false</code>, failed documents are written to the dead letter queue with full context for later replay.</p>
+        <p class="opacity-80 mb-3">When <code>halt_on_failure: false</code>, failed documents are written to the dead letter queue with full context for later replay. The <code>dead_letter_total</code> metric tracks how many documents have been written to the DLQ.</p>
+
+        <h3 class="font-semibold mt-4 mb-2">When Does a Document Go to the DLQ?</h3>
+        <p class="opacity-80 mb-3">A document is written to the DLQ when the output returns <code>ok: false</code> and <code>halt_on_failure</code> is <code>false</code>. The key requirement is: <strong>the output tried to deliver the document and failed</strong>. This is different from a <em>skip</em>, where the document never reaches the output.</p>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-48">Trigger</th><th>Description</th><th class="w-56">Log Message / DLQ Reason</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-semibold">Client Error (4xx)</td>
+                <td>The HTTP output endpoint returned a 4xx status (e.g. 400 Bad Request, 404 Not Found, 409 Conflict, 422 Unprocessable). The document payload is rejected by the endpoint.</td>
+                <td><code class="text-xs">OUTPUT: client error (4xx)</code><br>Reason: <code>client_error:&lt;status&gt;</code></td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Server Error (5xx)</td>
+                <td>The HTTP endpoint returned a 5xx status (e.g. 500, 502, 503) <strong>after all retries were exhausted</strong>. The server could not process the request.</td>
+                <td><code class="text-xs">OUTPUT: server error (5xx) after retries</code><br>Reason: <code>server_error:&lt;status&gt;</code></td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Redirect Error (3xx)</td>
+                <td>The HTTP endpoint returned a redirect (3xx). PouchPipes does not follow redirects — this is treated as a delivery failure.</td>
+                <td><code class="text-xs">OUTPUT: redirect error (3xx)</code><br>Reason: <code>redirect:&lt;status&gt;</code></td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Connection Failure</td>
+                <td>The output endpoint could not be reached — DNS failure, connection refused, or network unreachable. All retries exhausted.</td>
+                <td><code class="text-xs">OUTPUT: connection failed (DNS / refused / unreachable)</code><br>Reason: <code>connection_failure</code></td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Request Timeout</td>
+                <td>The HTTP request to the output endpoint timed out after the configured <code>request_timeout</code> seconds.</td>
+                <td><code class="text-xs">OUTPUT: request timed out</code><br>Reason: <code>connection_failure</code></td>
+              </tr>
+              <tr>
+                <td class="font-semibold">RDBMS Permanent Error</td>
+                <td>A non-transient database error occurred — e.g. constraint violation, data type mismatch, invalid SQL. The error is not retryable.</td>
+                <td><code class="text-xs">OUTPUT: permanent error</code><br>Reason: <code>data_error:&lt;class&gt;</code></td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Mapping Error</td>
+                <td>The schema mapper threw an exception while processing the document (e.g. JSONPath evaluation failure, transform error).</td>
+                <td><code class="text-xs">MAPPING: mapping error</code><br>Reason: <code>data_error:mapping</code></td>
+              </tr>
+              <tr>
+                <td class="font-semibold">Shutdown In-Flight</td>
+                <td>The worker received a shutdown signal while documents were still being processed. If <code>dlq_inflight_on_shutdown: true</code>, remaining unprocessed docs in the batch are written to the DLQ.</td>
+                <td><code class="text-xs">SHUTDOWN: DLQ'd N remaining docs from sub-batch</code><br>Reason: <code>shutdown_inflight</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="font-semibold mt-4 mb-2">DLQ vs Skip vs Halt</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-40">Outcome</th><th>When</th><th>Checkpoint</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-semibold text-warning">DLQ</td>
+                <td><code>halt_on_failure: false</code> and the output fails (any trigger above)</td>
+                <td class="text-success font-semibold">Advances</td>
+              </tr>
+              <tr>
+                <td class="font-semibold text-error">Halt</td>
+                <td><code>halt_on_failure: true</code> (default) and the output fails</td>
+                <td class="text-error font-semibold">Does NOT advance</td>
+              </tr>
+              <tr>
+                <td class="font-semibold text-info">Skip</td>
+                <td>Document never reaches output (no mapper match, null doc, etc.)</td>
+                <td class="text-success font-semibold">Advances</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="alert alert-warning mt-4 text-sm">
+          <span><strong>data_error_action:</strong> For 4xx client errors (HTTP) and permanent RDBMS errors, the <code>data_error_action</code> config controls behavior. Set to <code>"dlq"</code> (default) to write to the DLQ. Set to <code>"skip"</code> to silently discard the doc without a DLQ entry.</span>
+        </div>
+
+        <div class="divider my-4"></div>
+
+        <h3 class="text-lg font-semibold mb-2">Storage</h3>
         <div class="overflow-x-auto">
           <table class="table table-sm">
             <thead><tr><th class="w-44">Storage</th><th>Location</th><th>Persistence</th></tr></thead>
@@ -240,7 +538,11 @@
             </tbody>
           </table>
         </div>
-        <p class="text-sm opacity-60 mt-3">Each DLQ entry includes: <code>doc_id</code>, <code>seq</code>, <code>method</code>, <code>status</code>, <code>error</code>, <code>timestamp</code>, and full <code>doc</code> body. The DLQ is <strong>not automatically drained</strong> — an operator or external process must replay failed entries.</p>
+        <p class="text-sm opacity-60 mt-3">Each DLQ entry includes: <code>doc_id</code>, <code>seq</code>, <code>method</code>, <code>status</code>, <code>error</code>, <code>reason</code>, <code>timestamp</code>, <code>target_url</code>, and full <code>doc</code> body. The DLQ is <strong>not automatically drained</strong> — an operator or external process must replay failed entries.</p>
+
+        <div class="alert alert-info mt-4 text-sm">
+          <span><strong>Tip:</strong> In the logs, every DLQ write is logged at <code>warn</code> level with category <code>DLQ</code>. Look for: <code class="text-xs">DLQ: entry written to CBL</code> (or <code>DLQ: entry written to file</code> for file fallback). The <code>doc_id</code> and <code>seq</code> are included in each log entry.</span>
+        </div>
 
         <div class="divider my-4"></div>
 
@@ -387,7 +689,7 @@
               <tr><td class="font-mono text-xs">changes_worker_output_requests_total</td><td>counter</td><td>Total output requests sent to the downstream endpoint</td></tr>
               <tr><td class="font-mono text-xs">changes_worker_output_errors_total</td><td>counter</td><td>Total output request errors</td></tr>
               <tr><td class="font-mono text-xs">changes_worker_output_success_total</td><td>counter</td><td>Total output requests that succeeded</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_output_skipped_total</td><td>counter</td><td>Total documents skipped at output (no mapper match or empty ops)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_output_skipped_total</td><td>counter</td><td>Total documents that did not reach output (no mapper match, null doc, empty mapping result, or ignored delete). See <a href="#skipped" class="link link-primary">Skipped Documents</a>.</td></tr>
               <tr><td class="font-mono text-xs">changes_worker_output_requests_by_method_total</td><td>counter</td><td>Output requests broken down by HTTP method (PUT, DELETE)</td></tr>
               <tr><td class="font-mono text-xs">changes_worker_output_errors_by_method_total</td><td>counter</td><td>Output errors broken down by HTTP method (PUT, DELETE)</td></tr>
               <tr><td class="font-mono text-xs">changes_worker_output_endpoint_up</td><td>gauge</td><td>Whether the output endpoint is reachable (1=up, 0=down)</td></tr>
@@ -416,7 +718,7 @@
             <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
             <tbody>
               <tr><td class="font-mono text-xs">changes_worker_mapper_matched_total</td><td>counter</td><td>Total documents matched by a schema mapper</td></tr>
-              <tr><td class="font-mono text-xs">changes_worker_mapper_skipped_total</td><td>counter</td><td>Total documents skipped (no mapper match)</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_mapper_skipped_total</td><td>counter</td><td>Total documents that did not match any schema mapping filter — these documents were not sent to the output</td></tr>
               <tr><td class="font-mono text-xs">changes_worker_mapper_errors_total</td><td>counter</td><td>Total mapper errors</td></tr>
               <tr><td class="font-mono text-xs">changes_worker_mapper_ops_total</td><td>counter</td><td>Total SQL operations generated by mappers</td></tr>
             </tbody>
@@ -657,7 +959,7 @@
               <tr><td class="font-semibold">source.match</td><td>Routes documents to the correct mapping based on a field value (e.g., <code>type: "order"</code>) or ID prefix.</td></tr>
               <tr><td class="font-semibold">Tables</td><td>Each mapping can target one or more SQL tables. Parent tables hold flat fields; child tables hold array elements with foreign keys back to the parent.</td></tr>
               <tr><td class="font-semibold">Columns</td><td>Map source JSON paths (e.g., <code>$.customer.name</code>) to target column names. Paths use simplified JSONPath syntax.</td></tr>
-              <tr><td class="font-semibold">Transforms</td><td>58 built-in functions across 6 categories. Can be chained: <code>trim().lowercase()</code>. See the <a href="/glossary" class="link link-primary">Glossary</a> for the full list.</td></tr>
+              <tr><td class="font-semibold">Transforms</td><td>58 built-in functions across 6 categories. Can be chained: <code>trim().toLowerCase()</code>. Common aliases are supported (e.g. <code>uppercase</code>, <code>upper</code>, <code>lowercase</code>, <code>lower</code>). If a transform name is not recognised, the value is written as-is and a <span class="badge badge-warning badge-xs">WARNING</span> is logged. See the <a href="/glossary" class="link link-primary">Glossary</a> for the full list.</td></tr>
               <tr><td class="font-semibold">Foreign Keys</td><td>Child tables reference parent tables via <code>foreign_key.column</code> → <code>foreign_key.references</code>.</td></tr>
               <tr><td class="font-semibold">Replace Strategy</td><td><code>delete_insert</code> (delete all child rows, re-insert) or <code>merge</code> (upsert individual rows).</td></tr>
               <tr><td class="font-semibold">JSON Output</td><td>Alternative to tables — remaps JSON keys with optional transforms for JSON-to-JSON pipelines.</td></tr>

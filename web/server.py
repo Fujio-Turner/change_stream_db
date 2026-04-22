@@ -14,6 +14,7 @@ from aiohttp import web
 import datetime
 
 from cbl_store import USE_CBL, CBLStore
+from pipeline_logging import configure_logging, log_event
 from schema.mapper import SchemaMapper
 from db.db_base import group_insert_ops, _MultiRowInsert
 from db.db_postgres import PostgresOutputForwarder
@@ -832,6 +833,27 @@ async def post_maintenance(request):
         results["reindex"] = store.reindex()
         results["optimize"] = store.optimize()
         all_ok = all(results.values())
+        ops = ", ".join(k for k, v in results.items() if v)
+        failed = ", ".join(k for k, v in results.items() if not v)
+        if all_ok:
+            log_event(
+                logger,
+                "info",
+                "CBL",
+                "manual maintenance completed (%s)" % ops,
+                operation="MAINTENANCE",
+                trigger="manual",
+            )
+        else:
+            log_event(
+                logger,
+                "warn",
+                "CBL",
+                "manual maintenance partial (%s ok, %s failed)"
+                % (ops or "none", failed),
+                operation="MAINTENANCE",
+                trigger="manual",
+            )
         return json_response(
             {
                 "ok": all_ok,
@@ -842,6 +864,14 @@ async def post_maintenance(request):
             }
         )
     except Exception as exc:
+        log_event(
+            logger,
+            "error",
+            "CBL",
+            "manual maintenance error: %s" % exc,
+            operation="MAINTENANCE",
+            trigger="manual",
+        )
         return json_response({"ok": False, "error": str(exc)}, status=500)
 
 
@@ -2202,6 +2232,16 @@ async def test_source(request):
 
 
 def create_app():
+    # Configure logging so log_event() calls write to the log file
+    try:
+        if USE_CBL:
+            log_cfg = (CBLStore().load_config() or {}).get("logging", {})
+        else:
+            log_cfg = json.loads(CONFIG_PATH.read_text()).get("logging", {})
+    except Exception:
+        log_cfg = {}
+    configure_logging(log_cfg)
+
     app = web.Application(middlewares=[cors_middleware])
 
     # Pages

@@ -205,6 +205,7 @@ _EXTRA_FIELDS = (
     "doc_type",
     "manifest_id",
     "maintenance_type",
+    "trigger",
     "duration_ms",
     "error_detail",
 )

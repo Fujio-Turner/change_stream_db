@@ -720,7 +720,13 @@ class BaseOutputForwarder(abc.ABC):
         """
         ic("send", doc.get("_id", doc.get("id", "unknown")) if doc else "None", method)
         if doc is None:
-            log_event(logger, "debug", "OUTPUT", "received None doc – skipping")
+            log_event(
+                logger,
+                "info",
+                "OUTPUT",
+                "received None doc – skipped",
+                doc_id="unknown",
+            )
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {"ok": True, "doc_id": "unknown", "skipped": True}
@@ -791,9 +797,9 @@ class BaseOutputForwarder(abc.ABC):
         if not mapper:
             log_event(
                 logger,
-                "debug",
+                "info",
                 "MAPPING",
-                "doc does not match any mapping filter – skipping",
+                "doc does not match any mapping filter – skipped",
                 doc_id=doc_id,
             )
             if self._metrics:
@@ -817,6 +823,13 @@ class BaseOutputForwarder(abc.ABC):
             self._metrics.inc("mapper_matched_total")
 
         if not ops:
+            log_event(
+                logger,
+                "info",
+                "MAPPING",
+                "mapper matched but produced no operations – skipped",
+                doc_id=doc_id,
+            )
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {"ok": True, "doc_id": doc_id, "ops": 0}

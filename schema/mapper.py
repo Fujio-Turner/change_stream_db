@@ -96,9 +96,9 @@ def apply_transform(value: Any, transform: str) -> Any:
         return str(value).lstrip() if value is not None else value
     if func == "trimend":
         return str(value).rstrip() if value is not None else value
-    if func == "touppercase":
+    if func in ("touppercase", "uppercase", "upper"):
         return str(value).upper() if value is not None else value
-    if func == "tolowercase":
+    if func in ("tolowercase", "lowercase", "lower"):
         return str(value).lower() if value is not None else value
     if func == "parseint":
         try:
@@ -206,12 +206,13 @@ def apply_transform(value: Any, transform: str) -> Any:
             pattern = pattern[1:-1]
         return bool(re.search(pattern, str(value)))
 
-    # Unrecognised transform – pass through unchanged
+    # Unrecognised transform – value is written untransformed
     log_event(
         logger,
-        "debug",
+        "warn",
         "MAPPING",
-        "unrecognised transform – passing value through",
+        "unknown transform '%s' – value written as-is (not transformed). "
+        "Check transform name in your mapping config." % func,
         error_detail=transform,
     )
     return value

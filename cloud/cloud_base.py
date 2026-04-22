@@ -434,7 +434,13 @@ class BaseCloudForwarder(abc.ABC):
         """
         ic("send", doc.get("_id", doc.get("id", "unknown")) if doc else "None", method)
         if doc is None:
-            log_event(logger, "debug", "OUTPUT", "received None doc – skipping")
+            log_event(
+                logger,
+                "info",
+                "OUTPUT",
+                "received None doc – skipped",
+                doc_id="unknown",
+            )
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {"ok": True, "doc_id": "unknown", "skipped": True}
@@ -447,6 +453,13 @@ class BaseCloudForwarder(abc.ABC):
         if is_delete:
             if self._on_delete == "ignore":
                 ic("send: delete ignored", doc_id, key)
+                log_event(
+                    logger,
+                    "info",
+                    "OUTPUT",
+                    "delete ignored (on_delete=ignore) – skipped",
+                    doc_id=doc_id,
+                )
                 if self._metrics:
                     self._metrics.inc("output_skipped_total")
                 return {"ok": True, "doc_id": doc_id, "key": key, "skipped": True}

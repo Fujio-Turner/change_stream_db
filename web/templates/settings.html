@@ -36,9 +36,11 @@
     </div>
 
     <div class="card bg-base-100 shadow-sm rounded-2xl">
-      <div class="card-body p-4 flex-row items-center gap-3">
-        <button class="btn btn-success btn-sm" onclick="saveConfig()">Save Config</button>
-        <button class="btn btn-ghost btn-sm" onclick="loadConfig()">Reset</button>
+      <div class="card-body p-4 flex-row items-center gap-3 flex-wrap">
+        <div class="flex items-center gap-2 ml-auto">
+          <button class="btn btn-ghost btn-sm" onclick="loadConfig()">Reset</button>
+          <button class="btn btn-success btn-sm" onclick="saveConfig()">Save Config</button>
+        </div>
       </div>
     </div>
 
@@ -1539,7 +1541,7 @@
         <div class="collapse-content flex flex-col gap-3">
           <div class="alert alert-info text-sm">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-            <span>Embedded Couchbase Lite CE database. Data is organized into scoped collections under <code>changes-worker.*</code>: <code>config</code>, <code>checkpoints</code>, <code>mappings</code>, and <code>dlq</code>.</span>
+            <span>Embedded Couchbase Lite CE database. Data is organized into scoped collections under <code>changes-worker.*</code>.</span>
           </div>
           <div class="grid grid-cols-2 gap-3 mb-3">
             <label class="form-control w-full">
@@ -1571,10 +1573,22 @@
             <table class="table table-xs table-zebra">
               <thead><tr><th>Scope</th><th>Collection</th><th>Documents</th></tr></thead>
               <tbody>
-                <tr><td rowspan="4" class="font-mono align-top">changes-worker</td><td class="font-mono">config</td><td>Worker configuration</td></tr>
-                <tr><td class="font-mono">checkpoints</td><td>Checkpoint sequence data</td></tr>
-                <tr><td class="font-mono">mappings</td><td>Schema mapping definitions</td></tr>
+                <tr><td rowspan="16" class="font-mono align-top">changes-worker</td><td class="font-mono">config</td><td>System configuration</td></tr>
+                <tr><td class="font-mono">inputs_changes</td><td>Input source definitions</td></tr>
+                <tr><td class="font-mono">outputs_rdbms</td><td>RDBMS destination configs</td></tr>
+                <tr><td class="font-mono">outputs_http</td><td>HTTP endpoint configs</td></tr>
+                <tr><td class="font-mono">outputs_cloud</td><td>Cloud storage configs</td></tr>
+                <tr><td class="font-mono">tables_rdbms</td><td>Reusable RDBMS table definitions</td></tr>
+                <tr><td class="font-mono">jobs</td><td>Data pipeline jobs</td></tr>
+                <tr><td class="font-mono">checkpoints</td><td>Change feed progress tracking</td></tr>
                 <tr><td class="font-mono">dlq</td><td>Dead letter queue entries</td></tr>
+                <tr><td class="font-mono">data_quality</td><td>Quality metrics</td></tr>
+                <tr><td class="font-mono">enrichments</td><td>Transformation rules</td></tr>
+                <tr><td class="font-mono">mappings</td><td>Legacy schema mappings <span class="badge badge-ghost badge-xs">deprecated</span></td></tr>
+                <tr><td class="font-mono">users</td><td>User accounts <span class="badge badge-ghost badge-xs">future</span></td></tr>
+                <tr><td class="font-mono">sessions</td><td>Session tokens <span class="badge badge-ghost badge-xs">future</span></td></tr>
+                <tr><td class="font-mono">audit_log</td><td>Audit trail <span class="badge badge-ghost badge-xs">future</span></td></tr>
+                <tr><td class="font-mono">notifications</td><td>System alerts <span class="badge badge-ghost badge-xs">future</span></td></tr>
               </tbody>
             </table>
           </div>

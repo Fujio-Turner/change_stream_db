@@ -376,9 +376,10 @@
                 '<td class="opacity-60">' + (out.pool_min || 2) + '-' + (out.pool_max || 10) + '</td>' +
                 '<td>' + usedByHtml(out.id) + '</td>' +
                 '<td class="text-right"><div class="flex gap-1 justify-end">' +
+                  delBtn +
                   '<button class="btn btn-ghost btn-xs" onclick="testOutput(\'rdbms\',\'' + oid + '\')">Test</button>' +
                   '<button class="btn btn-ghost btn-xs" onclick="showOutputForm(\'rdbms\',\'' + oid + '\')">Edit</button>' +
-                  delBtn + '</div></td>';
+                  '</div></td>';
             } else if (type === 'http') {
               row.innerHTML = '<td>' + statusBadge + '</td>' +
                 '<td class="font-semibold">' + oname + '</td>' +
@@ -388,9 +389,10 @@
                 '<td>' + (out.retry_count || 3) + '</td>' +
                 '<td>' + usedByHtml(out.id) + '</td>' +
                 '<td class="text-right"><div class="flex gap-1 justify-end">' +
+                  delBtn +
                   '<button class="btn btn-ghost btn-xs" onclick="testOutput(\'http\',\'' + oid + '\')">Test</button>' +
                   '<button class="btn btn-ghost btn-xs" onclick="showOutputForm(\'http\',\'' + oid + '\')">Edit</button>' +
-                  delBtn + '</div></td>';
+                  '</div></td>';
             } else if (type === 'cloud') {
               row.innerHTML = '<td>' + statusBadge + '</td>' +
                 '<td class="font-semibold">' + oname + '</td>' +
@@ -400,8 +402,9 @@
                 '<td class="opacity-60">' + escHtml(out.prefix || '—') + '</td>' +
                 '<td>' + usedByHtml(out.id) + '</td>' +
                 '<td class="text-right"><div class="flex gap-1 justify-end">' +
+                  delBtn +
                   '<button class="btn btn-ghost btn-xs" onclick="showOutputForm(\'cloud\',\'' + oid + '\')">Edit</button>' +
-                  delBtn + '</div></td>';
+                  '</div></td>';
             }
             tbody.appendChild(row);
           });

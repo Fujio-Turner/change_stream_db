@@ -3101,6 +3101,7 @@ class CBLMaintenanceScheduler:
                     "CBL",
                     "scheduled maintenance starting",
                     operation="MAINTENANCE",
+                    trigger="scheduled",
                     db_size_mb=info["db_size_mb"],
                 )
                 results = store.run_all_maintenance()
@@ -3111,6 +3112,7 @@ class CBLMaintenanceScheduler:
                     "CBL",
                     "scheduled maintenance complete: %s" % results,
                     operation="MAINTENANCE",
+                    trigger="scheduled",
                 )
             except Exception as exc:
                 log_event(
@@ -3119,6 +3121,7 @@ class CBLMaintenanceScheduler:
                     "CBL",
                     "scheduled maintenance error: %s" % exc,
                     operation="MAINTENANCE",
+                    trigger="scheduled",
                     error_detail=str(exc)[:200],
                 )
 
