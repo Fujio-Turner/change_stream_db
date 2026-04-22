@@ -328,7 +328,7 @@ def infer_operation(
     """
     if method == "DELETE":
         return "DELETE"
-    if change and change.get("deleted"):
+    if change and (change.get("deleted") or change.get("removed")):
         return "DELETE"
     if method == "GET":
         return "SELECT"

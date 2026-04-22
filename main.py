@@ -167,6 +167,9 @@ class MetricsCollector:
         # _changes feed content tracking (always counted, regardless of filter settings)
         self.feed_deletes_seen_total: int = 0  # changes with deleted=true in the feed
         self.feed_removes_seen_total: int = 0  # changes with removed=true in the feed
+        self.deletes_forwarded_total: int = (
+            0  # Tombstones forwarded to output (deleted=true, not filtered)
+        )
 
         # Doc fetch
         self.doc_fetch_requests_total: int = 0
@@ -599,6 +602,11 @@ class MetricsCollector:
             "changes_worker_feed_removes_seen_total",
             "Total changes with removed=true seen in the feed.",
             self.feed_removes_seen_total,
+        )
+        _counter(
+            "changes_worker_deletes_forwarded_total",
+            "Total tombstones (deleted=true) forwarded to the output (not filtered).",
+            self.deletes_forwarded_total,
         )
 
         # -- Bytes --

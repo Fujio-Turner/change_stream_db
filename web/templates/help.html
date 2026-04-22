@@ -36,6 +36,7 @@
           <a href="#checkpoint" class="badge badge-primary badge-outline">Checkpoints</a>
           <a href="#failures" class="badge badge-error badge-outline">Failure Modes</a>
           <a href="#skipped" class="badge badge-ghost badge-outline">Skipped Documents</a>
+          <a href="#deletes" class="badge badge-error badge-outline">Deletes</a>
           <a href="#pending" class="badge badge-primary badge-outline">Pending</a>
           <a href="#dlq" class="badge badge-warning badge-outline">Dead Letter Queue</a>
           <a href="#endpoints" class="badge badge-info badge-outline">API Endpoints</a>
@@ -244,6 +245,12 @@
                 <td>Made it to the worker but was dropped — no mapper match, null doc, empty mapping result, or ignored delete.</td>
               </tr>
               <tr>
+                <td><span class="badge badge-error badge-sm">Deletes</span></td>
+                <td>Worker → Output</td>
+                <td>✅ Yes (DELETE)</td>
+                <td>Tombstone (<code>deleted=true</code>) from the source. Forwarded to the output as a DELETE operation — removes the corresponding rows/objects from the target. See <a href="#deletes" class="link link-primary">Deletes</a>.</td>
+              </tr>
+              <tr>
                 <td><span class="badge badge-error badge-sm">Error → DLQ</span></td>
                 <td>Output</td>
                 <td>✅ Attempted</td>
@@ -307,6 +314,89 @@
         </div>
         <div class="alert mt-2 text-sm">
           <span><strong>Note:</strong> Skipped documents also appear in the <strong>Document Fate</strong> chart on the Dashboard when you click the <em>changes_worker</em> node. If the skipped count is unexpectedly high, check that your schema mapping filters and transform names are correct.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Deletes (Tombstones) -->
+    <div id="deletes" class="card bg-base-100 shadow rounded-2xl">
+      <div class="card-body p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span class="badge badge-error">Deletes</span> Deletes &amp; Tombstones
+        </h2>
+        <p class="opacity-80 mb-3">The <code>_changes</code> feed can signal that a document should be removed from the consumer's perspective in two ways:</p>
+        <div class="overflow-x-auto mb-3">
+          <table class="table table-sm">
+            <thead><tr><th class="w-40">Flag</th><th>Meaning</th><th>Document still exists?</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-mono text-xs font-semibold">"deleted": true</td>
+                <td>The document was permanently deleted at the source. The change entry is a <strong>tombstone</strong> — a minimal record with just <code>_id</code>, <code>_rev</code>, and <code>_deleted</code>.</td>
+                <td>❌ No — the document is gone.</td>
+              </tr>
+              <tr>
+                <td class="font-mono text-xs font-semibold">"removed": true</td>
+                <td>The document still exists at the source, but <strong>you</strong> (the feed consumer) no longer have access to it — typically because it was removed from your channel, or your access was revoked. From the consumer's perspective this is equivalent to a delete.</td>
+                <td>✅ Yes — but not for you.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="opacity-80 mb-3">Both flags are treated identically by the pipeline: the document is forwarded to the output as a <strong>DELETE</strong> operation (unless filtered). The dashboard's <strong>Deletes</strong> counter tracks the combined total of both <code>deleted</code> and <code>removed</code> entries that were forwarded.</p>
+
+        <h3 class="font-semibold mt-4 mb-2">What Happens to a Delete / Remove?</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-52">Outcome</th><th>When</th><th>What Happens</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><span class="badge badge-warning badge-sm">Filtered</span></td>
+                <td><code>ignore_delete: true</code> or <code>ignore_remove: true</code></td>
+                <td>The entry is silently dropped before it reaches the output. Counted in <code>changes_deleted_total</code> or <code>changes_removed_total</code> (filtered).</td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-error badge-sm">Forwarded → DELETE</span></td>
+                <td><code>ignore_delete: false</code> and <code>ignore_remove: false</code> (defaults)</td>
+                <td>The entry is sent to the output as a DELETE operation. For RDBMS: rows are deleted from all mapped tables. For HTTP: a DELETE request is sent. For Cloud: the object is deleted (or tombstoned, per <code>on_delete</code> setting). Counted in <code>deletes_forwarded_total</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="font-semibold mt-4 mb-2">RDBMS Delete Handling</h3>
+        <p class="opacity-80 mb-2">When a tombstone reaches an RDBMS output, the mapper generates <code>DELETE</code> SQL statements. Each table in the mapping has an <code>on_delete</code> setting:</p>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-40">on_delete</th><th>Behavior</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="font-mono text-xs font-semibold">"delete"</td>
+                <td>Generate <code>DELETE FROM table WHERE doc_id = $1</code>. For multi-table mappings, child tables are deleted first (FK safety), then the parent, all inside a transaction.</td>
+              </tr>
+              <tr>
+                <td class="font-mono text-xs font-semibold">"ignore"</td>
+                <td>Skip this table — the row is left in place even though the source document was deleted.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="font-semibold mt-4 mb-2">Related Metrics</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead><tr><th class="w-80">Metric</th><th class="w-20">Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">changes_worker_feed_deletes_seen_total</td><td>counter</td><td>Total entries with <code>deleted=true</code> seen in the raw feed — always counted regardless of filter settings.</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_feed_removes_seen_total</td><td>counter</td><td>Total entries with <code>removed=true</code> seen in the raw feed — always counted regardless of filter settings.</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_deletes_forwarded_total</td><td>counter</td><td>Deletes + removes that passed filtering and were forwarded to the output as DELETE operations.</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_changes_deleted_total</td><td>counter</td><td>Deletes filtered out (skipped) because <code>ignore_delete: true</code>.</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_changes_removed_total</td><td>counter</td><td>Removes filtered out (skipped) because <code>ignore_remove: true</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="alert alert-info mt-4 text-sm">
+          <span><strong>Tip:</strong> The relationship is: <code>deletes_forwarded = (feed_deletes_seen − changes_deleted) + (feed_removes_seen − changes_removed)</code>. With both <code>ignore_delete</code> and <code>ignore_remove</code> set to <code>false</code> (the defaults), <code>deletes_forwarded</code> equals <code>feed_deletes_seen + feed_removes_seen</code>.</span>
         </div>
       </div>
     </div>
@@ -649,6 +739,7 @@
               <tr><td class="font-mono text-xs">changes_worker_changes_removed_total</td><td>counter</td><td>Total removed changes filtered out</td></tr>
               <tr><td class="font-mono text-xs">changes_worker_feed_deletes_seen_total</td><td>counter</td><td>Total changes with deleted=true seen in the feed</td></tr>
               <tr><td class="font-mono text-xs">changes_worker_feed_removes_seen_total</td><td>counter</td><td>Total changes with removed=true seen in the feed</td></tr>
+              <tr><td class="font-mono text-xs">changes_worker_deletes_forwarded_total</td><td>counter</td><td>Total tombstones (deleted=true) forwarded to the output (not filtered)</td></tr>
               <tr><td class="font-mono text-xs">changes_worker_changes_request_time_seconds</td><td>summary</td><td>Time to complete a _changes HTTP request (p50, p90, p99)</td></tr>
             </tbody>
           </table>

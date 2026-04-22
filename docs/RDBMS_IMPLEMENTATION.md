@@ -578,7 +578,14 @@ mappings/
 
 ## Delete Handling
 
-When the `_changes` feed reports `deleted=true`:
+When the `_changes` feed reports `deleted=true` (a tombstone), the
+document is forwarded to the output as a DELETE operation.  The
+`deletes_forwarded_total` metric tracks how many tombstones reached
+the RDBMS output.  If `ignore_delete=true` in the processing config,
+tombstones are filtered out before reaching the output and counted in
+`changes_deleted_total` instead.
+
+When a tombstone reaches the RDBMS output:
 
 ### Single-Table
 

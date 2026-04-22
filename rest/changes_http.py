@@ -980,6 +980,33 @@ async def _process_changes_batch(
             metrics.inc("changes_deleted_total", deleted_count)
             metrics.inc("changes_removed_total", removed_count)
             metrics.inc("changes_filtered_total", deleted_count + removed_count)
+        deletes_forwarded = (feed_deletes - deleted_count) + (
+            feed_removes - removed_count
+        )
+        if deletes_forwarded > 0:
+            metrics.inc("deletes_forwarded_total", deletes_forwarded)
+
+    total_tombstones = feed_deletes + feed_removes
+    if total_tombstones:
+        del_fwd = feed_deletes - deleted_count
+        rem_fwd = feed_removes - removed_count
+        log_event(
+            logger,
+            "info",
+            "CHANGES",
+            "tombstones in batch: %d deleted + %d removed "
+            "(forwarded=%d, filtered=%d)"
+            % (
+                feed_deletes,
+                feed_removes,
+                del_fwd + rem_fwd,
+                deleted_count + removed_count,
+            ),
+            deletes_total=feed_deletes,
+            removes_total=feed_removes,
+            tombstones_forwarded=del_fwd + rem_fwd,
+            tombstones_filtered=deleted_count + removed_count,
+        )
 
     if deleted_count or removed_count:
         log_event(
@@ -991,25 +1018,31 @@ async def _process_changes_batch(
             filtered_count=len(filtered),
         )
 
-    # If include_docs was false, fetch full docs
+    # If include_docs was false, fetch full docs.
+    # Skip deleted/removed entries — they only need doc_id for DELETE,
+    # no point fetching a tombstone body from the server.
     docs_by_id: dict[str, dict] = {}
     if not feed_cfg.get("include_docs") and filtered:
-        batch_size = proc_cfg.get("get_batch_number", 100)
-        fetched = await fetch_docs(
-            http,
-            base_url,
-            filtered,
-            basic_auth,
-            auth_headers,
-            src,
-            max_concurrent,
-            batch_size,
-            metrics=metrics,
-        )
-        for doc in fetched:
-            docs_by_id[doc.get("_id", "")] = doc
-        if metrics:
-            metrics.inc("docs_fetched_total", len(fetched))
+        fetch_rows = [
+            r for r in filtered if not r.get("deleted") and not r.get("removed")
+        ]
+        if fetch_rows:
+            batch_size = proc_cfg.get("get_batch_number", 100)
+            fetched = await fetch_docs(
+                http,
+                base_url,
+                fetch_rows,
+                basic_auth,
+                auth_headers,
+                src,
+                max_concurrent,
+                batch_size,
+                metrics=metrics,
+            )
+            for doc in fetched:
+                docs_by_id[doc.get("_id", "")] = doc
+            if metrics:
+                metrics.inc("docs_fetched_total", len(fetched))
 
     # Process changes – send each doc to the output
     output_failed = False
@@ -1025,7 +1058,12 @@ async def _process_changes_batch(
                 if include_docs:
                     doc = change.get("doc", change)
                 else:
-                    doc = docs_by_id.get(doc_id, change)
+                    doc = docs_by_id.get(doc_id)
+                    if doc is None:
+                        # Deleted/removed entries are not fetched via
+                        # _bulk_get — build a minimal doc with _id so
+                        # the mapper can generate DELETE WHERE doc_id=X.
+                        doc = {"_id": doc_id, **change}
                 # ── ATTACHMENT stage (between MIDDLE and RIGHT) ──
                 if has_attachments:
                     try:
@@ -1042,7 +1080,11 @@ async def _process_changes_batch(
                         )
                         raise
 
-                method = delete_method if change.get("deleted") else write_method
+                method = (
+                    delete_method
+                    if change.get("deleted") or change.get("removed")
+                    else write_method
+                )
                 if log_trace:
                     op = infer_operation(change=change, doc=doc, method=method)
                     log_event(

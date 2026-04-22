@@ -935,7 +935,7 @@ class OutputForwarder:
 def determine_method(
     change: dict, write_method: str = "PUT", delete_method: str = "DELETE"
 ) -> str:
-    if change.get("deleted"):
+    if change.get("deleted") or change.get("removed"):
         return delete_method
     return write_method
 

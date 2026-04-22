@@ -39,7 +39,7 @@ This includes:
 | Stage | What it does |
 |---|---|
 | **LEFT** | Consume `_changes` on SG / App Services / Edge Server / CouchDB via longpoll, continuous (2-phase: batched catch-up → streaming), websocket (SG / App Services only), SSE (Edge Server only), or eventsource (CouchDB). Returns a batch of changes with `last_seq`. |
-| **MIDDLE** | Filter (skip deletes/removes), optionally fetch full docs via `_bulk_get`, serialize to the output format, manage checkpoints. |
+| **MIDDLE** | Filter (skip deletes/removes when `ignore_delete`/`ignore_remove` enabled), forward tombstones (`deleted=true`) as DELETE operations when not filtered, optionally fetch full docs via `_bulk_get`, serialize to the output format, manage checkpoints. |
 | **RIGHT** | Forward each doc to the output: configurable HTTP method (`PUT`/`POST`/`PATCH`/`DELETE`) to a REST endpoint with URL templating, write to an RDBMS via the `db/` module (UPSERT/DELETE with optional multi-table transactions), or upload to a cloud blob store via the `cloud/` module (S3, GCS, Azure Blob). Track success/failure per doc. Periodic heartbeat monitors endpoint health. |
 
 The admin UI dashboard mirrors this pipeline with a [charts-first grouped layout](ADMIN_UI.md#charts-row) showing live metrics for each stage.
@@ -719,6 +719,10 @@ increase(changes_worker_backpressure_delays_total[5m]) > 10
                                     │                                 │
   _changes ──► filter ──► fetch ──► send ──► 2xx/OK ──► checkpoint ──►  │
     (LEFT)     (MIDDLE)   (MIDDLE)  (RIGHT)             (MIDDLE)    sleep│
+                 │                                                       │
+                 │  deleted=true? ──► DELETE method ──► RDBMS: DELETE rows│
+                 │                                     HTTP:  DELETE req  │
+                 │                                     Cloud: delete obj  │
                                     │ HTTP: PUT/POST/PATCH/DELETE to endpoint │
                                     │ DB:   UPSERT/DELETE via db/ module │
                                     │ Cloud: upload to S3/GCS/Azure      │

@@ -213,6 +213,50 @@ initial sync completes these overrides are removed and the user's
 `processing.ignore_delete` / `processing.ignore_remove` settings take
 effect.
 
+### Tombstone (Delete & Remove) Tracking
+
+The `_changes` feed signals "remove this document" in two ways:
+
+| Flag | Meaning | Document still exists at source? |
+|---|---|---|
+| `"deleted": true` | The document was permanently deleted.  The change entry is a **tombstone** — a minimal record with just `_id`, `_rev`, and `_deleted`. | No |
+| `"removed": true` | The document still exists, but the consumer no longer has access (e.g., removed from the consumer's channel, or access revoked). | Yes — but not for the consumer |
+
+Both are treated identically by the pipeline: the document is forwarded
+to the output as a **DELETE** operation (unless filtered out by
+`ignore_delete` / `ignore_remove`).
+
+The worker tracks these at three levels:
+
+1. **`feed_deletes_seen_total`** / **`feed_removes_seen_total`** —
+   always incremented for every `deleted=true` / `removed=true` entry
+   in the raw feed, regardless of filter settings.
+2. **`deletes_forwarded_total`** — incremented for deletes **and**
+   removes that survive filtering and are forwarded to the output as
+   DELETE operations.
+3. **`changes_deleted_total`** / **`changes_removed_total`** —
+   incremented for entries that are filtered out (skipped) because
+   `ignore_delete=true` / `ignore_remove=true`, or during CouchDB
+   initial sync.
+
+The relationship is:
+
+```
+deletes_forwarded = (feed_deletes_seen − changes_deleted)
+                  + (feed_removes_seen − changes_removed)
+```
+
+When `ignore_delete=false` and `ignore_remove=false` (the defaults),
+all entries are forwarded and the filtered counters stay at zero.
+
+**What happens when a delete/remove reaches the output:**
+
+| Output type | Action |
+|---|---|
+| **RDBMS** | `DELETE FROM table WHERE doc_id = $1` for each mapped table (child tables first for FK safety, wrapped in a transaction for multi-table mappings). Controlled per-table by `on_delete: "delete"` or `"ignore"`. For tombstones with minimal doc bodies, the mapper bypasses the content-based filter and generates DELETE ops using only the `doc_id`. |
+| **HTTP** | Sends a DELETE request to the target URL. |
+| **Cloud** | Deletes the object, uploads a tombstone marker, or ignores — per the `on_delete` setting (`"delete"`, `"tombstone"`, or `"ignore"`). |
+
 ### Continuous / WebSocket Initial Sync
 
 For `feed_type=continuous` and `feed_type=websocket`, the worker uses a
@@ -451,6 +495,7 @@ run), while keeping the detail available in DEBUG for troubleshooting.
 | Level | What is logged |
 |---|---|
 | **INFO** | Source type, batch completion summary (succeeded/failed counts) |
+| **INFO** | Tombstones forwarded count (when `deletes_forwarded > 0`) |
 | **DEBUG** | Filter results (input count, filtered count) |
 
 ---

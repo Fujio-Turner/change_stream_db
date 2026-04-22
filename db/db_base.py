@@ -755,10 +755,22 @@ class BaseOutputForwarder(abc.ABC):
         # Find the first matching mapper and map the document.
         # This is CPU-bound (JSONPath extraction + transforms), so offload
         # to the map_executor thread pool when available.
+        #
+        # For deletes (tombstones), the doc body is minimal — typically just
+        # {"_id": "...", "_deleted": true} — so the mapper's content-based
+        # filter (e.g. type == "order") won't match.  Since a DELETE only
+        # needs the doc_id / primary key, we fall back to trying ALL mappers
+        # when no content match is found and is_delete is True.
         def _match_and_map():
             for m in self._mappers:
                 if m.matches(doc):
                     return m, m.map_document(doc, is_delete=is_delete)
+            # Tombstone fallback: try first mapper that produces DELETE ops
+            if is_delete:
+                for m in self._mappers:
+                    result = m.map_document(doc, is_delete=True)
+                    if result[0]:  # has ops
+                        return m, result
             return None, None
 
         try:
@@ -795,13 +807,22 @@ class BaseOutputForwarder(abc.ABC):
             }
 
         if not mapper:
-            log_event(
-                logger,
-                "info",
-                "MAPPING",
-                "doc does not match any mapping filter – skipped",
-                doc_id=doc_id,
-            )
+            if is_delete:
+                log_event(
+                    logger,
+                    "info",
+                    "MAPPING",
+                    "tombstone (deleted/removed) does not match any mapping – skipped",
+                    doc_id=doc_id,
+                )
+            else:
+                log_event(
+                    logger,
+                    "info",
+                    "MAPPING",
+                    "doc does not match any mapping filter – skipped",
+                    doc_id=doc_id,
+                )
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
                 self._metrics.inc("mapper_skipped_total")
