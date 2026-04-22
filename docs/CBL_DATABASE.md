@@ -44,13 +44,20 @@ When CBL is not available (e.g., local development on macOS), the system falls b
 
 ## Scopes & Collections
 
-All worker data lives in the `changes-worker` scope, separated into four collections:
+All worker data lives in the `changes-worker` scope. The full v2.0 collection list is in [`DESIGN_2_0.md`](DESIGN_2_0.md#collections). Core collections:
 
 | Scope | Collection | Document Types | Purpose |
 |---|---|---|---|
 | `changes-worker` | `config` | `config` | Full worker configuration |
-| `changes-worker` | `checkpoints` | `checkpoint:{uuid}`, `manifest:checkpoints` | Checkpoint sequence fallback data |
-| `changes-worker` | `mappings` | `mapping:{filename}`, `manifest:mappings` | Schema mapping definitions |
+| `changes-worker` | `inputs_changes` | `inputs_changes` | Array of `_changes` feed source definitions |
+| `changes-worker` | `outputs_rdbms` | `outputs_rdbms` | Array of RDBMS output connection configs |
+| `changes-worker` | `outputs_http` | `outputs_http` | Array of HTTP/REST output configs |
+| `changes-worker` | `outputs_cloud` | `outputs_cloud` | Array of cloud blob output configs |
+| `changes-worker` | `outputs_stdout` | `outputs_stdout` | Array of stdout output configs |
+| `changes-worker` | `tables_rdbms` | `tables_rdbms` | Reusable RDBMS table definitions library (DDL + parsed columns) |
+| `changes-worker` | `jobs` | `job::{uuid}` | Pipeline job definitions (input → output with tables + mapping) |
+| `changes-worker` | `checkpoints` | `checkpoint::{uuid}` | Per-job checkpoint state |
+| `changes-worker` | `mappings` | `mapping:{filename}`, `manifest:mappings` | Schema mapping definitions (legacy — migrating into jobs) |
 | `changes-worker` | `dlq` | `dlq:{doc_id}:{timestamp}`, `dlq:meta` | Failed output documents (dead letter queue) |
 
 ---

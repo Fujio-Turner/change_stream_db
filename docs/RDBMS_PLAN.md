@@ -340,3 +340,4 @@ Add the new engine to the factory function in `db/__init__.py`.
 
 - **Schema auto-creation:** We do **not** auto-create tables. The user creates tables in their database, then uses "Import from Database" or "Upload DDL" in the Schema UI to import the schema into a mapping file.
 - **Connection pooling lifecycle:** Pool is created once at startup via `connect()`. The pool handles reconnection on failure internally (`asyncpg` manages this).
+- **Table definitions storage:** Table DDL definitions have moved to a standalone `tables_rdbms` CBL collection (reusable library). Tables are copied into jobs on selection — the job owns its copy. The `outputs_rdbms.src[].tables[]` field remains for backward compatibility. See [`SCHEMA_MAPPING_IN_JOBS.md`](SCHEMA_MAPPING_IN_JOBS.md#rdbms-table-definitions-new-tables_rdbms-collection) for the full design and [`cbl_store.py`](../cbl_store.py) for the implementation.

@@ -499,6 +499,12 @@
 | DELETE | `/api/v2/jobs/{id}`                         | `api_delete_job`               |
 | POST   | `/api/v2/jobs/{id}/refresh-input`           | `api_refresh_job_input`        |
 | POST   | `/api/v2/jobs/{id}/refresh-output`          | `api_refresh_job_output`       |
+| GET    | `/api/v2/tables_rdbms`                      | `api_get_tables_rdbms`         |
+| POST   | `/api/v2/tables_rdbms`                      | `api_post_tables_rdbms`        |
+| GET    | `/api/v2/tables_rdbms/{id}`                 | `api_get_table_rdbms_entry`    |
+| PUT    | `/api/v2/tables_rdbms/{id}`                 | `api_put_table_rdbms_entry`    |
+| DELETE | `/api/v2/tables_rdbms/{id}`                 | `api_delete_table_rdbms_entry` |
+| GET    | `/api/v2/tables_rdbms/{id}/used-by`         | `api_get_table_rdbms_used_by`  |
 
 ---
 
@@ -526,6 +532,30 @@
     "poll_interval_seconds": 10,
     "active_only": true,
     "include_docs": false
+  }
+}
+```
+
+### Table Definition Entry (saved in `tables_rdbms.tables[]`)
+
+```json
+{
+  "id": "tbl-orders",
+  "name": "orders",
+  "engine_hint": "postgres",
+  "sql": "CREATE TABLE IF NOT EXISTS orders (doc_id TEXT PRIMARY KEY, rev TEXT, status TEXT, total NUMERIC(10,2))",
+  "columns": [
+    { "name": "doc_id", "type": "TEXT", "primary_key": true, "nullable": false },
+    { "name": "rev", "type": "TEXT", "primary_key": false, "nullable": true },
+    { "name": "status", "type": "TEXT", "primary_key": false, "nullable": true },
+    { "name": "total", "type": "NUMERIC(10,2)", "primary_key": false, "nullable": true }
+  ],
+  "parent_table": "",
+  "foreign_key": {},
+  "meta": {
+    "created_at": "2026-04-20T10:00:00Z",
+    "updated_at": "2026-04-22T14:30:00Z",
+    "source": "ddl_upload | db_introspect | manual"
   }
 }
 ```
@@ -649,3 +679,9 @@
 | `POST /api/v2/jobs/{id}/refresh-output`   | Re-copy output into job — **no UI calls this**|
 | `GET /api/db/drivers`                     | List available DB drivers — **no UI calls this** |
 | `GET /api/dlq/explain`                    | Explain DLQ entry — **no UI calls this**     |
+| `GET /api/v2/tables_rdbms`               | List all RDBMS table definitions — **no UI calls this yet** |
+| `POST /api/v2/tables_rdbms`              | Save table definitions — **no UI calls this yet** |
+| `GET /api/v2/tables_rdbms/{id}`          | Get single table definition — **no UI calls this yet** |
+| `PUT /api/v2/tables_rdbms/{id}`          | Update single table — **no UI calls this yet** |
+| `DELETE /api/v2/tables_rdbms/{id}`       | Delete single table — **no UI calls this yet** |
+| `GET /api/v2/tables_rdbms/{id}/used-by`  | List jobs using a table — **no UI calls this yet** |

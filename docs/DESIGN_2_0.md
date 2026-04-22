@@ -65,7 +65,7 @@ Today's `config.json` is a single monolithic document that holds **everything** 
 
 ### Collections
 
-The CBL database gets **15** collections in the `changes-worker` scope, organized by concern:
+The CBL database gets **16** collections in the `changes-worker` scope, organized by concern:
 
 #### Pipeline Collections (core data model)
 
@@ -76,6 +76,7 @@ The CBL database gets **15** collections in the `changes-worker` scope, organize
 | `outputs_http` | 1 document: `outputs_http` | Array of HTTP/REST output configs |
 | `outputs_cloud` | 1 document: `outputs_cloud` | Array of cloud blob output configs (S3, GCS, Azure) |
 | `outputs_stdout` | 1 document: `outputs_stdout` | Array of stdout output configs |
+| `tables_rdbms` | 1 document: `tables_rdbms` | Reusable RDBMS table definitions library (DDL + parsed columns). Tables are copied into jobs on selection; the job owns its copy. See [`SCHEMA_MAPPING_IN_JOBS.md`](SCHEMA_MAPPING_IN_JOBS.md#rdbms-table-definitions-new-tables_rdbms-collection). |
 | `jobs` | N documents: `job::{uuid}` | Each job connects one input → one output with a schema mapping |
 
 #### Runtime Collections
@@ -379,6 +380,50 @@ RDBMS output destinations. Each `src[]` entry defines a database connection and 
 - `engine` differentiates RDBMS flavors: `"postgres"`, `"mysql"`, `"mssql"`, `"oracle"`.
 - `tables[]` holds DDL definitions. The job runner can auto-create tables on startup.
 - Each `tables[]` entry has `active` flag to enable/disable individual tables without deleting them.
+
+> **Note:** Table definitions are migrating to the standalone `tables_rdbms` collection (see below). The `tables[]` field in `outputs_rdbms` remains for backward compatibility and as a "default tables" suggestion when creating new jobs, but the job's own embedded `outputs[].tables[]` is authoritative at runtime. See [`SCHEMA_MAPPING_IN_JOBS.md`](SCHEMA_MAPPING_IN_JOBS.md#rdbms-table-definitions-new-tables_rdbms-collection) for the full design.
+
+---
+
+### `tables_rdbms` Document
+
+**Collection:** `tables_rdbms`  
+**Doc ID:** `tables_rdbms`
+
+A library of reusable RDBMS table definitions. Each entry stores the raw DDL and a parsed `columns[]` array. Tables are copied into jobs on selection — the job owns its copy, editing the job's copy does not affect the library (and vice versa).
+
+```json
+{
+  "type": "tables_rdbms",
+  "tables": [
+    {
+      "id": "tbl-orders",
+      "name": "orders",
+      "engine_hint": "postgres",
+      "sql": "CREATE TABLE IF NOT EXISTS orders (doc_id TEXT PRIMARY KEY, rev TEXT, status TEXT, customer_id TEXT, total NUMERIC(10,2))",
+      "columns": [
+        { "name": "doc_id", "type": "TEXT", "primary_key": true, "nullable": false },
+        { "name": "rev", "type": "TEXT", "primary_key": false, "nullable": true },
+        { "name": "status", "type": "TEXT", "primary_key": false, "nullable": true },
+        { "name": "customer_id", "type": "TEXT", "primary_key": false, "nullable": true },
+        { "name": "total", "type": "NUMERIC(10,2)", "primary_key": false, "nullable": true }
+      ],
+      "meta": {
+        "created_at": "2026-04-20T10:00:00Z",
+        "updated_at": "2026-04-22T14:30:00Z",
+        "source": "ddl_upload"
+      }
+    }
+  ]
+}
+```
+
+**Key points:**
+- `sql` is the raw DDL — executed against the target DB to create/alter the table.
+- `columns[]` is the parsed representation — used by the UI (column pickers, mapping editor, dry-run type validation).
+- `engine_hint` records which engine the DDL was written for, but doesn't prevent use with a different engine.
+- `parent_table` and `foreign_key` (optional) track table relationships for auto-suggesting child tables.
+- When a table is selected for a job, a copy is embedded in `job.outputs[].tables[]` with a `library_ref` field pointing back to the library entry ID.
 
 ---
 

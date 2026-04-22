@@ -10,6 +10,7 @@ Database: changes_worker_db
     ├── outputs_http            (n docs) — HTTP endpoint configs
     ├── outputs_cloud           (n docs) — Cloud storage configs
     ├── outputs_stdout          (n docs) — Console output configs
+    ├── tables_rdbms            (1 doc) — Reusable RDBMS table definitions
     ├── jobs                    (n docs) — Data pipeline jobs
     ├── checkpoints             (n docs) — Change feed progress tracking
     ├── dlq                     (n docs) — Failed documents
@@ -34,6 +35,7 @@ Database: changes_worker_db
 | outputs_http | 1-n | HTTP endpoints | id | — |
 | outputs_cloud | 1-n | Cloud storage | id | — |
 | outputs_stdout | 1-n | Console logging | id | — |
+| tables_rdbms | 1 | RDBMS table definitions library | id | — |
 | jobs | 1-n | Pipeline jobs | id, enabled | — |
 | checkpoints | 1-n | Progress tracking | client_id | — |
 | dlq | 1-n | Failed docs | doc_id_original, time | Default 7d |

@@ -1447,6 +1447,7 @@ Every create/edit form uses a DaisyUI **collapse** at the bottom to hide optimiz
 
 1. Should the Job Builder support **multiple inputs** per job? (Current API supports `inputs[]` array but UI could start with single-input)
 2. Should we allow **inline creation** of Inputs/Outputs from the Job Builder, or always link out to the Wizards/dedicated pages?
-3. Should the Schema Mapping selector open in a **modal**, a **new tab**, or an **inline panel**?
-4. Should we add a **"Test Job"** button that does a dry-run before saving?
+3. ~~Should the Schema Mapping selector open in a **modal**, a **new tab**, or an **inline panel**?~~ → **Resolved:** Full-screen modal with iframe to `/schema?job_mode=true`. See [`SCHEMA_MAPPING_IN_JOBS.md`](SCHEMA_MAPPING_IN_JOBS.md).
+4. ~~Should we add a **"Test Job"** button that does a dry-run before saving?~~ → **Resolved:** Yes, `POST /api/v2/jobs/dry-run`. See [`SCHEMA_MAPPING_IN_JOBS.md`](SCHEMA_MAPPING_IN_JOBS.md#dry-run-feature).
 5. How should we handle editing an existing job that's currently **running**? (Stop first? Warn?)
+6. ~~Where do RDBMS table definitions live?~~ → **Resolved:** Standalone `tables_rdbms` CBL collection (reusable library). Tables are copied into jobs on selection. See [`SCHEMA_MAPPING_IN_JOBS.md`](SCHEMA_MAPPING_IN_JOBS.md#rdbms-table-definitions-new-tables_rdbms-collection). **Implemented:** `cbl_store.py` + `rest/api_v2.py` + 23 tests passing.

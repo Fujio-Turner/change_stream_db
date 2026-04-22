@@ -67,6 +67,7 @@
               <li id="jbStep1" class="step step-error" data-content="✕">Source Selected</li>
               <li id="jbStep2" class="step step-error" data-content="✕">Process Configured</li>
               <li id="jbStep3" class="step step-error" data-content="✕">Output Selected</li>
+              <li id="jbStep4" class="step step-error" data-content="✕">Dry Run</li>
             </ul>
           </div>
         </div>
@@ -192,13 +193,27 @@
 
               <div class="divider text-xs opacity-60">Schema Mapping</div>
 
-              <div>
-                <label class="label label-text text-xs font-semibold">Mapping File</label>
-                <select id="jbMappingSelect" class="select select-bordered select-sm w-full">
+              <div class="space-y-2">
+                <label class="label label-text text-xs font-semibold">Mapping</label>
+
+                <!-- Pick existing mapping -->
+                <select id="jbMappingSelect" class="select select-bordered select-sm w-full" onchange="onMappingSelectChange()">
                   <option value="">None (pass-through)</option>
                   <!-- populated from GET /api/mappings -->
                 </select>
-                <a href="/schema" target="_blank" class="text-xs text-primary mt-1 inline-block">Create new mapping →</a>
+
+                <!-- Action buttons -->
+                <div class="flex gap-2 flex-wrap">
+                  <button class="btn btn-primary btn-xs" onclick="openCreateMapping()">+ New Mapping</button>
+                  <button class="btn btn-ghost btn-xs" id="jbEditMappingBtn" onclick="openEditMapping()" disabled>Edit Selected</button>
+                  <button class="btn btn-ghost btn-xs" id="jbPreviewMappingBtn" onclick="previewMapping()" disabled>Preview</button>
+                </div>
+
+                <!-- Mapping summary (shown when mapping is configured) -->
+                <div id="jbMappingSummary" class="hidden card bg-base-200 rounded-xl p-3">
+                  <div class="text-xs font-semibold mb-1">Mapping: <span id="jbMappingSummaryName">—</span></div>
+                  <div class="text-xs opacity-60" id="jbMappingSummaryDetail">—</div>
+                </div>
               </div>
 
               <div class="divider text-xs opacity-60">Settings</div>
@@ -410,8 +425,53 @@
             </div>
           </div>
         </div>
+        <!-- Dry Run Card -->
+        <div id="jbDryRunCard" class="card bg-base-100 shadow-sm rounded-2xl border-process">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2 mb-3">
+              <h4 class="text-xs font-bold uppercase" style="color:var(--color-info)">Dry Run</h4>
+              <div class="tooltip tooltip-right" data-tip="Test the mapping against real documents without writing to the output.">
+                <span class="badge badge-ghost badge-sm cursor-help">?</span>
+              </div>
+              <div class="flex gap-2 ml-auto">
+                <select id="jbDryRunCount" class="select select-bordered select-xs w-24">
+                  <option value="1">1 doc</option>
+                  <option value="3" selected>3 docs</option>
+                  <option value="5">5 docs</option>
+                  <option value="10">10 docs</option>
+                </select>
+                <button class="btn btn-info btn-sm" onclick="runDryRun()" id="jbDryRunBtn">
+                  ▶ Run Dry Run
+                </button>
+              </div>
+            </div>
+
+            <!-- Results area -->
+            <div id="jbDryRunResults" class="hidden space-y-3">
+              <!-- Per-doc results inserted here dynamically -->
+            </div>
+
+            <div id="jbDryRunEmpty" class="text-sm opacity-50 text-center py-4">
+              Configure Source, Mapping, and Output, then click "Run Dry Run" to preview results.
+            </div>
+          </div>
+        </div>
       </div>
     </main>
+
+    <!-- Schema Mapping Modal (full-screen iframe) -->
+    <dialog id="schemaMappingModal" class="modal">
+      <div class="modal-box w-full max-w-full h-full max-h-full rounded-none p-0 flex flex-col">
+        <!-- Modal header -->
+        <div class="flex items-center justify-between p-3 bg-base-200 border-b border-base-300">
+          <h3 class="text-sm font-semibold">Schema Mapping — <span id="schemaMappingModalTitle">New Mapping</span></h3>
+          <button class="btn btn-ghost btn-sm" onclick="closeSchemaMappingModal()">✕</button>
+        </div>
+        <!-- Iframe -->
+        <iframe id="schemaMappingIframe" class="flex-1 w-full border-0" src="about:blank"></iframe>
+      </div>
+    </dialog>
+
     <div id="toastContainer" class="toast toast-end toast-bottom z-50"></div>
   </div>
 
@@ -437,8 +497,14 @@
       outputId: null,
       outputType: null,
       mappingId: null,
+      mappingData: null,
+      mappingName: '',
       jobName: ''
     };
+
+    // Editing mapping on existing job (from table "Mapping" button)
+    var _editingMappingJobId = null;
+    var _editingMappingJobData = null;
 
     // ===== Helpers =====
     function escHtml(s) {
@@ -521,6 +587,7 @@
               '<td class="text-right">' +
                 '<div class="flex gap-1 justify-end">' +
                   deleteBtn +
+                  '<button class="btn btn-ghost btn-xs" onclick="editJobMapping(\'' + jobId + '\')" title="Edit schema mapping">📐 Mapping</button>' +
                   '<button class="btn btn-ghost btn-xs text-warning" onclick="killJob(\'' + jobId + '\')" title="Kill (non-graceful)">Kill</button>' +
                   '<button class="btn btn-ghost btn-xs" onclick="restartJob(\'' + jobId + '\')" title="Restart">Restart</button>' +
                   '<button class="btn btn-ghost btn-xs" onclick="stopJob(\'' + jobId + '\')" title="Stop (graceful)">Stop</button>' +
@@ -617,6 +684,8 @@
         outputId: null,
         outputType: null,
         mappingId: null,
+        mappingData: null,
+        mappingName: '',
         jobName: ''
       };
       // Reset radio
@@ -631,6 +700,17 @@
       // Reset channel filter
       jbChannelsTagify.removeAllTags();
       document.getElementById('jbChannelFilterWrap').classList.add('hidden');
+      // Reset mapping summary
+      document.getElementById('jbMappingSummary').classList.add('hidden');
+      document.getElementById('jbEditMappingBtn').disabled = true;
+      document.getElementById('jbPreviewMappingBtn').disabled = true;
+      var sel = document.getElementById('jbMappingSelect');
+      sel.value = '';
+      var embOpt = sel.querySelector('option[value="__embedded__"]');
+      if (embOpt) embOpt.remove();
+      // Reset dry run
+      document.getElementById('jbDryRunResults').classList.add('hidden');
+      document.getElementById('jbDryRunEmpty').classList.remove('hidden');
       // Reset drilldowns
       jbBackToSourceTypes();
       jbBackToOutputTypes();
@@ -1085,6 +1165,323 @@
       alert('Add table to ' + currentTablesPanelOutputId + ' (not yet implemented)');
     }
 
+    // ===== Schema Mapping Modal =====
+    function openSchemaMappingModal(options) {
+      // options: { mappingName, inputId, outputType, outputId, jobId, title }
+      var params = new URLSearchParams();
+      params.set('job_mode', 'true');
+      if (options.mappingName) params.set('mapping_name', options.mappingName);
+      if (options.inputId) params.set('input_id', options.inputId);
+      if (options.outputType) params.set('output_type', options.outputType);
+      if (options.outputId) params.set('output_id', options.outputId);
+      if (options.jobId) params.set('job_id', options.jobId);
+
+      document.getElementById('schemaMappingModalTitle').textContent =
+        options.title || (options.mappingName ? 'Edit: ' + options.mappingName : 'New Mapping');
+
+      var iframe = document.getElementById('schemaMappingIframe');
+
+      // If we have embedded mapping data, send it after iframe loads
+      if (options.embeddedMapping && !options.mappingName) {
+        iframe.onload = function() {
+          iframe.contentWindow.postMessage({
+            type: 'load-mapping',
+            mapping: options.embeddedMapping,
+            mappingName: options.embeddedMappingName || ''
+          }, '*');
+          iframe.onload = null;
+        };
+      }
+
+      iframe.src = '/schema?' + params.toString();
+      document.getElementById('schemaMappingModal').showModal();
+    }
+
+    function closeSchemaMappingModal() {
+      document.getElementById('schemaMappingModal').close();
+      document.getElementById('schemaMappingIframe').src = 'about:blank';
+    }
+
+    // Listen for postMessage from the iframe
+    window.addEventListener('message', function(event) {
+      if (!event.data || event.data.type !== 'schema-mapping-result') return;
+
+      if (event.data.action === 'apply') {
+        if (_editingMappingJobId) {
+          // Direct save to existing job
+          saveMappingToExistingJob(_editingMappingJobId, event.data.mapping);
+        } else {
+          // Building a new job — store in currentJobBuilder
+          currentJobBuilder.mappingData = event.data.mapping;
+          currentJobBuilder.mappingName = event.data.mappingName;
+          updateMappingDisplay(event.data);
+          updateStepIndicators();
+        }
+      }
+
+      closeSchemaMappingModal();
+      _editingMappingJobId = null;
+      _editingMappingJobData = null;
+    });
+
+    function updateMappingDisplay(mappingData) {
+      var select = document.getElementById('jbMappingSelect');
+
+      // Add or update the "Embedded mapping" option
+      var embeddedOpt = select.querySelector('option[value="__embedded__"]');
+      if (!embeddedOpt) {
+        embeddedOpt = document.createElement('option');
+        embeddedOpt.value = '__embedded__';
+        select.insertBefore(embeddedOpt, select.options[1]);
+      }
+
+      var tableCount = (mappingData.mapping && mappingData.mapping.tables)
+        ? mappingData.mapping.tables.length : 0;
+      embeddedOpt.textContent = '✓ Custom mapping (' + tableCount + ' tables)';
+      select.value = '__embedded__';
+
+      // Update summary
+      document.getElementById('jbMappingSummary').classList.remove('hidden');
+      document.getElementById('jbMappingSummaryName').textContent =
+        mappingData.mappingName || 'Custom mapping';
+      document.getElementById('jbMappingSummaryDetail').textContent =
+        tableCount + ' table(s) configured';
+
+      // Enable edit/preview buttons
+      document.getElementById('jbEditMappingBtn').disabled = false;
+      document.getElementById('jbPreviewMappingBtn').disabled = false;
+    }
+
+    function openCreateMapping() {
+      openSchemaMappingModal({
+        inputId: currentJobBuilder.sourceId,
+        outputType: currentJobBuilder.outputType,
+        outputId: currentJobBuilder.outputId,
+        title: 'New Mapping'
+      });
+    }
+
+    function openEditMapping() {
+      var selected = document.getElementById('jbMappingSelect').value;
+      if (selected === '__embedded__') {
+        openSchemaMappingModal({
+          inputId: currentJobBuilder.sourceId,
+          outputType: currentJobBuilder.outputType,
+          outputId: currentJobBuilder.outputId,
+          title: 'Edit Mapping',
+          embeddedMapping: currentJobBuilder.mappingData,
+          embeddedMappingName: currentJobBuilder.mappingName
+        });
+      } else if (selected) {
+        openSchemaMappingModal({
+          mappingName: selected,
+          inputId: currentJobBuilder.sourceId,
+          outputType: currentJobBuilder.outputType,
+          outputId: currentJobBuilder.outputId,
+          title: 'Edit: ' + selected
+        });
+      }
+    }
+
+    function previewMapping() {
+      var selected = document.getElementById('jbMappingSelect').value;
+      if (selected === '__embedded__' && currentJobBuilder.mappingData) {
+        alert('Mapping Preview:\n\n' + JSON.stringify(currentJobBuilder.mappingData, null, 2).substring(0, 2000));
+      } else if (selected) {
+        window.open('/schema?load=' + encodeURIComponent(selected), '_blank');
+      }
+    }
+
+    function onMappingSelectChange() {
+      var val = document.getElementById('jbMappingSelect').value;
+      document.getElementById('jbEditMappingBtn').disabled = !val;
+      document.getElementById('jbPreviewMappingBtn').disabled = !val;
+
+      // Clear embedded data if switching to a saved mapping
+      if (val !== '__embedded__') {
+        currentJobBuilder.mappingData = null;
+        currentJobBuilder.mappingName = '';
+        document.getElementById('jbMappingSummary').classList.add('hidden');
+      }
+    }
+
+    function editJobMapping(jobId) {
+      var apiId = jobId.replace(/^job::/, '');
+
+      fetch('/api/v2/jobs/' + apiId)
+        .then(function(r) { return r.json(); })
+        .then(function(job) {
+          var inp = (job.inputs && job.inputs[0]) || {};
+          var out = (job.outputs && job.outputs[0]) || {};
+          var mappingName = job.mapping_id || '';
+
+          _editingMappingJobId = apiId;
+          _editingMappingJobData = job;
+
+          var opts = {
+            mappingName: mappingName,
+            inputId: inp.id,
+            outputType: job.output_type,
+            outputId: out.id,
+            jobId: apiId,
+            title: 'Mapping — ' + (job.name || apiId)
+          };
+
+          // If embedded mapping, pass it
+          if (job.mapping && typeof job.mapping === 'object' && job.mapping.tables) {
+            opts.embeddedMapping = job.mapping;
+            opts.embeddedMappingName = mappingName;
+            opts.mappingName = null; // don't load by name, use embedded
+          }
+
+          openSchemaMappingModal(opts);
+        });
+    }
+
+    function saveMappingToExistingJob(jobId, mappingData) {
+      fetch('/api/v2/jobs/' + jobId + '/mapping', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mapping: mappingData })
+      })
+      .then(function(r) {
+        if (r.ok) {
+          showToast('✓ Mapping updated!', 'success');
+          loadJobs();
+        } else {
+          return r.text().then(function(t) { alert('Failed to save mapping: ' + t); });
+        }
+      });
+    }
+
+    // ===== Dry Run =====
+    function runDryRun() {
+      var btn = document.getElementById('jbDryRunBtn');
+      btn.classList.add('loading');
+
+      var mapping = currentJobBuilder.mappingData || null;
+      var mappingId = mapping ? null : document.getElementById('jbMappingSelect').value;
+
+      if (!mapping && !mappingId) {
+        alert('No mapping configured. Select a mapping or create a new one first.');
+        btn.classList.remove('loading');
+        return;
+      }
+
+      var payload = {
+        input_id: currentJobBuilder.sourceId,
+        output_type: currentJobBuilder.outputType,
+        output_id: currentJobBuilder.outputId,
+        doc_count: parseInt(document.getElementById('jbDryRunCount').value, 10)
+      };
+
+      if (mapping) {
+        payload.mapping = mapping;
+      } else {
+        payload.mapping_id = mappingId;
+      }
+
+      fetch('/api/v2/jobs/dry-run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        renderDryRunResults(data);
+      })
+      .catch(function(e) {
+        alert('Dry run failed: ' + e.message);
+      })
+      .finally(function() {
+        btn.classList.remove('loading');
+      });
+    }
+
+    function renderDryRunResults(data) {
+      var container = document.getElementById('jbDryRunResults');
+      document.getElementById('jbDryRunEmpty').classList.add('hidden');
+      container.classList.remove('hidden');
+
+      if (data.error) {
+        container.innerHTML = '<div class="alert alert-error text-sm p-3"><span>' + escHtml(data.error) + '</span></div>';
+        return;
+      }
+
+      // Summary bar
+      var summaryClass = data.docs_failed > 0 ? 'alert-warning' : 'alert-success';
+      var html = '<div class="alert ' + summaryClass + ' text-sm p-3">' +
+        '<span>' + data.docs_succeeded + '/' + data.docs_processed + ' docs mapped successfully</span>' +
+        '</div>';
+
+      // Per-doc accordion
+      (data.results || []).forEach(function(r, idx) {
+        var statusBadge = r.status === 'ok'
+          ? '<span class="badge badge-success badge-sm">OK</span>'
+          : '<span class="badge badge-error badge-sm">Error</span>';
+
+        html += '<div class="collapse collapse-arrow bg-base-200 rounded-xl">' +
+          '<input type="checkbox"' + (idx === 0 ? ' checked' : '') + ' />' +
+          '<div class="collapse-title text-sm font-semibold flex items-center gap-2">' +
+            statusBadge + ' ' + escHtml(r.doc_id) +
+            (r.warnings && r.warnings.length ? ' <span class="badge badge-warning badge-xs">' + r.warnings.length + ' warnings</span>' : '') +
+          '</div>' +
+          '<div class="collapse-content">';
+
+        if (r.status === 'error') {
+          html += '<div class="alert alert-error text-xs p-2">' + escHtml(r.error) + '</div>';
+        } else {
+          // Table results
+          Object.keys(r.tables || {}).forEach(function(tableName) {
+            var table = r.tables[tableName];
+            var rows = table.rows ? table.rows : [table.row];
+
+            html += '<div class="mb-3">' +
+              '<div class="text-xs font-semibold mb-1">' + escHtml(tableName) +
+              ' <span class="badge badge-ghost badge-xs">' + table.operation + '</span>' +
+              ' <span class="badge badge-ghost badge-xs">' + rows.length + ' row(s)</span></div>' +
+              '<div class="overflow-x-auto"><table class="table table-xs table-zebra">' +
+              '<thead><tr class="bg-base-300">';
+
+            var cols = Object.keys(rows[0] || {});
+            cols.forEach(function(c) { html += '<th class="text-xs">' + escHtml(c) + '</th>'; });
+            html += '</tr></thead><tbody>';
+
+            rows.forEach(function(row) {
+              html += '<tr>';
+              cols.forEach(function(c) {
+                var val = row[c];
+                html += '<td class="text-xs font-mono">' + escHtml(String(val != null ? val : 'NULL')) + '</td>';
+              });
+              html += '</tr>';
+            });
+
+            html += '</tbody></table></div></div>';
+          });
+
+          // Warnings
+          if (r.warnings && r.warnings.length) {
+            html += '<div class="space-y-1 mt-2">';
+            r.warnings.forEach(function(w) {
+              html += '<div class="alert alert-warning text-xs p-2">⚠ [' + escHtml(w.table) + '.' + escHtml(w.column) + '] ' + escHtml(w.message) + '</div>';
+            });
+            html += '</div>';
+          }
+        }
+
+        html += '</div></div>';
+      });
+
+      container.innerHTML = html;
+
+      // Update step 4
+      if (data.docs_succeeded > 0) {
+        var step = document.getElementById('jbStep4');
+        step.className = 'step step-success';
+        step.setAttribute('data-content', '✓');
+      }
+    }
+
     // ===== Mapping Handling =====
     function loadMappings() {
       fetch('/api/mappings')
@@ -1116,7 +1513,7 @@
         return;
       }
 
-      var mappingId = document.getElementById('jbMappingSelect').value || null;
+      var mappingSelectVal = document.getElementById('jbMappingSelect').value || '';
       var threads = parseInt(document.getElementById('jbThreads').value, 10) || 4;
       var attachmentsEnabled = currentJobBuilder.processType === 'DA';
 
@@ -1142,13 +1539,21 @@
         process_type: currentJobBuilder.processType,
         output_id: currentJobBuilder.outputId,
         output_type: currentJobBuilder.outputType,
-        mapping_id: mappingId,
         changes_feed: changesFeed,
         system: {
           threads: threads,
           attachments_enabled: attachmentsEnabled
         }
       };
+
+      // Schema mapping — either embedded or reference
+      if (currentJobBuilder.mappingData) {
+        payload.mapping = currentJobBuilder.mappingData;
+        payload.mapping_id = null;
+      } else if (mappingSelectVal && mappingSelectVal !== '__embedded__') {
+        payload.mapping_id = mappingSelectVal;
+        payload.mapping = null;
+      }
 
       var url = editingJobId ? '/api/v2/jobs/' + editingJobId : '/api/v2/jobs';
       var method = editingJobId ? 'PUT' : 'POST';
@@ -1307,27 +1712,35 @@
             document.getElementById('jbOutputSelected').classList.remove('hidden');
           }
 
-          // Populate mapping — try job.mapping, job.mapping_id, or job.mapping.name
+          // Populate mapping — handle embedded vs referenced
           var mappingSelect = document.getElementById('jbMappingSelect');
-          var mappingId = '';
-          if (job.mapping && typeof job.mapping === 'object') {
-            mappingId = job.mapping.id || job.mapping.name || '';
-          } else if (job.mapping && typeof job.mapping === 'string') {
-            mappingId = job.mapping;
-          }
-          if (!mappingId) mappingId = job.mapping_id || '';
-          // Try to match by value in the dropdown options
-          if (mappingId) {
-            mappingSelect.value = mappingId;
-            // If value didn't match, try matching by text content
-            if (!mappingSelect.value || mappingSelect.value === '') {
-              for (var i = 0; i < mappingSelect.options.length; i++) {
-                if (mappingSelect.options[i].text === mappingId ||
-                    mappingSelect.options[i].value === mappingId) {
-                  mappingSelect.selectedIndex = i;
-                  break;
+          if (job.mapping && typeof job.mapping === 'object' && job.mapping.tables) {
+            // Embedded mapping — store it and show summary
+            currentJobBuilder.mappingData = job.mapping;
+            currentJobBuilder.mappingName = job.mapping_id || '';
+            updateMappingDisplay({ mapping: job.mapping, mappingName: job.mapping_id || '' });
+          } else {
+            // Reference mapping — select from dropdown
+            currentJobBuilder.mappingData = null;
+            var mappingId = '';
+            if (job.mapping && typeof job.mapping === 'object') {
+              mappingId = job.mapping.id || job.mapping.name || '';
+            } else if (job.mapping && typeof job.mapping === 'string') {
+              mappingId = job.mapping;
+            }
+            if (!mappingId) mappingId = job.mapping_id || '';
+            if (mappingId) {
+              mappingSelect.value = mappingId;
+              if (!mappingSelect.value || mappingSelect.value === '') {
+                for (var i = 0; i < mappingSelect.options.length; i++) {
+                  if (mappingSelect.options[i].text === mappingId ||
+                      mappingSelect.options[i].value === mappingId) {
+                    mappingSelect.selectedIndex = i;
+                    break;
+                  }
                 }
               }
+              onMappingSelectChange();
             }
           }
 

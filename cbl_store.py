@@ -38,6 +38,7 @@ COLL_OUTPUTS_HTTP = "outputs_http"
 COLL_OUTPUTS_CLOUD = "outputs_cloud"
 COLL_OUTPUTS_STDOUT = "outputs_stdout"
 COLL_JOBS = "jobs"
+COLL_TABLES_RDBMS = "tables_rdbms"
 
 # Runtime Collections
 COLL_CHECKPOINTS = "checkpoints"
@@ -1990,6 +1991,137 @@ class CBLStore:
             output_type=output_type,
             duration_ms=round(elapsed, 1),
         )
+
+    # ── RDBMS Table Definitions (v2.0) ─────────────────────────
+
+    def load_tables_rdbms(self) -> dict | None:
+        """Load RDBMS table definitions from 'tables_rdbms' document."""
+        doc_id = "tables_rdbms"
+        ic("load_tables_rdbms: entry", doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_doc(self.db, COLL_TABLES_RDBMS, doc_id)
+        elapsed = (time.monotonic() - t0) * 1000
+        if not doc:
+            log_event(
+                logger,
+                "debug",
+                "CBL",
+                "tables_rdbms not found",
+                operation="SELECT",
+                doc_id=doc_id,
+                doc_type="tables_rdbms",
+                duration_ms=round(elapsed, 1),
+            )
+            return None
+        result = {
+            "type": doc.get("type", "tables_rdbms"),
+            "tables": list(doc.get("tables") or []),
+        }
+        if "meta" in doc:
+            result["meta"] = dict(doc["meta"])
+        log_event(
+            logger,
+            "debug",
+            "CBL",
+            "tables_rdbms loaded",
+            operation="SELECT",
+            doc_id=doc_id,
+            doc_type="tables_rdbms",
+            duration_ms=round(elapsed, 1),
+        )
+        return result
+
+    def save_tables_rdbms(self, data: dict) -> None:
+        """Save RDBMS table definitions to 'tables_rdbms' document."""
+        doc_id = "tables_rdbms"
+        ic("save_tables_rdbms: entry", doc_id)
+        t0 = time.monotonic()
+        doc = _coll_get_mutable_doc(self.db, COLL_TABLES_RDBMS, doc_id)
+        is_new = doc is None
+        if not doc:
+            doc = MutableDocument(doc_id)
+        doc["type"] = "tables_rdbms"
+        doc["tables"] = data.get("tables", [])
+        doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if "meta" in data:
+            doc["meta"] = data["meta"]
+        _coll_save_doc(self.db, COLL_TABLES_RDBMS, doc)
+        elapsed = (time.monotonic() - t0) * 1000
+        log_event(
+            logger,
+            "info",
+            "CBL",
+            "tables_rdbms saved",
+            operation="INSERT" if is_new else "UPDATE",
+            doc_id=doc_id,
+            doc_type="tables_rdbms",
+            duration_ms=round(elapsed, 1),
+        )
+
+    def get_table_rdbms(self, table_id: str) -> dict | None:
+        """Get a single table definition by ID from tables_rdbms."""
+        doc = self.load_tables_rdbms()
+        if not doc:
+            return None
+        for tbl in doc.get("tables", []):
+            if tbl.get("id") == table_id:
+                return tbl
+        return None
+
+    def upsert_table_rdbms(self, table_entry: dict) -> None:
+        """Add or update a single table definition in tables_rdbms."""
+        table_id = table_entry.get("id")
+        if not table_id:
+            raise ValueError("table_entry must have an 'id' field")
+        doc = self.load_tables_rdbms()
+        if not doc:
+            doc = {"type": "tables_rdbms", "tables": []}
+        tables = doc.get("tables", [])
+        # Update existing or append
+        found = False
+        for idx, tbl in enumerate(tables):
+            if tbl.get("id") == table_id:
+                tables[idx] = table_entry
+                found = True
+                break
+        if not found:
+            tables.append(table_entry)
+        doc["tables"] = tables
+        self.save_tables_rdbms(doc)
+
+    def delete_table_rdbms(self, table_id: str) -> bool:
+        """Remove a single table definition from tables_rdbms. Returns True if found and removed."""
+        doc = self.load_tables_rdbms()
+        if not doc:
+            return False
+        tables = doc.get("tables", [])
+        original_len = len(tables)
+        tables = [t for t in tables if t.get("id") != table_id]
+        if len(tables) == original_len:
+            return False
+        doc["tables"] = tables
+        self.save_tables_rdbms(doc)
+        return True
+
+    def get_tables_rdbms_used_by(self, table_id: str) -> list[dict]:
+        """Find all jobs that reference a given table by library_ref."""
+        jobs = self.list_jobs()
+        used_by = []
+        for job in jobs:
+            full_job = self.load_job(job.get("id", ""))
+            if not full_job:
+                continue
+            for out in full_job.get("outputs", []):
+                for tbl in out.get("tables", []):
+                    if tbl.get("library_ref") == table_id:
+                        used_by.append(
+                            {
+                                "job_id": full_job.get("id"),
+                                "job_name": full_job.get("name", ""),
+                                "table_name": tbl.get("name", ""),
+                            }
+                        )
+        return used_by
 
     # ── Jobs (v2.0) ────────────────────────────────────────────
 

@@ -1,10 +1,11 @@
 """
-API v2.0 handlers for inputs, outputs, jobs, and sessions management.
+API v2.0 handlers for inputs, outputs, jobs, tables_rdbms, and sessions management.
 
 These endpoints manage the new CBL-based document model:
 - Inputs (sources feeding into the pipeline)
 - Outputs (destinations for processed data)
 - Jobs (connections between input → output with schema mapping)
+- RDBMS Table Definitions (table schemas for RDBMS outputs)
 - Sessions (SG session management)
 """
 
@@ -405,6 +406,7 @@ async def api_post_jobs(request: web.Request) -> web.Response:
             "output_type": data["output_type"],
             "system": data.get("system", {}),
             "mapping": data.get("mapping", {}),
+            "mapping_id": data.get("mapping_id"),
             "state": {
                 "status": "idle",
                 "last_updated": None,
@@ -461,6 +463,8 @@ async def api_put_job(request: web.Request) -> web.Response:
             job["system"] = data["system"]
         if "mapping" in data:
             job["mapping"] = data["mapping"]
+        if "mapping_id" in data:
+            job["mapping_id"] = data["mapping_id"]
         if "state" in data:
             job["state"] = data["state"]
         if "changes_feed" in data:
@@ -482,6 +486,48 @@ async def api_put_job(request: web.Request) -> web.Response:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     except Exception as e:
         logger.exception(f"Error updating job {job_id}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_put_job_mapping(request: web.Request) -> web.Response:
+    """PUT /api/v2/jobs/{id}/mapping — Update only the mapping on an existing job."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    job_id = request.match_info.get("id")
+
+    try:
+        data = await request.json()
+        store = CBLStore()
+
+        # Load existing job
+        job = store.load_job(job_id)
+        if not job:
+            return web.json_response({"error": f"Job {job_id} not found"}, status=404)
+
+        # Update mapping
+        mapping_data = data.get("mapping")
+        if mapping_data is None:
+            return web.json_response({"error": "mapping field is required"}, status=400)
+
+        job["mapping"] = mapping_data
+        if "mapping_id" in data:
+            job["mapping_id"] = data["mapping_id"]
+
+        # Save
+        store.save_job(job_id, job)
+
+        return web.json_response(
+            {
+                "status": "ok",
+                "job_id": job_id,
+                "message": "Mapping updated",
+            }
+        )
+    except json.JSONDecodeError:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        logger.exception(f"Error updating mapping for job {job_id}")
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -615,4 +661,148 @@ async def api_refresh_job_output(request: web.Request) -> web.Response:
         )
     except Exception as e:
         logger.exception(f"Error refreshing job output {job_id}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+# ─────────────────────────────────────────────────────────────────
+# RDBMS Table Definitions (/api/v2/tables_rdbms)
+# ─────────────────────────────────────────────────────────────────
+
+
+async def api_get_tables_rdbms(request: web.Request) -> web.Response:
+    """GET /api/v2/tables_rdbms — Load all RDBMS table definitions."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    try:
+        store = CBLStore()
+        doc = store.load_tables_rdbms()
+        if not doc:
+            return web.json_response({"type": "tables_rdbms", "tables": []})
+        return web.json_response(doc)
+    except Exception as e:
+        logger.exception("Error loading tables_rdbms")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_post_tables_rdbms(request: web.Request) -> web.Response:
+    """POST /api/v2/tables_rdbms — Save RDBMS table definitions."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    try:
+        data = await request.json()
+
+        # Validate
+        if not isinstance(data.get("tables"), list):
+            return web.json_response({"error": "tables must be an array"}, status=400)
+
+        for idx, table_entry in enumerate(data["tables"]):
+            if not isinstance(table_entry, dict):
+                return web.json_response(
+                    {"error": f"tables[{idx}] must be an object"}, status=400
+                )
+            if not table_entry.get("id"):
+                return web.json_response(
+                    {"error": f"tables[{idx}].id is required"}, status=400
+                )
+            if not table_entry.get("name"):
+                return web.json_response(
+                    {"error": f"tables[{idx}].name is required"}, status=400
+                )
+
+        store = CBLStore()
+        store.save_tables_rdbms(data)
+
+        return web.json_response(
+            {
+                "status": "ok",
+                "type": "tables_rdbms",
+                "tables_count": len(data.get("tables", [])),
+            }
+        )
+    except json.JSONDecodeError:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        logger.exception("Error saving tables_rdbms")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_get_table_rdbms_entry(request: web.Request) -> web.Response:
+    """GET /api/v2/tables_rdbms/{id} — Get one RDBMS table definition."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    table_id = request.match_info.get("id")
+
+    try:
+        store = CBLStore()
+        entry = store.get_table_rdbms(table_id)
+        if not entry:
+            return web.json_response(
+                {"error": f"Table {table_id} not found"}, status=404
+            )
+        return web.json_response(entry)
+    except Exception as e:
+        logger.exception(f"Error loading table_rdbms {table_id}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_put_table_rdbms_entry(request: web.Request) -> web.Response:
+    """PUT /api/v2/tables_rdbms/{id} — Update one RDBMS table definition."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    table_id = request.match_info.get("id")
+
+    try:
+        data = await request.json()
+        data["id"] = table_id
+
+        store = CBLStore()
+        store.upsert_table_rdbms(data)
+
+        return web.json_response({"status": "ok", "id": table_id})
+    except json.JSONDecodeError:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        logger.exception(f"Error updating table_rdbms {table_id}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_delete_table_rdbms_entry(request: web.Request) -> web.Response:
+    """DELETE /api/v2/tables_rdbms/{id} — Remove one RDBMS table definition."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    table_id = request.match_info.get("id")
+
+    try:
+        store = CBLStore()
+        entry = store.get_table_rdbms(table_id)
+        if not entry:
+            return web.json_response(
+                {"error": f"Table {table_id} not found"}, status=404
+            )
+
+        store.delete_table_rdbms(table_id)
+        return web.json_response({"status": "ok", "id": table_id})
+    except Exception as e:
+        logger.exception(f"Error deleting table_rdbms {table_id}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_get_table_rdbms_used_by(request: web.Request) -> web.Response:
+    """GET /api/v2/tables_rdbms/{id}/used-by — Find jobs using this table."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    table_id = request.match_info.get("id")
+
+    try:
+        store = CBLStore()
+        used_by = store.get_tables_rdbms_used_by(table_id)
+        return web.json_response({"table_id": table_id, "used_by": used_by})
+    except Exception as e:
+        logger.exception(f"Error loading used-by for table_rdbms {table_id}")
         return web.json_response({"error": str(e)}, status=500)
