@@ -1406,6 +1406,58 @@ async def _status_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
     return aiohttp.web.json_response({"online": not is_offline})
 
 
+async def _collect_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """POST /_collect — generate diagnostic zip and stream it back."""
+    from rest.log_collect import DiagnosticsCollector
+    from pipeline_logging import get_redactor
+
+    cfg = request.app.get("config", {})
+    metrics = request.app.get("metrics")
+    redactor = get_redactor()
+
+    include_profiling = request.query.get("include_profiling", "true").lower() == "true"
+
+    zip_path = None
+    try:
+        collector = DiagnosticsCollector(cfg, metrics, redactor)
+        zip_path = await collector.collect(include_profiling=include_profiling)
+
+        log_event(
+            logger,
+            "info",
+            "CONTROL",
+            "diagnostics collection complete: %s" % os.path.basename(zip_path),
+        )
+
+        # Stream the zip and clean up after sending
+        resp = aiohttp.web.StreamResponse(
+            headers={
+                "Content-Type": "application/zip",
+                "Content-Disposition": f'attachment; filename="{os.path.basename(zip_path)}"',
+            },
+        )
+        await resp.prepare(request)
+        with open(zip_path, "rb") as f:
+            while True:
+                chunk = f.read(1024 * 1024)
+                if not chunk:
+                    break
+                await resp.write(chunk)
+        await resp.write_eof()
+        return resp
+    except Exception as e:
+        logger.exception("Error generating diagnostics: %s", e)
+        return aiohttp.web.json_response(
+            {"error": f"Failed to collect diagnostics: {e}"}, status=500
+        )
+    finally:
+        if zip_path:
+            try:
+                os.remove(zip_path)
+            except FileNotFoundError:
+                pass
+
+
 async def start_metrics_server(
     metrics: MetricsCollector,
     host: str,
@@ -1416,12 +1468,14 @@ async def start_metrics_server(
     cbl_scheduler: CBLMaintenanceScheduler | None = None,
     shutdown_cfg: dict | None = None,
     extra_routes_cb=None,
+    cfg: dict | None = None,
 ) -> aiohttp.web.AppRunner:
     """Start a lightweight HTTP server that serves /_metrics in Prometheus format."""
     from aiohttp import web
 
     app = web.Application()
     app["metrics"] = metrics
+    app["config"] = cfg or {}
     app["shutdown_cfg"] = shutdown_cfg or {}
     if restart_event is not None:
         app["restart_event"] = restart_event
@@ -1433,6 +1487,7 @@ async def start_metrics_server(
         app["cbl_scheduler"] = cbl_scheduler
     app.router.add_get("/_metrics", _metrics_handler)
     app.router.add_get("/metrics", _metrics_handler)
+    app.router.add_post("/_collect", _collect_handler)
     app.router.add_post("/_restart", _restart_handler)
     app.router.add_post("/_shutdown", _shutdown_handler)
     app.router.add_post("/_offline", _offline_handler)
@@ -3181,6 +3236,7 @@ def main() -> None:
                     cbl_scheduler=cbl_scheduler,
                     shutdown_cfg=cfg.get("shutdown", {}),
                     extra_routes_cb=_register_extra_routes,
+                    cfg=cfg,
                 )
             )
 

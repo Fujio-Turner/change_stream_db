@@ -245,5 +245,13 @@
         "rotated_logs_size_limit": 1024
       }
     }
+  },
+  "collect": {
+    "tmp_dir": "/tmp",
+    "max_log_size_mb": 200,
+    "profile_seconds": 5,
+    "system_command_timeout_seconds": 30,
+    "include_cbl_logs": true,
+    "default_redaction": "partial"
   }
 }
