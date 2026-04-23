@@ -477,6 +477,12 @@ def configure_logging(cfg: dict) -> None:
         handler.setFormatter(fmt)
         real_handlers.append(handler)
 
+    # Configure specific logger levels
+    logger_levels = cfg.get("logger_levels", {})
+    for logger_name, level_str in logger_levels.items():
+        level = LEVELS.get(level_str.lower(), logging.INFO)
+        logging.getLogger(logger_name).setLevel(level)
+
     # Route icecream to TRACE
     try:
         from icecream import ic

@@ -1913,6 +1913,7 @@ async def validate_mapping(request):
 
     mapping = body.get("mapping")
     doc = body.get("doc")
+    is_delete = bool(body.get("is_delete", False))
     if mapping is None or doc is None:
         return error_response("Both 'mapping' and 'doc' are required")
 
@@ -1922,7 +1923,7 @@ async def validate_mapping(request):
         if not matched:
             return json_response({"matches": False, "ops": []})
 
-        ops, _diag = mapper.map_document(doc)
+        ops, _diag = mapper.map_document(doc, is_delete=is_delete)
         grouped = group_insert_ops(ops)
         result_ops = []
         for op in grouped:
@@ -2385,4 +2386,5 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--host", default="0.0.0.0")
     args = parser.parse_args()
+    logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
     web.run_app(create_app(), host=args.host, port=args.port)

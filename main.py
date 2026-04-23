@@ -174,6 +174,7 @@ class MetricsCollector:
         # Doc fetch
         self.doc_fetch_requests_total: int = 0
         self.doc_fetch_errors_total: int = 0
+        self.docs_fetch_skipped_total: int = 0
 
         # Mapper (DB mode)
         self.mapper_matched_total: int = 0
@@ -636,6 +637,11 @@ class MetricsCollector:
             "changes_worker_doc_fetch_errors_total",
             "Total doc fetch errors.",
             self.doc_fetch_errors_total,
+        )
+        _counter(
+            "changes_worker_docs_fetch_skipped_total",
+            "Docs skipped because they vanished between _changes and GET.",
+            self.docs_fetch_skipped_total,
         )
 
         # -- Output --
@@ -2183,9 +2189,8 @@ class Checkpoint:
     The checkpoint document contains (CBL-compatible):
         {
             "client_id": "<local_client_id>",
-            "SGs_Seq": "<last_seq>",
             "time": <epoch timestamp>,
-            "remote": <monotonic counter>
+            "remote": "<last_seq>"
         }
     """
 
@@ -2197,7 +2202,6 @@ class Checkpoint:
         self._lock = asyncio.Lock()
         self._seq: str = "0"
         self._rev: str | None = None  # SG doc _rev for updates
-        self._internal: int = 0
         self._initial_sync_done: bool = False
 
         # Build the deterministic UUID the same way CBL does:
@@ -2260,9 +2264,8 @@ class Checkpoint:
             resp = await http.request("GET", url, auth=auth, headers=headers)
             data = await resp.json()
             resp.release()
-            self._seq = str(data.get("SGs_Seq", "0"))
+            self._seq = str(data.get("remote", data.get("SGs_Seq", "0")))
             self._rev = data.get("_rev")
-            self._internal = data.get("remote", data.get("local_internal", 0))
             raw_isd = data.get("initial_sync_done", None)
             if raw_isd is None:
                 self._initial_sync_done = self._seq != "0"
@@ -2342,20 +2345,18 @@ class Checkpoint:
             return
 
         async with self._lock:
-            self._internal += 1
             self._seq = seq
             body: dict = {
                 "client_id": self._client_id,
-                "SGs_Seq": seq,
                 "time": int(time.time()),
-                "remote": self._internal,
+                "remote": seq,
                 "initial_sync_done": self._initial_sync_done,
             }
             if self._rev:
                 body["_rev"] = self._rev
 
             url = f"{base_url}/{self.local_doc_path}"
-            ic("checkpoint save", url, seq, self._internal)
+            ic("checkpoint save", url, seq)
             try:
                 req_headers = {**headers, "Content-Type": "application/json"}
                 resp = await http.request(
@@ -2408,7 +2409,7 @@ class Checkpoint:
         if USE_CBL:
             data = self._get_fallback_store().load_checkpoint(self._uuid)
             if data:
-                seq = data.get("SGs_Seq", "0")
+                seq = str(data.get("remote", data.get("SGs_Seq", "0")))
                 raw_isd = data.get("initial_sync_done", None)
                 if raw_isd is None:
                     self._initial_sync_done = seq != "0"
@@ -2420,7 +2421,9 @@ class Checkpoint:
         # Original file fallback
         if self._fallback_path.exists():
             data = json.loads(self._fallback_path.read_text())
-            seq = str(data.get("SGs_Seq", data.get("last_seq", "0")))
+            seq = str(
+                data.get("remote", data.get("SGs_Seq", data.get("last_seq", "0")))
+            )
             raw_isd = data.get("initial_sync_done", None)
             if raw_isd is None:
                 self._initial_sync_done = seq != "0"
@@ -2432,18 +2435,16 @@ class Checkpoint:
 
     def _save_fallback(self, seq: str) -> None:
         if USE_CBL:
-            self._get_fallback_store().save_checkpoint(
-                self._uuid, seq, self._client_id, self._internal
-            )
+            self._get_fallback_store().save_checkpoint(self._uuid, seq, self._client_id)
             ic("checkpoint saved to CBL", seq)
             return
         # Original file fallback
         self._fallback_path.write_text(
             json.dumps(
                 {
-                    "SGs_Seq": seq,
+                    "client_id": self._client_id,
                     "time": int(time.time()),
-                    "remote": self._internal,
+                    "remote": seq,
                     "initial_sync_done": self._initial_sync_done,
                 }
             )

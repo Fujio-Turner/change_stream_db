@@ -244,6 +244,9 @@
         "max_age": 7,
         "rotated_logs_size_limit": 1024
       }
+    },
+    "logger_levels": {
+      "aiohttp.access": "WARNING"
     }
   },
   "collect": {

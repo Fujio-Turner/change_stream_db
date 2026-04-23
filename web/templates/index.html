@@ -290,15 +290,17 @@
                   <p class="mb-1"><span style="color:#3abff8;">—</span> <strong>Output</strong> = docs/s successfully sent to destination.</p>
                   <p class="mb-1"><span style="color:#7c3aed;">—</span> <strong>Pending</strong> = docs received minus docs output. Your backlog.</p>
                   <p class="mb-1"><span style="color:#ef4444;">—</span> <strong>Deletes</strong> = tombstones/s forwarded to output.</p>
+                  <p class="mb-1"><span style="color:#3b82f6;">—</span> <strong>Skipped</strong> = docs/s skipped at output.</p>
+                  <p class="mb-1"><span style="color:#f59e0b;">—</span> <strong>Filtered</strong> = docs/s filtered before output.</p>
+                  <p class="mb-1"><span style="color:#000000;">—</span> <strong>DLQ</strong> = docs/s sent to Dead Letter Queue.</p>
                 </div>
               </div>
             </div>
-            <button class="btn btn-xs btn-outline font-mono" id="btnScaleToggle" onclick="toggleYScale()">Y: Linear</button>
           </div>
           <div id="chartActivity" style="width:100%;height:240px"></div>
         </div>
       </div>
-      <!-- Pipeline Ratios (Fail %, Thru %, Skipped %, Deleted %) -->
+      <!-- Pipeline Ratios (Fail %, Thru %, Skipped %, Del Succ %, Del Fail %) -->
       <div class="card bg-base-100 shadow rounded-2xl">
         <div class="card-body p-4">
           <div class="flex items-center justify-between mb-1">
@@ -310,13 +312,15 @@
                 </label>
                 <div tabindex="0" class="dropdown-content bg-base-100 rounded-xl shadow-lg p-4 w-72 text-xs leading-relaxed border border-base-content/10">
                   <p class="font-bold mb-2">How to read this chart</p>
-                  <p class="mb-1"><span style="color:#f87272;">- -</span> <strong>Fail %</strong> = errors / total output attempts.</p>
-                  <p class="mb-1"><span style="color:#36d399;">- -</span> <strong>Thru %</strong> = success / total output attempts.</p>
+                  <p class="mb-1"><span style="color:#f87272;">- -</span> <strong>Fail %</strong> = output errors / total received.</p>
+                  <p class="mb-1"><span style="color:#36d399;">- -</span> <strong>Thru %</strong> = output success / total received.</p>
                   <p class="mb-1"><span style="color:#3b82f6;">···</span> <strong>Skipped %</strong> = skipped / total received.</p>
-                  <p class="mb-1"><span style="color:#ef4444;">···</span> <strong>Deleted %</strong> = deletes forwarded / total received.</p>
+                  <p class="mb-1"><span style="color:#ef4444;">···</span> <strong>Del Succ %</strong> = successful delete outputs / total received.</p>
+                  <p class="mb-1"><span style="color:#b91c1c;">···</span> <strong>Del Fail %</strong> = failed delete outputs / total received.</p>
                 </div>
               </div>
             </div>
+            <button class="btn btn-xs btn-outline font-mono" id="btnScaleToggle" onclick="toggleYScale()">Y: Linear</button>
           </div>
           <div id="chartRatios" style="width:100%;height:240px"></div>
         </div>
@@ -578,7 +582,8 @@ var chartHistory = {
   bytesIn: [],
   bytesOut: [],
   // Pipeline Ratios
-  deletedRate: []
+  deletedRate: [],
+  deleteFailRate: []
 };
 // Track previous totals so we can compute deltas
 var prev = {};
@@ -660,21 +665,38 @@ function pushHistory(m) {
   var pending = Math.max(0, totalReceived - totalOutOk - totalOutErr - totalSkipped);
   chartHistory.pending.push(pending);
   if (chartHistory.pending.length > MAX_POINTS) chartHistory.pending.shift();
-  var totalOut = totalOutOk + totalOutErr;
-  var failPct = totalOut > 0 ? parseFloat(((totalOutErr / totalOut) * 100).toFixed(2)) : 0;
+  var deltaReceived = (prev['_received'] != null) ? Math.max(0, totalReceived - prev['_received']) : 0;
+  var deltaOutOk = (prev['_outOk'] != null) ? Math.max(0, totalOutOk - prev['_outOk']) : 0;
+  var deltaOutErr = (prev['_outErr'] != null) ? Math.max(0, totalOutErr - prev['_outErr']) : 0;
+  var deltaSkipped = (prev['_skipped'] != null) ? Math.max(0, totalSkipped - prev['_skipped']) : 0;
+  prev['_received'] = totalReceived;
+  prev['_outOk'] = totalOutOk;
+  prev['_outErr'] = totalOutErr;
+  prev['_skipped'] = totalSkipped;
+  var failPct = deltaReceived > 0 ? parseFloat(((deltaOutErr / deltaReceived) * 100).toFixed(2)) : 0;
   chartHistory.failRate.push(failPct);
   if (chartHistory.failRate.length > MAX_POINTS) chartHistory.failRate.shift();
-  var totalAttempted = totalOutOk + totalOutErr;
-  var thruPct = totalAttempted > 0 ? parseFloat(((totalOutOk / totalAttempted) * 100).toFixed(2)) : 0;
+  var thruPct = deltaReceived > 0 ? parseFloat(((deltaOutOk / deltaReceived) * 100).toFixed(2)) : 0;
   chartHistory.throughputRate.push(thruPct);
   if (chartHistory.throughputRate.length > MAX_POINTS) chartHistory.throughputRate.shift();
-  var skippedPct = totalReceived > 0 ? parseFloat(((totalSkipped / totalReceived) * 100).toFixed(2)) : 0;
+  var skippedPct = deltaReceived > 0 ? parseFloat(((deltaSkipped / deltaReceived) * 100).toFixed(2)) : 0;
   chartHistory.skippedRate.push(skippedPct);
   if (chartHistory.skippedRate.length > MAX_POINTS) chartHistory.skippedRate.shift();
-  var totalDelFwd = m['changes_worker_deletes_forwarded_total'] || 0;
-  var deletedPct = totalReceived > 0 ? parseFloat(((totalDelFwd / totalReceived) * 100).toFixed(2)) : 0;
+  var curDelFwd = m['changes_worker_deletes_forwarded_total'] || 0;
+  var curDelSeen = m['changes_worker_feed_deletes_seen_total'] || 0;
+  var deltaDelFwd = (prev['_delFwd'] != null) ? Math.max(0, curDelFwd - prev['_delFwd']) : 0;
+  var deltaDelSeen = (prev['_delSeen'] != null) ? Math.max(0, curDelSeen - prev['_delSeen']) : 0;
+  prev['_delFwd'] = curDelFwd;
+  prev['_delSeen'] = curDelSeen;
+  var deletedPct = deltaDelSeen > 0 ? parseFloat(((deltaDelFwd / deltaDelSeen) * 100).toFixed(2)) : 0;
   chartHistory.deletedRate.push(deletedPct);
   if (chartHistory.deletedRate.length > MAX_POINTS) chartHistory.deletedRate.shift();
+  var curDelErr = getLabeled(m, 'changes_worker_output_errors_by_method_total', 'method="DELETE"');
+  var deltaDelErr = (prev['_delErr'] != null) ? Math.max(0, curDelErr - prev['_delErr']) : 0;
+  prev['_delErr'] = curDelErr;
+  var delFailPct = deltaDelSeen > 0 ? parseFloat(((deltaDelErr / deltaDelSeen) * 100).toFixed(2)) : 0;
+  chartHistory.deleteFailRate.push(delFailPct);
+  if (chartHistory.deleteFailRate.length > MAX_POINTS) chartHistory.deleteFailRate.shift();
 }
 
 // ── ECharts ──────────────────────────────────────────────────
@@ -1373,11 +1395,14 @@ function renderCharts() {
         { name: 'Source', type: 'line', smooth: true, symbol: 'none', data: chartHistory.changesReceived, lineStyle: { width: 1.5, color: c.green }, itemStyle: { color: c.green }, areaStyle: { opacity: 0.06 } },
         { name: 'Output', type: 'line', smooth: true, symbol: 'none', data: chartHistory.outSuccess, lineStyle: { width: 1.5, color: '#3abff8' }, itemStyle: { color: '#3abff8' } },
         { name: 'Pending', type: 'line', smooth: true, symbol: 'none', data: chartHistory.pending, lineStyle: { width: 2, color: '#7c3aed' }, itemStyle: { color: '#7c3aed' }, areaStyle: { opacity: 0.08, color: '#7c3aed' } },
-        { name: 'Deletes', type: 'line', smooth: true, symbol: 'none', data: chartHistory.deletesForwarded, lineStyle: { width: 2, color: '#ef4444' }, itemStyle: { color: '#ef4444' } }
+        { name: 'Deletes', type: 'line', smooth: true, symbol: 'none', data: chartHistory.deletesForwarded, lineStyle: { width: 2, color: '#ef4444' }, itemStyle: { color: '#ef4444' } },
+        { name: 'Skipped', type: 'line', smooth: true, symbol: 'none', data: chartHistory.outSkipped, lineStyle: { width: 1.5, color: '#3b82f6' }, itemStyle: { color: '#3b82f6' } },
+        { name: 'Filtered', type: 'line', smooth: true, symbol: 'none', data: chartHistory.filtered, lineStyle: { width: 1.5, color: '#f59e0b' }, itemStyle: { color: '#f59e0b' } },
+        { name: 'DLQ', type: 'line', smooth: true, symbol: 'none', data: chartHistory.deadLetters, lineStyle: { width: 1.5, color: '#000000' }, itemStyle: { color: '#000000' } }
       ]
     }, false);
   }
-  // Pipeline Ratios (Fail %, Thru %, Skipped %, Deleted % – percentage only)
+  // Pipeline Ratios (Fail %, Thru %, Skipped %, Del Succ %, Del Fail % – percentage only)
   if (cRatios) {
     cRatios.setOption({
       backgroundColor: 'transparent',
@@ -1395,17 +1420,18 @@ function renderCharts() {
         }
       },
       legend: { top: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
-      grid: { top: 30, left: 12, right: 45, bottom: 30 },
+      grid: { top: 30, left: 45, right: 12, bottom: 30 },
       xAxis: {
         type: 'category', data: chartHistory.labels, boundaryGap: false,
         axisLabel: { show: false }, axisLine: { lineStyle: { color: c.split } }, axisTick: { show: false }
       },
-      yAxis: { type: 'value', position: 'right', min: 0, max: 100, axisLabel: { fontSize: 9, color: c.text, formatter: '{value}%' }, axisLine: { show: false }, splitLine: { lineStyle: { color: c.split } } },
+      yAxis: { type: yType, position: 'left', min: yAxisLog ? 1 : 0, max: yAxisLog ? null : 100, axisLabel: { fontSize: 9, color: c.text, formatter: '{value}%' }, axisLine: { show: false }, splitLine: { lineStyle: { color: c.split } } },
       series: [
         { name: 'Fail %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.failRate, lineStyle: { width: 2, color: '#f87272', type: 'dashed' }, itemStyle: { color: '#f87272' } },
         { name: 'Thru %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.throughputRate, lineStyle: { width: 2, color: '#36d399', type: 'dashed' }, itemStyle: { color: '#36d399' } },
         { name: 'Skipped %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.skippedRate, lineStyle: { width: 2, color: '#3b82f6', type: 'dotted' }, itemStyle: { color: '#3b82f6' } },
-        { name: 'Deleted %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.deletedRate, lineStyle: { width: 2, color: '#ef4444', type: 'dotted' }, itemStyle: { color: '#ef4444' } }
+        { name: 'Del Succ %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.deletedRate, lineStyle: { width: 2, color: '#ef4444', type: 'dotted' }, itemStyle: { color: '#ef4444' } },
+        { name: 'Del Fail %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.deleteFailRate, lineStyle: { width: 2, color: '#b91c1c', type: 'dotted' }, itemStyle: { color: '#b91c1c' } }
       ]
     }, false);
   }

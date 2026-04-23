@@ -797,9 +797,8 @@ class CBLStore:
         props = doc.properties
         result = {
             "client_id": props.get("client_id", ""),
-            "SGs_Seq": props.get("SGs_Seq", "0"),
             "time": props.get("time", 0),
-            "remote": props.get("remote", 0),
+            "remote": str(props.get("remote", props.get("SGs_Seq", "0"))),
         }
         log_event(
             logger,
@@ -809,12 +808,12 @@ class CBLStore:
             operation="SELECT",
             doc_id=doc_id,
             doc_type="checkpoint",
-            seq=result["SGs_Seq"],
+            seq=result["remote"],
             duration_ms=round(elapsed, 1),
         )
         return result
 
-    def save_checkpoint(self, uuid: str, seq: str, client_id: str, remote: int) -> None:
+    def save_checkpoint(self, uuid: str, seq: str, client_id: str) -> None:
         doc_id = f"checkpoint:{uuid}"
         ic("save_checkpoint: entry", uuid, seq)
         t0 = time.monotonic()
@@ -822,11 +821,9 @@ class CBLStore:
         is_new = doc is None
         if not doc:
             doc = MutableDocument(doc_id)
-        doc["type"] = "checkpoint"
         doc["client_id"] = client_id
-        doc["SGs_Seq"] = seq
         doc["time"] = int(time.time())
-        doc["remote"] = remote
+        doc["remote"] = seq
         _coll_save_doc(self.db, COLL_CHECKPOINTS, doc)
         elapsed = (time.monotonic() - t0) * 1000
         log_event(
@@ -2929,7 +2926,9 @@ class CBLStore:
             try:
                 cp_file_data = json.loads(cp_path.read_text())
                 checkpoint_data = {
-                    "last_seq": cp_file_data.get("SGs_Seq", "0"),
+                    "last_seq": str(
+                        cp_file_data.get("remote", cp_file_data.get("SGs_Seq", "0"))
+                    ),
                     "remote_counter": cp_file_data.get("remote_counter", 0),
                 }
             except Exception as e:
@@ -3324,7 +3323,7 @@ def migrate_files_to_cbl(config_path: str = "config.json") -> None:
             "checkpoint.json available for migration",
             operation="SELECT",
             doc_type="checkpoint",
-            seq=data.get("SGs_Seq", "0"),
+            seq=str(data.get("remote", data.get("SGs_Seq", "0"))),
         )
 
     ic("migrate_files_to_cbl: done", len(disk_names), added, updated, removed)

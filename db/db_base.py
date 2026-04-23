@@ -901,6 +901,11 @@ class BaseOutputForwarder(abc.ABC):
 
                 doc_rev = doc.get("_rev", doc.get("rev", "?"))
                 ic("send: OK", doc_id, len(ops), round(elapsed_ms, 1))
+
+                # Track delete operations forwarded to output
+                if is_delete and self._metrics:
+                    self._metrics.inc("deletes_forwarded_total")
+
                 log_event(
                     logger,
                     "debug",

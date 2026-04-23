@@ -980,11 +980,9 @@ async def _process_changes_batch(
             metrics.inc("changes_deleted_total", deleted_count)
             metrics.inc("changes_removed_total", removed_count)
             metrics.inc("changes_filtered_total", deleted_count + removed_count)
-        deletes_forwarded = (feed_deletes - deleted_count) + (
-            feed_removes - removed_count
-        )
-        if deletes_forwarded > 0:
-            metrics.inc("deletes_forwarded_total", deletes_forwarded)
+        # Note: deletes_forwarded_total is incremented when the delete is actually
+        # sent to the output (in db_base.py, cloud_base.py, or output_http.py),
+        # not here in the feed processor. This avoids double-counting.
 
     total_tombstones = feed_deletes + feed_removes
     if total_tombstones:
@@ -1021,8 +1019,13 @@ async def _process_changes_batch(
     # If include_docs was false, fetch full docs.
     # Skip deleted/removed entries — they only need doc_id for DELETE,
     # no point fetching a tombstone body from the server.
+    #
+    # In sequential mode we defer fetching until each doc is needed
+    # (lazy fetch) so that an early OutputEndpointDown / shutdown
+    # doesn't waste bandwidth on docs we'll never process.
     docs_by_id: dict[str, dict] = {}
-    if not feed_cfg.get("include_docs") and filtered:
+    need_fetch = not feed_cfg.get("include_docs") and filtered
+    if need_fetch and not sequential:
         fetch_rows = [
             r for r in filtered if not r.get("deleted") and not r.get("removed")
         ]
@@ -1049,80 +1052,151 @@ async def _process_changes_batch(
     batch_success = 0
     batch_fail = 0
 
-    async def process_one(change: dict) -> dict:
-        async with semaphore:
-            if metrics:
-                metrics.inc("active_tasks")
-            try:
-                doc_id = change.get("id", "")
-                if include_docs:
-                    doc = change.get("doc", change)
-                else:
-                    doc = docs_by_id.get(doc_id)
-                    if doc is None:
-                        # Deleted/removed entries are not fetched via
-                        # _bulk_get — build a minimal doc with _id so
-                        # the mapper can generate DELETE WHERE doc_id=X.
-                        doc = {"_id": doc_id, **change}
-                # ── ATTACHMENT stage (between MIDDLE and RIGHT) ──
-                if has_attachments:
-                    try:
-                        doc, _skip = await attachment_processor.process(
-                            doc, base_url, http, basic_auth, auth_headers, src
-                        )
-                    except Exception as att_exc:
-                        log_event(
-                            logger,
-                            "error",
-                            "PROCESSING",
-                            "attachment processing failed: %s" % att_exc,
-                            doc_id=doc_id,
-                        )
-                        raise
+    async def _resolve_doc(change: dict) -> dict:
+        """Resolve the full document body for a change row.
 
-                method = (
-                    delete_method
-                    if change.get("deleted") or change.get("removed")
-                    else write_method
-                )
-                if log_trace:
-                    op = infer_operation(change=change, doc=doc, method=method)
+        For deleted/removed entries, returns a minimal synthetic doc.
+        In sequential mode with ``include_docs=False``, fetches the doc
+        on-demand (lazy) instead of relying on the pre-fetched
+        ``docs_by_id`` map.  If the fetch fails (doc missing on the
+        server, rev mismatch returning 404/409, or network error after
+        retries) the change is logged and a ``None`` is returned so the
+        caller can skip or DLQ appropriately.
+        """
+        doc_id = change.get("id", "")
+        is_tombstone = change.get("deleted") or change.get("removed")
+
+        if include_docs:
+            return change.get("doc", change)
+
+        # Tombstones are never fetched — build a minimal doc for DELETE.
+        if is_tombstone:
+            return {"_id": doc_id, **change}
+
+        # Pre-fetched (parallel mode)?
+        doc = docs_by_id.get(doc_id)
+        if doc is not None:
+            return doc
+
+        # Lazy fetch (sequential mode) — fetch single doc on demand.
+        rev = ""
+        changes_list = change.get("changes", [])
+        if changes_list:
+            rev = changes_list[0].get("rev", "")
+        doc = await _fetch_single_doc_with_retry(
+            http,
+            base_url,
+            doc_id,
+            rev,
+            basic_auth,
+            auth_headers,
+            metrics=metrics,
+        )
+        if doc is not None:
+            if metrics:
+                metrics.inc("docs_fetched_total")
+            return doc
+
+        # Doc is gone — deleted between _changes and our GET, or rev
+        # mismatch (409/404).  This is normal in an eventually-consistent
+        # system: a mutation and a delete can race.  Treat it as a skip
+        # rather than a hard failure — the next _changes poll will carry
+        # the delete tombstone which we'll handle properly.
+        log_event(
+            logger,
+            "warn",
+            "PROCESSING",
+            "doc not found on fetch (deleted between _changes and GET?) – skipping",
+            doc_id=doc_id,
+        )
+        if metrics:
+            metrics.inc("docs_fetch_skipped_total")
+        return None
+
+    async def _process_one_inner(change: dict, *, track_active: bool) -> dict:
+        if track_active and metrics:
+            metrics.inc("active_tasks")
+        try:
+            doc_id = change.get("id", "")
+            doc = await _resolve_doc(change)
+            if doc is None:
+                return {
+                    "ok": True,
+                    "doc_id": doc_id,
+                    "status": 0,
+                    "skipped": True,
+                    "_change": change,
+                    "_doc": {"_id": doc_id},
+                }
+            # ── ATTACHMENT stage (between MIDDLE and RIGHT) ──
+            if has_attachments:
+                try:
+                    doc, _skip = await attachment_processor.process(
+                        doc, base_url, http, basic_auth, auth_headers, src
+                    )
+                except Exception as att_exc:
                     log_event(
                         logger,
-                        "trace",
-                        "OUTPUT",
-                        "sending document",
-                        operation=op,
+                        "error",
+                        "PROCESSING",
+                        "attachment processing failed: %s" % att_exc,
                         doc_id=doc_id,
-                        mode=output._mode,
-                        http_method=method,
                     )
-                result = await output.send(doc, method)
+                    raise
+
+            method = (
+                delete_method
+                if change.get("deleted") or change.get("removed")
+                else write_method
+            )
+            if log_trace:
+                op = infer_operation(change=change, doc=doc, method=method)
+                log_event(
+                    logger,
+                    "trace",
+                    "OUTPUT",
+                    "sending document",
+                    operation=op,
+                    doc_id=doc_id,
+                    mode=output._mode,
+                    http_method=method,
+                )
+            result = await output.send(doc, method)
+            # Parallel mode needs _change/_doc on the result dict because
+            # the caller only sees results after asyncio.wait(); sequential
+            # mode already has the loop variables in scope.
+            if not sequential:
                 result["_change"] = change
                 result["_doc"] = doc
-                if result.get("ok"):
-                    if log_trace:
-                        log_event(
-                            logger,
-                            "debug",
-                            "OUTPUT",
-                            "document forwarded",
-                            doc_id=doc_id,
-                            status=result.get("status"),
-                        )
-                else:
+            if result.get("ok"):
+                if log_trace:
                     log_event(
                         logger,
-                        "warn",
+                        "debug",
                         "OUTPUT",
-                        "document delivery failed",
+                        "document forwarded",
                         doc_id=doc_id,
                         status=result.get("status"),
                     )
-                return result
-            finally:
-                if metrics:
-                    metrics.inc("active_tasks", -1)
+            else:
+                log_event(
+                    logger,
+                    "warn",
+                    "OUTPUT",
+                    "document delivery failed",
+                    doc_id=doc_id,
+                    status=result.get("status"),
+                )
+            return result
+        finally:
+            if track_active and metrics:
+                metrics.inc("active_tasks", -1)
+
+    async def process_one(change: dict) -> dict:
+        if sequential:
+            return await _process_one_inner(change, track_active=False)
+        async with semaphore:
+            return await _process_one_inner(change, track_active=True)
 
     if every_n_docs > 0 and sequential:
         for i in range(0, len(filtered), every_n_docs):
@@ -1146,8 +1220,9 @@ async def _process_changes_batch(
                             if dlq.enabled and metrics:
                                 metrics.inc("dead_letter_total")
                                 metrics.set("dlq_last_write_epoch", time.time())
+                            dlq_doc = result.get("_doc", {"_id": change.get("id", "")})
                             await dlq.write(
-                                result["_doc"],
+                                dlq_doc,
                                 result,
                                 change.get("seq", ""),
                                 target_url=getattr(output, "target_url", ""),
@@ -1175,14 +1250,19 @@ async def _process_changes_batch(
                         for rem in remaining:
                             rem_doc = (
                                 rem.get("doc", rem)
-                                if feed_cfg.get("include_docs")
+                                if include_docs
                                 else docs_by_id.get(rem.get("id", ""), rem)
+                            )
+                            rem_method = (
+                                delete_method
+                                if rem.get("deleted") or rem.get("removed")
+                                else write_method
                             )
                             await dlq.write(
                                 rem_doc,
                                 {
                                     "doc_id": rem.get("id", ""),
-                                    "method": "PUT",
+                                    "method": rem_method,
                                     "status": 0,
                                     "error": "shutdown_inflight",
                                 },
@@ -1209,11 +1289,19 @@ async def _process_changes_batch(
                 metrics.inc("checkpoint_saves_total")
                 metrics.set("checkpoint_seq", since)
     else:
+        next_unprocessed_idx = 0
+        # Sequential checkpoint stride: save every N docs rather than
+        # every single doc (each save is an HTTP PUT to SG).
+        # Falls back to every_n_docs if set, otherwise default to 100.
+        seq_ckpt_stride = every_n_docs if every_n_docs > 0 else 100
+        seq_since_pending = 0
         try:
             if sequential:
-                for change in filtered:
+                for idx, change in enumerate(filtered):
                     result = await process_one(change)
-                    if result.get("ok"):
+                    if result.get("skipped"):
+                        batch_success += 1
+                    elif result.get("ok"):
                         batch_success += 1
                     else:
                         batch_fail += 1
@@ -1229,13 +1317,27 @@ async def _process_changes_batch(
                             if dlq.enabled and metrics:
                                 metrics.inc("dead_letter_total")
                                 metrics.set("dlq_last_write_epoch", time.time())
+                            dlq_doc = result.get("_doc", {"_id": change.get("id", "")})
                             await dlq.write(
-                                result["_doc"],
+                                dlq_doc,
                                 result,
                                 change.get("seq", ""),
                                 target_url=getattr(output, "target_url", ""),
                                 metrics=metrics,
                             )
+                    # Doc fully resolved — advance cursor
+                    next_unprocessed_idx = idx + 1
+                    since = str(change.get("seq", since))
+                    seq_since_pending += 1
+                    # Checkpoint every N resolved docs (not every single one)
+                    if seq_since_pending >= seq_ckpt_stride:
+                        await checkpoint.save(
+                            since, http, base_url, basic_auth, auth_headers
+                        )
+                        if metrics:
+                            metrics.inc("checkpoint_saves_total")
+                            metrics.set("checkpoint_seq", since)
+                        seq_since_pending = 0
             else:
                 tasks = [asyncio.create_task(process_one(c)) for c in filtered]
                 done, _ = await asyncio.wait(tasks)
@@ -1277,32 +1379,31 @@ async def _process_changes_batch(
                 % ("SHUTDOWN" if is_shutdown else "OUTPUT DOWN", since, exc),
                 error_detail=str(exc),
             )
-            # DLQ all unprocessed docs if shutdown + dlq_inflight_on_shutdown
+            # DLQ unprocessed docs if shutdown + dlq_inflight_on_shutdown
             if (
                 is_shutdown
                 and (shutdown_cfg or {}).get("dlq_inflight_on_shutdown", False)
                 and dlq.enabled
             ):
-                # In sequential mode, we know which docs haven't been tried yet
-                processed_ids = set()  # noqa: F841
-                if sequential:
-                    # Find which docs were already processed (succeeded or failed above)
-                    # The current change that raised is the boundary
-                    pass
-                # For parallel mode, all docs were dispatched as tasks;
-                # unfinished ones got cancelled — DLQ all filtered docs that didn't succeed
+                # In sequential mode, only DLQ docs that haven't been resolved
+                remaining = filtered[next_unprocessed_idx:] if sequential else filtered
                 dlq_count = 0
-                for ch in filtered:
+                for ch in remaining:
                     ch_doc = (
                         ch.get("doc", ch)
-                        if feed_cfg.get("include_docs")
+                        if include_docs
                         else docs_by_id.get(ch.get("id", ""), ch)
+                    )
+                    method = (
+                        delete_method
+                        if ch.get("deleted") or ch.get("removed")
+                        else write_method
                     )
                     await dlq.write(
                         ch_doc,
                         {
                             "doc_id": ch.get("id", ""),
-                            "method": "PUT",
+                            "method": method,
                             "status": 0,
                             "error": "shutdown_inflight",
                         },
@@ -1361,12 +1462,23 @@ async def _process_changes_batch(
             metrics.inc("batches_failed_total")
         return since, True
 
-    if not (every_n_docs > 0 and sequential):
+    if not sequential:
+        # Parallel mode: single checkpoint at end of batch
         since = str(last_seq)
         await checkpoint.save(since, http, base_url, basic_auth, auth_headers)
         if metrics:
             metrics.inc("checkpoint_saves_total")
             metrics.set("checkpoint_seq", since)
+    else:
+        # Sequential modes already checkpointed per-doc/sub-batch;
+        # advance to last_seq if it differs from the last saved seq
+        end_seq = str(last_seq)
+        if end_seq != since:
+            since = end_seq
+            await checkpoint.save(since, http, base_url, basic_auth, auth_headers)
+            if metrics:
+                metrics.inc("checkpoint_saves_total")
+                metrics.set("checkpoint_seq", since)
 
     if metrics:
         metrics.record_batch_processing_time(time.monotonic() - batch_t0)

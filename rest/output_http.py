@@ -427,6 +427,8 @@ class OutputForwarder:
             )
             if self._metrics:
                 self._metrics.inc("output_success_total")
+                if method == "DELETE":
+                    self._metrics.inc("deletes_forwarded_total")
                 self._metrics.set("output_endpoint_up", 1)
             return {"ok": True, "doc_id": doc_id, "method": method, "status": status}
 

@@ -5,26 +5,17 @@
   "description": "Tracks the last processed sequence number for resuming change feeds",
   "type": "object",
   "properties": {
-    "type": {
-      "type": "string",
-      "const": "checkpoint",
-      "description": "Document type identifier"
-    },
     "client_id": {
       "type": "string",
       "description": "Unique client identifier for this checkpoint (usually job_id or UUID)"
-    },
-    "SGs_Seq": {
-      "type": "string",
-      "description": "Last processed sequence number from the source system"
     },
     "time": {
       "type": "integer",
       "description": "Unix timestamp of last checkpoint"
     },
     "remote": {
-      "type": "integer",
-      "description": "Remote counter or sequence identifier"
+      "type": "string",
+      "description": "Last processed sequence value from the source (may be compound e.g. '42:100')"
     },
     "created_at": {
       "type": ["string", "null"],
@@ -38,20 +29,16 @@
     }
   },
   "required": [
-    "type",
     "client_id",
-    "SGs_Seq",
     "time",
     "remote"
   ],
   "additionalProperties": true,
   "examples": [
     {
-      "type": "checkpoint",
       "client_id": "550e8400-e29b-41d4-a716-446655440000",
-      "SGs_Seq": "12345",
       "time": 1705324200,
-      "remote": 0
+      "remote": "0"
     }
   ]
 }

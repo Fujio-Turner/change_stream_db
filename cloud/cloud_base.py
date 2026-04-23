@@ -715,6 +715,7 @@ class BaseCloudForwarder(abc.ABC):
                     self._metrics.inc("output_success_total")
                     if is_delete:
                         self._metrics.inc("output_delete_total")
+                        self._metrics.inc("deletes_forwarded_total")
                     else:
                         self._metrics.inc("uploads_total")
                         self._metrics.inc("bytes_uploaded_total", len(body))

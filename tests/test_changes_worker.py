@@ -422,7 +422,7 @@ class TestCheckpoint(unittest.TestCase):
 
     def test_load_fallback_file(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump({"SGs_Seq": "42"}, f)
+            json.dump({"remote": "42"}, f)
             f.flush()
             path = f.name
         try:
@@ -463,10 +463,11 @@ class TestCheckpoint(unittest.TestCase):
             cp = cw.Checkpoint({"client_id": "w", "file": path}, gw, [])
             cp._save_fallback("99")
             data = json.loads(Path(path).read_text())
-            self.assertEqual(data["SGs_Seq"], "99")
+            self.assertEqual(data["remote"], "99")
             self.assertIn("time", data)
             self.assertIsInstance(data["time"], int)
-            self.assertIn("remote", data)
+            self.assertIn("client_id", data)
+            self.assertNotIn("SGs_Seq", data)
             self.assertNotIn("dateTime", data)
             self.assertNotIn("local_internal", data)
         finally:
