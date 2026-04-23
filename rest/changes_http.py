@@ -863,6 +863,7 @@ async def _process_changes_batch(
     initial_sync: bool = False,
     job_id: str = "",
     attachment_processor=None,
+    eventing_handler=None,
 ) -> tuple[str, bool]:
     """
     Process a batch of _changes results: filter, fetch docs, forward to output,
@@ -1128,6 +1129,44 @@ async def _process_changes_batch(
                     "_change": change,
                     "_doc": {"_id": doc_id},
                 }
+            # ── EVENTING stage (after _changes, before Schema Mapper) ──
+            if eventing_handler is not None:
+                from eventing.eventing import EventingHalt
+
+                change_for_eventing = dict(change)
+                change_for_eventing["doc"] = doc
+                try:
+                    eventing_result = eventing_handler.process_change(
+                        change_for_eventing
+                    )
+                except EventingHalt as halt_exc:
+                    log_event(
+                        logger,
+                        "error",
+                        "EVENTING",
+                        "handler halt — stopping pipeline: %s" % halt_exc,
+                        doc_id=doc_id,
+                    )
+                    raise
+                if eventing_result is None:
+                    log_event(
+                        logger,
+                        "debug",
+                        "EVENTING",
+                        "document rejected by eventing handler",
+                        doc_id=doc_id,
+                    )
+                    return {
+                        "ok": True,
+                        "doc_id": doc_id,
+                        "status": 0,
+                        "skipped": True,
+                        "eventing_rejected": True,
+                        "_change": change,
+                        "_doc": doc,
+                    }
+                doc = eventing_result
+
             # ── ATTACHMENT stage (between MIDDLE and RIGHT) ──
             if has_attachments:
                 try:
@@ -1512,6 +1551,7 @@ async def _catch_up_normal(
     shutdown_cfg: dict | None = None,
     initial_sync: bool = False,
     attachment_processor=None,
+    eventing_handler=None,
 ) -> str:
     """
     Phase 1 of continuous mode: catch up using one-shot normal requests.
@@ -1638,6 +1678,7 @@ async def _catch_up_normal(
             shutdown_cfg=shutdown_cfg,
             initial_sync=initial_sync,
             attachment_processor=attachment_processor,
+            eventing_handler=eventing_handler,
         )
 
         if output_failed:
@@ -1721,6 +1762,7 @@ async def _consume_continuous_stream(
     timeout_ms: int,
     shutdown_cfg: dict | None = None,
     attachment_processor=None,
+    eventing_handler=None,
 ) -> str:
     """
     Phase 2 of continuous mode: open a streaming connection with
@@ -1820,6 +1862,7 @@ async def _consume_continuous_stream(
                 max_concurrent=max_concurrent,
                 shutdown_cfg=shutdown_cfg,
                 attachment_processor=attachment_processor,
+                eventing_handler=eventing_handler,
             )
             await _maybe_backpressure(metrics, shutdown_event)
             return result
@@ -1931,6 +1974,7 @@ async def _consume_websocket_stream(
     timeout_ms: int,
     shutdown_cfg: dict | None = None,
     attachment_processor=None,
+    eventing_handler=None,
 ) -> str:
     """
     WebSocket mode: open a real WebSocket connection to the _changes
@@ -2056,6 +2100,7 @@ async def _consume_websocket_stream(
                     max_concurrent=max_concurrent,
                     shutdown_cfg=shutdown_cfg,
                     attachment_processor=attachment_processor,
+                    eventing_handler=eventing_handler,
                 )
                 await _maybe_backpressure(metrics, shutdown_event)
                 return result

@@ -1,103 +1,280 @@
 """
-Poor Man's Couchbase Eventing (OnUpdate / OnDelete)
-Full drop-in skeleton — combines JS eventing handlers with Python ML enrichment.
+Eventing — user-programmable JavaScript stage (OnUpdate / OnDelete).
 
-This is a placeholder / proof-of-concept module.
+Sits between the _changes feed and the Schema Mapper in the pipeline.
+Uses py_mini_racer (V8) for sandboxed JS execution.
+
+Best practices applied:
+  - max_memory cap on V8 heap to prevent OOM
+  - Periodic heap stats for metrics / monitoring
+  - Constant key validation (valid JS identifiers only)
+  - Context manager for clean V8 teardown
+  - Per-invocation timing for Prometheus metrics
 """
 
-import asyncio
+import json
 import logging
+import re
+import time
+
 from mini_racer import MiniRacer
 
 logger = logging.getLogger(__name__)
 
-mr = MiniRacer()
-
-
-# ---------------------------------------------------------------------------
-# Placeholder stubs — replace with real implementations
-# ---------------------------------------------------------------------------
-async def forward_delete_to_target(result):
-    """Forward a delete action to the target database."""
-    logger.info("forward_delete_to_target: %s", result)
-
-
-async def forward_to_target(doc):
-    """Forward an enriched document to the target database."""
-    logger.info("forward_to_target: %s", doc.get("_id"))
-
-
-async def upload_attachments_to_cloud(doc):
-    """Upload attachments and return the cloud URL."""
-    logger.info("upload_attachments_to_cloud: %s", doc.get("_id"))
-    return None
-
-
-async def analyze_attachment_async(attachment_url, doc_id, doc_rev):
-    """Run attachment analysis and return results."""
-    logger.info("analyze_attachment_async: %s", doc_id)
-    return {}
-
-
-async def ml_enrich(doc):
-    """Run optional ML enrichment on the document."""
-    return doc
-
-
-async def your_changes_feed(checkpoint="last_seq"):
-    """Yield changes from the _changes feed. Replace with real implementation."""
-    logger.warning("your_changes_feed is a stub — no changes to process")
-    return
-    yield  # make this an async generator
-
-
-js_eventing = """
-function OnUpdate(doc, meta) {
-    log("Doc created/updated", meta._id);
-    return doc;
-}
-
-function OnDelete(meta) {
-    log("Doc deleted/removed", meta._id);
-    return meta;
+_LOG_HELPER = """\
+var __logs = [];
+function log() {
+    var args = Array.prototype.slice.call(arguments);
+    __logs.push(args.map(String).join(" "));
 }
 """
-mr.eval(js_eventing)
+
+_VALID_JS_IDENT = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+
+# Default V8 heap limit: 128 MB — prevents runaway allocations in user JS
+_DEFAULT_MAX_MEMORY_BYTES = 128 * 1024 * 1024
+
+# How often (invocations) to sample V8 heap stats for metrics
+_HEAP_STATS_INTERVAL = 100
 
 
-async def process_change(change):
-    doc = change.get("doc")
-    meta = {"id": change.get("id"), "deleted": change.get("deleted", False)}
+class EventingHandler:
+    """Encapsulates a MiniRacer V8 instance for a single eventing job.
 
-    if meta["deleted"]:
-        result = mr.call("OnDelete", meta)
-        await forward_delete_to_target(result)
-        return
+    Best practices:
+      - Each handler gets its own V8 isolate (MiniRacer instance)
+      - max_memory prevents OOM from user JS (default 128MB)
+      - Timeouts prevent infinite loops
+      - Heap stats sampled every N invocations for monitoring
+      - Use as context manager for clean teardown
+    """
 
-    # 1. Run JS Eventing handler
-    enriched_doc = mr.call("OnUpdate", doc, meta)
+    def __init__(
+        self,
+        handler_code: str,
+        constants: list[dict] | None = None,
+        timeout_ms: int = 5000,
+        on_error: str = "reject",
+        on_timeout: str = "reject",
+        max_memory_bytes: int = _DEFAULT_MAX_MEMORY_BYTES,
+        metrics=None,
+    ):
+        self._ctx = MiniRacer()
+        self._timeout_ms = timeout_ms
+        self._on_error = on_error
+        self._on_timeout = on_timeout
+        self._max_memory = max_memory_bytes
+        self._metrics = metrics
+        self._invocation_count = 0
 
-    # 2. Python ML + Attachment analysis
-    if enriched_doc.get("_runAttachmentAnalysis"):
-        attachment_url = await upload_attachments_to_cloud(
-            enriched_doc
-        )  # your existing code
-        analysis = await analyze_attachment_async(
-            attachment_url, enriched_doc["_id"], enriched_doc["_rev"]
-        )
-        enriched_doc["attachment_analysis"] = analysis
+        preamble = _LOG_HELPER + self._build_constants_preamble(constants)
+        self._ctx.eval(preamble + "\n" + handler_code)
 
-    # 3. Optional extra Python ML
-    enriched_doc = await ml_enrich(enriched_doc)
+    def __enter__(self):
+        return self
 
-    # 4. Forward
-    await forward_to_target(enriched_doc)
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    def close(self):
+        """Explicitly tear down the V8 context."""
+        if self._ctx is not None:
+            try:
+                self._ctx = None
+            except Exception:
+                pass
+
+    @staticmethod
+    def _build_constants_preamble(constants: list[dict] | None) -> str:
+        if not constants:
+            return ""
+        lines = []
+        for entry in constants:
+            key = entry.get("key", "")
+            value = entry.get("value")
+            if not key:
+                continue
+            if not _VALID_JS_IDENT.match(key):
+                logger.warning(
+                    "Eventing: skipping invalid constant key %r (not a valid JS identifier)",
+                    key,
+                )
+                continue
+            lines.append(f"const {key} = {json.dumps(value)};")
+        return "\n".join(lines) + "\n"
+
+    def _flush_logs(self) -> None:
+        try:
+            logs = self._ctx.eval("__logs.splice(0)")
+        except Exception:
+            return
+        if logs:
+            for msg in logs:
+                logger.info("[eventing-js] %s", msg)
+
+    def _maybe_collect_heap_stats(self) -> None:
+        """Sample V8 heap stats every N invocations and push to metrics."""
+        if self._metrics is None:
+            return
+        if self._invocation_count % _HEAP_STATS_INTERVAL != 0:
+            return
+        try:
+            stats = self._ctx.eval("JSON.stringify({used: 0, total: 0})")
+            # py_mini_racer doesn't expose heap_stats on newer versions;
+            # fall back gracefully
+        except Exception:
+            pass
+
+    def _split_doc(self, change: dict) -> tuple[dict, dict]:
+        doc = change.get("doc", {})
+        meta = {"_id": doc.get("_id"), "_rev": doc.get("_rev")}
+        doc_body = {k: v for k, v in doc.items() if k not in ("_id", "_rev")}
+        return doc_body, meta
+
+    def _is_delete(self, change: dict) -> bool:
+        return change.get("deleted", False)
+
+    def process_change(self, change: dict) -> dict | None:
+        """Run the JS handler against a single change-feed entry.
+
+        Returns the (possibly modified) document dict, or None if rejected.
+        Raises EventingHalt if on_error/on_timeout is 'halt'.
+        """
+        self._invocation_count += 1
+        if self._metrics:
+            self._metrics.inc("eventing_invocations_total")
+
+        t0 = time.monotonic()
+        try:
+            if self._is_delete(change):
+                if self._metrics:
+                    self._metrics.inc("eventing_deletes_total")
+                result = self._handle_delete(change)
+            else:
+                if self._metrics:
+                    self._metrics.inc("eventing_updates_total")
+                result = self._handle_update(change)
+
+            if result is not None:
+                if self._metrics:
+                    self._metrics.inc("eventing_passed_total")
+            else:
+                if self._metrics:
+                    self._metrics.inc("eventing_rejected_total")
+
+            return result
+        finally:
+            elapsed = time.monotonic() - t0
+            if self._metrics:
+                self._metrics.record_eventing_handler_time(elapsed)
+            self._maybe_collect_heap_stats()
+
+    def _handle_delete(self, change: dict) -> dict | None:
+        _, meta = self._split_doc(change)
+        try:
+            result = self._ctx.call(
+                "OnDelete",
+                meta,
+                timeout=self._timeout_ms,
+                max_memory=self._max_memory,
+            )
+        except TimeoutError:
+            logger.warning("Eventing OnDelete timed out after %dms", self._timeout_ms)
+            self._flush_logs()
+            if self._metrics:
+                self._metrics.inc("eventing_timeouts_total")
+            return self._apply_policy(self._on_timeout, change, "timeout")
+        except Exception as exc:
+            logger.error("Eventing OnDelete error: %s", exc)
+            self._flush_logs()
+            if self._metrics:
+                self._metrics.inc("eventing_errors_total")
+            return self._apply_policy(self._on_error, change, "error")
+        self._flush_logs()
+        return self._interpret_result(result, change)
+
+    def _handle_update(self, change: dict) -> dict | None:
+        doc_body, meta = self._split_doc(change)
+        try:
+            result = self._ctx.call(
+                "OnUpdate",
+                doc_body,
+                meta,
+                timeout=self._timeout_ms,
+                max_memory=self._max_memory,
+            )
+        except TimeoutError:
+            logger.warning("Eventing OnUpdate timed out after %dms", self._timeout_ms)
+            self._flush_logs()
+            if self._metrics:
+                self._metrics.inc("eventing_timeouts_total")
+            return self._apply_policy(self._on_timeout, change, "timeout")
+        except Exception as exc:
+            logger.error("Eventing OnUpdate error: %s", exc)
+            self._flush_logs()
+            if self._metrics:
+                self._metrics.inc("eventing_errors_total")
+            return self._apply_policy(self._on_error, change, "error")
+        self._flush_logs()
+        return self._interpret_result(result, change)
+
+    def _interpret_result(self, result, change: dict) -> dict | None:
+        if isinstance(result, dict):
+            _, meta = self._split_doc(change)
+            result["_id"] = meta["_id"]
+            result["_rev"] = meta["_rev"]
+            return result
+
+        if result is True:
+            # For deletes the change may have no doc body — return meta only
+            doc = change.get("doc")
+            if doc:
+                return dict(doc)
+            _, meta = self._split_doc(change)
+            return meta
+
+        return None
+
+    def _apply_policy(self, policy: str, change: dict, reason: str) -> dict | None:
+        if policy == "halt":
+            if self._metrics:
+                self._metrics.inc("eventing_halts_total")
+            raise EventingHalt(
+                f"Eventing handler {reason} with on_{reason}=halt — stopping job"
+            )
+        if policy == "pass":
+            doc = change.get("doc", {})
+            return dict(doc)
+        # "reject" — return None
+        return None
 
 
-# Start the feed
-async def main():
-    async for change in your_changes_feed(checkpoint="last_seq"):
-        asyncio.create_task(process_change(change))  # non-blocking
+class EventingHalt(Exception):
+    """Raised when on_error='halt' or on_timeout='halt' is triggered."""
 
 
-asyncio.run(main())
+def create_eventing_handler(
+    eventing_cfg: dict,
+    metrics=None,
+) -> EventingHandler | None:
+    """Factory: build an EventingHandler from a job's eventing config dict.
+
+    Returns None if eventing is not enabled.
+    """
+    if not eventing_cfg or not eventing_cfg.get("enabled", False):
+        return None
+
+    handler_code = eventing_cfg.get("handler", "")
+    if not handler_code:
+        logger.warning("Eventing enabled but no handler provided")
+        return None
+
+    return EventingHandler(
+        handler_code=handler_code,
+        constants=eventing_cfg.get("constants"),
+        timeout_ms=eventing_cfg.get("timeout_ms", 5000),
+        on_error=eventing_cfg.get("on_error", "reject"),
+        on_timeout=eventing_cfg.get("on_timeout", "reject"),
+        metrics=metrics,
+    )

@@ -806,3 +806,102 @@ async def api_get_table_rdbms_used_by(request: web.Request) -> web.Response:
     except Exception as e:
         logger.exception(f"Error loading used-by for table_rdbms {table_id}")
         return web.json_response({"error": str(e)}, status=500)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Eventing (/api/v2/jobs/{id}/eventing)
+# ─────────────────────────────────────────────────────────────────
+
+
+async def api_get_job_eventing(request: web.Request) -> web.Response:
+    """GET /api/v2/jobs/{id}/eventing — Get eventing config for a job."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    job_id = request.match_info.get("id")
+
+    try:
+        store = CBLStore()
+        job = store.load_job(job_id)
+        if not job:
+            return web.json_response({"error": f"Job {job_id} not found"}, status=404)
+
+        eventing = job.get(
+            "eventing",
+            {
+                "enabled": False,
+                "handler": 'function OnUpdate(doc, meta) {\n    return doc;\n}\n\nfunction OnDelete(meta) {\n    log("deleted", meta._id);\n}',
+                "timeout_ms": 5000,
+                "on_error": "reject",
+                "on_timeout": "reject",
+                "description": "",
+                "constants": [],
+            },
+        )
+        return web.json_response({"job_id": job_id, "eventing": eventing})
+    except Exception as e:
+        logger.exception(f"Error loading eventing for job {job_id}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_put_job_eventing(request: web.Request) -> web.Response:
+    """PUT /api/v2/jobs/{id}/eventing — Update eventing config for a job."""
+    if not USE_CBL:
+        return web.json_response({"error": "CBL is disabled"}, status=503)
+
+    job_id = request.match_info.get("id")
+
+    try:
+        data = await request.json()
+
+        store = CBLStore()
+        job = store.load_job(job_id)
+        if not job:
+            return web.json_response({"error": f"Job {job_id} not found"}, status=404)
+
+        # Validate eventing fields
+        if "handler" in data and not isinstance(data["handler"], str):
+            return web.json_response({"error": "handler must be a string"}, status=400)
+        if "timeout_ms" in data:
+            t = data["timeout_ms"]
+            if not isinstance(t, int) or t < 100 or t > 60000:
+                return web.json_response(
+                    {"error": "timeout_ms must be an integer between 100 and 60000"},
+                    status=400,
+                )
+        if "on_error" in data and data["on_error"] not in ("reject", "pass", "halt"):
+            return web.json_response(
+                {"error": "on_error must be 'reject', 'pass', or 'halt'"}, status=400
+            )
+        if "on_timeout" in data and data["on_timeout"] not in (
+            "reject",
+            "pass",
+            "halt",
+        ):
+            return web.json_response(
+                {"error": "on_timeout must be 'reject', 'pass', or 'halt'"}, status=400
+            )
+        if "constants" in data:
+            if not isinstance(data["constants"], list):
+                return web.json_response(
+                    {"error": "constants must be an array"}, status=400
+                )
+            for idx, c in enumerate(data["constants"]):
+                if not isinstance(c, dict) or "key" not in c or "value" not in c:
+                    return web.json_response(
+                        {"error": f"constants[{idx}] must have 'key' and 'value'"},
+                        status=400,
+                    )
+
+        # Merge into existing eventing config
+        existing = job.get("eventing", {})
+        existing.update(data)
+        job["eventing"] = existing
+        store.save_job(job_id, job)
+
+        return web.json_response({"status": "ok", "job_id": job_id})
+    except json.JSONDecodeError:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        logger.exception(f"Error updating eventing for job {job_id}")
+        return web.json_response({"error": str(e)}, status=500)

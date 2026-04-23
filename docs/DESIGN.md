@@ -14,6 +14,7 @@ This document describes the internal architecture of the changes_worker, how dat
 - [`ATTACHMENTS.md`](ATTACHMENTS.md) -- Attachment processing: detect, fetch, upload, post-process
 - [`CLOUD_BLOB_PLAN.md`](CLOUD_BLOB_PLAN.md) -- Cloud blob storage output (S3, GCS, Azure)
 - [`ADMIN_UI.md — Transforms`](ADMIN_UI.md#transform-functions-reference-transforms) -- Transform function reference (58 built-in functions)
+- [`DESIGN_EVENTING.md`](DESIGN_EVENTING.md) -- Eventing subsystem: JS OnUpdate/OnDelete handlers, MiniRacer (V8), function editor UI
 
 ---
 

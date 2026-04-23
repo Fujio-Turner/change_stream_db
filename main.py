@@ -232,6 +232,22 @@ class MetricsCollector:
         self.attachments_partial_success_total: int = 0
         self.attachments_temp_files_cleaned_total: int = 0
 
+        # Eventing (JS OnUpdate/OnDelete handlers)
+        self.eventing_invocations_total: int = (
+            0  # total handler calls (update + delete)
+        )
+        self.eventing_updates_total: int = 0  # OnUpdate calls
+        self.eventing_deletes_total: int = 0  # OnDelete calls
+        self.eventing_passed_total: int = 0  # docs that passed through
+        self.eventing_rejected_total: int = 0  # docs rejected by handler
+        self.eventing_errors_total: int = 0  # JS exceptions
+        self.eventing_timeouts_total: int = 0  # handler exceeded timeout_ms
+        self.eventing_halts_total: int = 0  # on_error/on_timeout=halt triggered
+        self.eventing_v8_heap_used_bytes: int = (
+            0  # V8 heap used (gauge, updated periodically)
+        )
+        self.eventing_v8_heap_total_bytes: int = 0  # V8 heap total (gauge)
+
         # Flood / backpressure detection
         self.largest_batch_received: int = 0
         self.flood_batches_total: int = 0  # batches exceeding flood threshold
@@ -263,6 +279,9 @@ class MetricsCollector:
         self._inbound_auth_times: deque[float] = deque(maxlen=10000)
         self._outbound_auth_times: deque[float] = deque(maxlen=10000)
 
+        # Eventing timing deque
+        self._eventing_handler_times: deque[float] = deque(maxlen=10000)
+
         # Timing summary cache: avoid re-sorting unchanged deques on every scrape
         self._timing_versions: dict[str, int] = {
             "output": 0,
@@ -272,6 +291,7 @@ class MetricsCollector:
             "health": 0,
             "inbound_auth": 0,
             "outbound_auth": 0,
+            "eventing": 0,
         }
         self._timing_stats_cache: dict[str, tuple[int, int, float, list[float]]] = {}
 
@@ -326,6 +346,11 @@ class MetricsCollector:
         with self._lock:
             self._outbound_auth_times.append(seconds)
             self._timing_versions["outbound_auth"] += 1
+
+    def record_eventing_handler_time(self, seconds: float) -> None:
+        with self._lock:
+            self._eventing_handler_times.append(seconds)
+            self._timing_versions["eventing"] += 1
 
     def get_output_latency_avg(self) -> float:
         """Return rolling average output response time in seconds (0 if none)."""
@@ -455,6 +480,7 @@ class MetricsCollector:
                 "health": self._health_probe_times,
                 "inbound_auth": self._inbound_auth_times,
                 "outbound_auth": self._outbound_auth_times,
+                "eventing": self._eventing_handler_times,
             }
             versions = dict(self._timing_versions)
 
@@ -508,6 +534,7 @@ class MetricsCollector:
         hpt_count, hpt_sum, hpt_sorted = timing_stats["health"]
         iat_count, iat_sum, iat_sorted = timing_stats["inbound_auth"]
         oat_count, oat_sum, oat_sorted = timing_stats["outbound_auth"]
+        evt_count, evt_sum, evt_sorted = timing_stats["eventing"]
 
         lines: list[str] = []
 
@@ -1069,6 +1096,65 @@ class MetricsCollector:
             "changes_worker_attachments_temp_files_cleaned_total",
             "Temporary attachment files cleaned up from disk.",
             self.attachments_temp_files_cleaned_total,
+        )
+
+        # -- Eventing (JS handlers) --
+        _counter(
+            "changes_worker_eventing_invocations_total",
+            "Total eventing handler invocations (OnUpdate + OnDelete).",
+            self.eventing_invocations_total,
+        )
+        _counter(
+            "changes_worker_eventing_updates_total",
+            "Total OnUpdate handler calls.",
+            self.eventing_updates_total,
+        )
+        _counter(
+            "changes_worker_eventing_deletes_total",
+            "Total OnDelete handler calls.",
+            self.eventing_deletes_total,
+        )
+        _counter(
+            "changes_worker_eventing_passed_total",
+            "Documents passed through by eventing handler.",
+            self.eventing_passed_total,
+        )
+        _counter(
+            "changes_worker_eventing_rejected_total",
+            "Documents rejected by eventing handler.",
+            self.eventing_rejected_total,
+        )
+        _counter(
+            "changes_worker_eventing_errors_total",
+            "JS handler exceptions (on_error policy applied).",
+            self.eventing_errors_total,
+        )
+        _counter(
+            "changes_worker_eventing_timeouts_total",
+            "JS handler timeout_ms exceeded (on_timeout policy applied).",
+            self.eventing_timeouts_total,
+        )
+        _counter(
+            "changes_worker_eventing_halts_total",
+            "Eventing halt events (on_error=halt or on_timeout=halt triggered).",
+            self.eventing_halts_total,
+        )
+        _gauge(
+            "changes_worker_eventing_v8_heap_used_bytes",
+            "V8 isolate heap used bytes (latest reading).",
+            self.eventing_v8_heap_used_bytes,
+        )
+        _gauge(
+            "changes_worker_eventing_v8_heap_total_bytes",
+            "V8 isolate heap total bytes (latest reading).",
+            self.eventing_v8_heap_total_bytes,
+        )
+        _summary(
+            "changes_worker_eventing_handler_duration_seconds",
+            "Time spent in JS handler per invocation.",
+            evt_sorted,
+            evt_count,
+            evt_sum,
         )
 
         # ── SYSTEM metrics (psutil / gc / threading) ────────────────────
@@ -2731,6 +2817,19 @@ async def poll_changes(
                 % (att_cfg.mode, att_cfg.dry_run),
             )
 
+        # ── Eventing handler (JS OnUpdate/OnDelete) ─────────────────
+        from eventing.eventing import create_eventing_handler
+
+        eventing_cfg = cfg.get("eventing", {})
+        eventing_handler = create_eventing_handler(eventing_cfg, metrics=metrics)
+        if eventing_handler:
+            log_event(
+                logger,
+                "info",
+                "EVENTING",
+                "eventing enabled — JS handlers loaded",
+            )
+
         # Shared kwargs for _process_changes_batch / catch-up / continuous
         shutdown_cfg = cfg.get("shutdown", {})
         batch_kwargs = dict(
@@ -2750,6 +2849,7 @@ async def poll_changes(
             max_concurrent=max_concurrent,
             shutdown_cfg=shutdown_cfg,
             attachment_processor=att_processor,
+            eventing_handler=eventing_handler,
         )
 
         # Log replication settings at startup

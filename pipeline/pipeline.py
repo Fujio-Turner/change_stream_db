@@ -318,6 +318,10 @@ class Pipeline:
         if self.job_doc.get("mapping"):
             cfg["mapping"] = self.job_doc["mapping"]
 
+        # Extract eventing
+        if self.job_doc.get("eventing"):
+            cfg["eventing"] = self.job_doc["eventing"]
+
         return cfg
 
     def _write_crash_to_dlq(self, error: Exception) -> None:

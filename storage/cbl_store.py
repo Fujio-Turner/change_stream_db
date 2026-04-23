@@ -2173,6 +2173,12 @@ class CBLStore:
             datetime.datetime.now(datetime.timezone.utc).isoformat(),
         )
         doc["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if "mapping" in job_data:
+            doc["mapping"] = job_data["mapping"]
+        if "eventing" in job_data:
+            doc["eventing"] = job_data["eventing"]
+        if "description" in job_data:
+            doc["description"] = job_data["description"]
         if "meta" in job_data:
             doc["meta"] = job_data["meta"]
         _coll_save_doc(self.db, COLL_JOBS, doc)
