@@ -18,7 +18,7 @@ import urllib.parse
 from collections import deque
 from datetime import datetime, timezone
 
-from pipeline_logging import log_event, infer_operation
+from pipeline.pipeline_logging import log_event, infer_operation
 
 try:
     from icecream import ic

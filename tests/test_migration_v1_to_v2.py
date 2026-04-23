@@ -16,8 +16,8 @@ from unittest.mock import MagicMock, patch
 # Ensure the module under test is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import cbl_store
-from cbl_store import CBLStore
+import storage.cbl_store as cbl_store
+from storage.cbl_store import CBLStore
 
 # Mock the CBL module and internal CFFI objects for testing without actual CBL dependency
 cbl_mock = MagicMock()

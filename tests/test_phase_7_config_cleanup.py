@@ -203,12 +203,12 @@ class TestPhase7ConfigMigration:
 
     def test_migrate_job_config_from_settings_no_config(self):
         """Test migration when no config exists."""
-        from cbl_store import CBLStore
+        from storage.cbl_store import CBLStore
 
         mock_store = MagicMock(spec=CBLStore)
         mock_store.load_config.return_value = None
 
-        with patch("cbl_store.CBLStore") as MockCBL:
+        with patch("storage.cbl_store.CBLStore") as MockCBL:
             mock_instance = MagicMock()
             mock_instance.load_config.return_value = None
             mock_instance.migrate_job_config_from_settings.return_value = {
@@ -226,7 +226,7 @@ class TestPhase7ConfigMigration:
 
     def test_migrate_job_config_from_settings_no_job_fields(self):
         """Test migration when config has no job fields."""
-        from cbl_store import CBLStore
+        from storage.cbl_store import CBLStore
 
         config = {
             "logging": {"level": "INFO"},
@@ -237,7 +237,7 @@ class TestPhase7ConfigMigration:
         mock_store.load_config.return_value = config
 
         # Call the actual migration method (mocked)
-        with patch("cbl_store.CBLStore") as MockCBL:
+        with patch("storage.cbl_store.CBLStore") as MockCBL:
             mock_instance = MagicMock()
             mock_instance.load_config.return_value = config
             mock_instance.migrate_job_config_from_settings.return_value = {

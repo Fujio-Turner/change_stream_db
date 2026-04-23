@@ -24,7 +24,7 @@ import concurrent.futures
 import functools
 import logging
 
-from pipeline_logging import log_event
+from pipeline.pipeline_logging import log_event
 
 try:
     from icecream import ic

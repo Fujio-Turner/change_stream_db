@@ -45,7 +45,7 @@ try:
 except ImportError:
     yaml = None
 
-from pipeline_logging import log_event, infer_operation
+from pipeline.pipeline_logging import log_event, infer_operation
 
 logger = logging.getLogger("changes_worker")
 
@@ -296,6 +296,19 @@ class OutputForwarder:
         """Map HTTP method to metrics key prefix: 'put' or 'delete'."""
         return "delete" if method == "DELETE" else "put"
 
+    def _send_stdout(self, doc: dict) -> None:
+        """Write a document to stdout."""
+        import sys
+
+        body, content_type = serialize_doc(doc, self._output_format)
+        if isinstance(body, bytes):
+            sys.stdout.buffer.write(body)
+            sys.stdout.buffer.write(b"\n")
+            sys.stdout.buffer.flush()
+        else:
+            sys.stdout.write(body + "\n")
+            sys.stdout.flush()
+
     async def send(self, doc: dict, method: str = "PUT") -> dict:
         """Send a single doc. Returns result dict with 'ok' bool. Raises OutputEndpointDown if halt_on_failure."""
         if doc is None:
@@ -352,6 +365,10 @@ class OutputForwarder:
                 bytes=body_len,
             )
             return {"ok": True, "doc_id": doc_id, "method": method, "dry_run": True}
+
+        if self._mode == "stdout":
+            self._send_stdout(doc)
+            return {"ok": True, "doc_id": doc_id, "method": method}
 
         assert self._http is not None
 
@@ -968,12 +985,12 @@ class DeadLetterQueue:
     """
 
     def __init__(self, path: str, dlq_cfg: dict | None = None):
-        from cbl_store import USE_CBL as _use_cbl
+        from storage.cbl_store import USE_CBL as _use_cbl
 
         self._use_cbl = _use_cbl
         self._store = None
         if self._use_cbl:
-            from cbl_store import CBLStore
+            from storage.cbl_store import CBLStore
 
             self._store = CBLStore()
         self._path = Path(path) if path and not self._use_cbl else None

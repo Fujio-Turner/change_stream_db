@@ -39,3 +39,6 @@ checkpoint.json
 # Log files
 logs/*.log
 logs/*.log.*
+
+#Profile files
+*.svg

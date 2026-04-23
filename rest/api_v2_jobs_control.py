@@ -20,7 +20,7 @@ from typing import Optional, Any, Dict
 
 import aiohttp.web
 
-from pipeline_manager import PipelineManager
+from pipeline.pipeline_manager import PipelineManager
 
 logger = logging.getLogger("changes_worker")
 

@@ -76,7 +76,7 @@ def metrics():
 
 def test_pipeline_init(logger, cbl_store, metrics):
     """Test Pipeline initialization."""
-    from pipeline import Pipeline
+    from pipeline.pipeline import Pipeline
 
     job_doc = {
         "_id": "job::test-1",
@@ -102,7 +102,7 @@ def test_pipeline_init(logger, cbl_store, metrics):
 
 def test_pipeline_state_tracking(logger, cbl_store, metrics):
     """Test Pipeline state tracking."""
-    from pipeline import Pipeline
+    from pipeline.pipeline import Pipeline
 
     job_doc = {
         "_id": "job::test-1",
@@ -130,7 +130,7 @@ def test_pipeline_state_tracking(logger, cbl_store, metrics):
 
 def test_pipeline_build_config(logger, cbl_store, metrics):
     """Test Pipeline config building from job document."""
-    from pipeline import Pipeline
+    from pipeline.pipeline import Pipeline
 
     job_doc = {
         "_id": "job::test-1",
@@ -173,7 +173,7 @@ def test_pipeline_build_config(logger, cbl_store, metrics):
 
 def test_pipeline_manager_init(logger, cbl_store, metrics):
     """Test PipelineManager initialization."""
-    from pipeline_manager import PipelineManager
+    from pipeline.pipeline_manager import PipelineManager
 
     config = {"max_threads": 5}
 
@@ -190,8 +190,8 @@ def test_pipeline_manager_init(logger, cbl_store, metrics):
 
 def test_pipeline_manager_job_registry(logger, cbl_store, metrics):
     """Test PipelineManager job registry."""
-    from pipeline_manager import PipelineManager
-    from pipeline import Pipeline
+    from pipeline.pipeline_manager import PipelineManager
+    from pipeline.pipeline import Pipeline
 
     config = {"max_threads": 5}
     manager = PipelineManager(
@@ -248,8 +248,8 @@ def test_pipeline_manager_job_registry(logger, cbl_store, metrics):
 
 def test_pipeline_manager_get_job_state(logger, cbl_store, metrics):
     """Test getting individual job state."""
-    from pipeline_manager import PipelineManager
-    from pipeline import Pipeline
+    from pipeline.pipeline_manager import PipelineManager
+    from pipeline.pipeline import Pipeline
 
     config = {"max_threads": 5}
     manager = PipelineManager(
@@ -287,7 +287,7 @@ def test_pipeline_manager_get_job_state(logger, cbl_store, metrics):
 
 def test_pipeline_manager_stop_job(logger, cbl_store, metrics):
     """Test stopping a job that's not actually running."""
-    from pipeline_manager import PipelineManager
+    from pipeline.pipeline_manager import PipelineManager
 
     config = {"max_threads": 5}
     manager = PipelineManager(
@@ -313,7 +313,7 @@ def test_pipeline_manager_stop_job(logger, cbl_store, metrics):
 
 def test_pipeline_manager_load_enabled_jobs(logger, cbl_store, metrics):
     """Test loading enabled jobs from CBL."""
-    from pipeline_manager import PipelineManager
+    from pipeline.pipeline_manager import PipelineManager
 
     config = {"max_threads": 5}
     manager = PipelineManager(
@@ -357,8 +357,8 @@ def test_pipeline_manager_load_enabled_jobs(logger, cbl_store, metrics):
 
 def test_pipeline_manager_max_threads_enforcement(logger, cbl_store, metrics):
     """Test max_threads limit enforcement."""
-    from pipeline_manager import PipelineManager
-    from pipeline import Pipeline
+    from pipeline.pipeline_manager import PipelineManager
+    from pipeline.pipeline import Pipeline
 
     config = {"max_threads": 1}
     manager = PipelineManager(
@@ -394,7 +394,7 @@ def test_pipeline_manager_max_threads_enforcement(logger, cbl_store, metrics):
 
 def test_pipeline_manager_crash_backoff(logger, cbl_store, metrics):
     """Test crash backoff tracking."""
-    from pipeline_manager import PipelineManager
+    from pipeline.pipeline_manager import PipelineManager
 
     config = {"max_threads": 5}
     manager = PipelineManager(

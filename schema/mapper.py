@@ -18,7 +18,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-from pipeline_logging import log_event
+from pipeline.pipeline_logging import log_event
 
 try:
     from icecream import ic

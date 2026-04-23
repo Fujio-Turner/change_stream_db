@@ -14,7 +14,7 @@ import logging
 import uuid
 from aiohttp import web
 
-from cbl_store import CBLStore, USE_CBL
+from storage.cbl_store import CBLStore, USE_CBL
 
 logger = logging.getLogger("changes_worker")
 
@@ -169,7 +169,7 @@ async def api_get_outputs(request: web.Request) -> web.Response:
         return web.json_response({"error": "CBL is disabled"}, status=503)
 
     output_type = request.match_info.get("type")
-    if output_type not in ("rdbms", "http", "cloud"):
+    if output_type not in ("rdbms", "http", "cloud", "stdout"):
         return web.json_response({"error": "Invalid output type"}, status=400)
 
     try:
@@ -189,7 +189,7 @@ async def api_post_outputs(request: web.Request) -> web.Response:
         return web.json_response({"error": "CBL is disabled"}, status=503)
 
     output_type = request.match_info.get("type")
-    if output_type not in ("rdbms", "http", "cloud"):
+    if output_type not in ("rdbms", "http", "cloud", "stdout"):
         return web.json_response({"error": "Invalid output type"}, status=400)
 
     try:
@@ -234,7 +234,7 @@ async def api_put_outputs_entry(request: web.Request) -> web.Response:
     output_type = request.match_info.get("type")
     entry_id = request.match_info.get("id")
 
-    if output_type not in ("rdbms", "http", "cloud"):
+    if output_type not in ("rdbms", "http", "cloud", "stdout"):
         return web.json_response({"error": "Invalid output type"}, status=400)
 
     try:
@@ -272,7 +272,7 @@ async def api_delete_outputs_entry(request: web.Request) -> web.Response:
     output_type = request.match_info.get("type")
     entry_id = request.match_info.get("id")
 
-    if output_type not in ("rdbms", "http", "cloud"):
+    if output_type not in ("rdbms", "http", "cloud", "stdout"):
         return web.json_response({"error": "Invalid output type"}, status=400)
 
     try:

@@ -7,7 +7,7 @@ import time
 import logging
 import threading
 
-from pipeline_logging import log_event
+from pipeline.pipeline_logging import log_event
 
 try:
     from icecream import ic

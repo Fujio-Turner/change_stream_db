@@ -34,6 +34,14 @@
     { href: '/help',       label: 'Help',             icon: '/static/icons/help.svg'     }
   ];
 
+  /* ── Dev-only nav items (visible only with ?dev=true) ──── */
+  if (window.location.search.indexOf('dev=true') !== -1) {
+    NAV.splice(NAV.length - 1, 0,
+      { type: 'section', label: 'Experimental' },
+      { href: '/eventing?dev=true',  label: 'Eventing',  icon: '/static/icons/eventing.svg' }
+    );
+  }
+
   /* ── Build HTML ─────────────────────────────────────────── */
   var path = window.location.pathname.replace(/\/+$/, '') || '/';
 

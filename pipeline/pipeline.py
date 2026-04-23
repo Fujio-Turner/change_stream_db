@@ -16,8 +16,8 @@ import time
 from typing import Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
 
-from cbl_store import CBLStore
-from pipeline_logging import log_event
+from storage.cbl_store import CBLStore
+from pipeline.pipeline_logging import log_event
 
 
 class Pipeline:

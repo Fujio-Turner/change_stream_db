@@ -81,7 +81,7 @@ from rest.changes_http import (
     _maybe_backpressure,
 )
 from rest import determine_method  # re-export for backward compat
-from cbl_store import (
+from storage.cbl_store import (
     USE_CBL,
     CBLStore,
     CBLMaintenanceScheduler,
@@ -93,11 +93,11 @@ from cbl_store import (
 )
 from rest.attachment_config import parse_attachment_config
 from rest.attachments import AttachmentProcessor
-from pipeline_logging import (
+from pipeline.pipeline_logging import (
     configure_logging,
     log_event,
 )
-from pipeline_manager import PipelineManager
+from pipeline.pipeline_manager import PipelineManager
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -1447,7 +1447,7 @@ async def _status_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
 async def _collect_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
     """POST /_collect — generate diagnostic zip and stream it back."""
     from rest.log_collect import DiagnosticsCollector
-    from pipeline_logging import get_redactor
+    from pipeline.pipeline_logging import get_redactor
 
     cfg = request.app.get("config", {})
     metrics = request.app.get("metrics")
@@ -1826,7 +1826,10 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
     _DB_ENGINE_ALIASES = {"postgres", "mysql", "mssql", "oracle"}
     if out_mode is None:
         errors.append("output.mode is required (http, db, s3, or a db engine name)")
-    elif out_mode not in ("http", "db", "s3") and out_mode not in _DB_ENGINE_ALIASES:
+    elif (
+        out_mode not in ("http", "db", "s3", "stdout")
+        and out_mode not in _DB_ENGINE_ALIASES
+    ):
         errors.append(
             f"output.mode must be 'http', 'db', 's3', or a db engine name "
             f"(postgres/mysql/mssql/oracle), got '{out_mode}'"
@@ -1915,7 +1918,7 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
     has_dlq = bool(dlq_path)
     # CBL is always available as DLQ backend, so only warn when no CBL either
     try:
-        from cbl_store import USE_CBL as _use_cbl_check
+        from storage.cbl_store import USE_CBL as _use_cbl_check
     except ImportError:
         _use_cbl_check = False
     if not is_sequential and not has_dlq and not _use_cbl_check:
@@ -3208,7 +3211,7 @@ def main() -> None:
         # Backward compat: fall back to legacy "cbl_maintenance" key
         maint_cfg = cbl_cfg.get("maintenance", cfg.get("cbl_maintenance", {}))
         if cbl_cfg.get("db_dir") or cbl_cfg.get("db_name"):
-            from cbl_store import configure_cbl
+            from storage.cbl_store import configure_cbl
 
             configure_cbl(cbl_cfg.get("db_dir"), cbl_cfg.get("db_name"))
         if maint_cfg.get("enabled", True):
@@ -3231,7 +3234,7 @@ def main() -> None:
         log_dir = os.path.dirname(log_dir) or "logs"
         cbl_db_dir = ""
         if USE_CBL:
-            from cbl_store import CBL_DB_DIR, CBL_DB_NAME
+            from storage.cbl_store import CBL_DB_DIR, CBL_DB_NAME
 
             cbl_db_dir = os.path.join(CBL_DB_DIR, f"{CBL_DB_NAME}.cblite2")
         metrics = MetricsCollector(

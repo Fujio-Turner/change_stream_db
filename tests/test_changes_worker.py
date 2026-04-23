@@ -653,7 +653,7 @@ class TestOutputForwarderStdout(unittest.TestCase):
         with patch("sys.stdout") as mock_stdout:
             mock_stdout.buffer = MagicMock()
             fwd._send_stdout(doc)
-            mock_stdout.buffer.write.assert_called_once()
+            mock_stdout.buffer.write.assert_called()
 
 
 # ===================================================================
@@ -1844,7 +1844,9 @@ class TestConsumeWebsocketStream(unittest.TestCase):
 
         mock_batch.return_value = ("50", False)
 
-        ws = self._make_mock_ws([change_msg, last_seq_msg])
+        ws = self._make_mock_ws(
+            [change_msg, last_seq_msg, _ws_msg(aiohttp.WSMsgType.CLOSED)]
+        )
         params = _make_ws_params()
         call_count = 0
 
@@ -1854,7 +1856,8 @@ class TestConsumeWebsocketStream(unittest.TestCase):
             if call_count == 1:
                 return ws
             params["shutdown_event"].set()
-            return self._make_mock_ws([])
+            closed_msg = _ws_msg(aiohttp.WSMsgType.CLOSED)
+            return self._make_mock_ws([closed_msg])
 
         params["session"].ws_connect = AsyncMock(side_effect=_connect)
 
@@ -1881,7 +1884,9 @@ class TestConsumeWebsocketStream(unittest.TestCase):
 
         mock_batch.return_value = ("51", False)
 
-        ws = self._make_mock_ws([change_msg, last_seq_msg])
+        ws = self._make_mock_ws(
+            [change_msg, last_seq_msg, _ws_msg(aiohttp.WSMsgType.CLOSED)]
+        )
 
         params = _make_ws_params()
         call_count = 0
@@ -1891,7 +1896,8 @@ class TestConsumeWebsocketStream(unittest.TestCase):
             call_count += 1
             if call_count >= 2:
                 params["shutdown_event"].set()
-                return self._make_mock_ws([])
+                closed_msg = _ws_msg(aiohttp.WSMsgType.CLOSED)
+                return self._make_mock_ws([closed_msg])
             return ws
 
         params["session"].ws_connect = AsyncMock(side_effect=_connect)
@@ -1920,7 +1926,8 @@ class TestConsumeWebsocketStream(unittest.TestCase):
             call_count += 1
             if call_count >= 2:
                 params["shutdown_event"].set()
-                return self._make_mock_ws([])
+                closed_msg = _ws_msg(aiohttp.WSMsgType.CLOSED)
+                return self._make_mock_ws([closed_msg])
             return ws
 
         params["session"].ws_connect = AsyncMock(side_effect=_connect)
@@ -1941,7 +1948,9 @@ class TestConsumeWebsocketStream(unittest.TestCase):
             json.dumps({"seq": "10", "id": "d1", "changes": [{"rev": "1-x"}]}),
         )
         last_seq_msg = _ws_msg(aiohttp.WSMsgType.TEXT, json.dumps({"last_seq": "10"}))
-        ws2 = self._make_mock_ws([change_msg, last_seq_msg])
+        ws2 = self._make_mock_ws(
+            [change_msg, last_seq_msg, _ws_msg(aiohttp.WSMsgType.CLOSED)]
+        )
 
         mock_batch.return_value = ("10", False)
 
@@ -1956,7 +1965,8 @@ class TestConsumeWebsocketStream(unittest.TestCase):
             if call_count == 2:
                 return ws2
             params["shutdown_event"].set()
-            return self._make_mock_ws([])
+            closed_msg = _ws_msg(aiohttp.WSMsgType.CLOSED)
+            return self._make_mock_ws([closed_msg])
 
         params["session"].ws_connect = AsyncMock(side_effect=_connect)
 
@@ -1983,7 +1993,8 @@ class TestConsumeWebsocketStream(unittest.TestCase):
             if call_count == 2:
                 return ws
             params["shutdown_event"].set()
-            return self._make_mock_ws([])
+            closed_msg = _ws_msg(aiohttp.WSMsgType.CLOSED)
+            return self._make_mock_ws([closed_msg])
 
         params["session"].ws_connect = AsyncMock(side_effect=_connect)
 

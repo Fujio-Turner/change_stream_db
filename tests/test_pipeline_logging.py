@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 # Ensure the module under test is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pipeline_logging as pl
+import pipeline.pipeline_logging as pl
 
 
 # ===================================================================

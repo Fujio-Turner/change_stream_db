@@ -13,8 +13,8 @@ from aiohttp import web
 
 import datetime
 
-from cbl_store import USE_CBL, CBLStore
-from pipeline_logging import configure_logging, log_event
+from storage.cbl_store import USE_CBL, CBLStore
+from pipeline.pipeline_logging import configure_logging, log_event
 from schema.mapper import SchemaMapper
 from db.db_base import group_insert_ops, _MultiRowInsert
 from db.db_postgres import PostgresOutputForwarder
@@ -128,6 +128,10 @@ async def page_logs(request):
 
 async def page_dlq(request):
     return web.FileResponse(WEB / "templates" / "dlq.html")
+
+
+async def page_eventing(request):
+    return web.FileResponse(WEB / "templates" / "eventing.html")
 
 
 # --- Logs API ---
@@ -2257,6 +2261,7 @@ def create_app():
     app.router.add_get("/help", page_help)
     app.router.add_get("/logs", page_logs)
     app.router.add_get("/dlq", page_dlq)
+    app.router.add_get("/eventing", page_eventing)
 
     # Logs API
     app.router.add_get("/api/logs", get_logs)

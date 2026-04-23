@@ -34,7 +34,7 @@ try:
 except ImportError:  # pragma: no cover
     ic = lambda *a, **kw: None  # noqa: E731
 
-from pipeline_logging import log_event, infer_operation
+from pipeline.pipeline_logging import log_event, infer_operation
 from rest import OutputForwarder, OutputEndpointDown, DeadLetterQueue, determine_method
 
 logger = logging.getLogger("changes_worker")

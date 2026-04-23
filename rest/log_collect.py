@@ -143,7 +143,7 @@ class DiagnosticsCollector:
         try:
             import shutil
 
-            from cbl_store import CBL_DB_DIR
+            from storage.cbl_store import CBL_DB_DIR
 
             cbl_logs = [p for p in Path(CBL_DB_DIR).glob("*.cbllog*") if p.is_file()]
             if not cbl_logs:

@@ -17,7 +17,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from pipeline_logging import log_event
+from pipeline.pipeline_logging import log_event
 from schema.validator import SchemaValidator, ValidatorConfig, ValidationResult
 
 try:
@@ -353,7 +353,7 @@ class BaseOutputForwarder(abc.ABC):
         # Prefer CBL (single source of truth), fall back to filesystem
         cbl_loaded = False
         try:
-            from cbl_store import USE_CBL, CBLStore
+            from storage.cbl_store import USE_CBL, CBLStore
 
             if USE_CBL:
                 entries = CBLStore().list_mappings()
