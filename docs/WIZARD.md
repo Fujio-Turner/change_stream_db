@@ -107,9 +107,9 @@ Both can be saved directly from the wizard UI.
 │  Step 1           │     │  Step 2           │     │  Step 3           │
 │  Connect Source   │────▶│  Configure Output │────▶│  Map Fields       │
 │                   │     │                   │     │                   │
-│  • SG / App Svc   │     │  • Stdout         │     │  • Source fields  │
-│  • Edge Server    │     │  • HTTP endpoint  │     │  • JSON mapping   │
-│  • Auth config    │     │  • RDBMS          │     │  • Table mapping  │
+│  • SG / App Svc   │     │  • HTTP endpoint  │     │  • Source fields  │
+│  • Edge Server    │     │  • RDBMS          │     │  • JSON mapping   │
+│  • Auth config    │     │  • Cloud Storage  │     │  • Table mapping  │
 │  • Test & sample  │     │  • Test conn      │     │  • Transforms     │
 └──────────────────┘     └──────────────────┘     │  • Save config    │
                                                    └──────────────────┘
@@ -159,10 +159,6 @@ The wizard builds the `_changes` URL based on source type:
 ## Step 2: Configure Output
 
 Choose where processed documents are sent. Three output modes:
-
-### Stdout
-
-No configuration needed. Documents are printed to stdout (console / logs). This is the simplest mode for testing and development.
 
 ### HTTP
 
@@ -216,9 +212,9 @@ A split-pane mapping editor that adapts to the output mode chosen in Step 2.
 
 Define which documents this mapping applies to (e.g., field = `type`, value = `order`). Only documents matching this rule will be processed by this mapping.
 
-#### JSON Mode (Stdout / HTTP)
+#### JSON Mode (HTTP)
 
-Shown when output mode is Stdout or HTTP. A flat list of field mappings:
+Shown when output mode is HTTP. A flat list of field mappings:
 
 | Column | Description |
 |---|---|
@@ -519,7 +515,7 @@ The wizard uses the following corrected API endpoints for managing inputs, outpu
 
 4. **🗂️ Schema Mapping Wizard (bottom-left)** ⭐ CORE WORKFLOW
    - Step 1: Connect to source (_changes feed)
-   - Step 2: Configure output destination (Stdout, HTTP, RDBMS, S3, etc.)
+   - Step 2: Configure output destination (HTTP, RDBMS, S3, etc.)
    - Step 3: Map source fields to output schema with transforms
    - Save mapping and config
 

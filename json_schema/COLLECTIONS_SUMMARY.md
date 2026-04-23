@@ -9,7 +9,6 @@ Database: changes_worker_db
     ├── outputs_rdbms           (n docs) — RDBMS destination configs
     ├── outputs_http            (n docs) — HTTP endpoint configs
     ├── outputs_cloud           (n docs) — Cloud storage configs
-    ├── outputs_stdout          (n docs) — Console output configs
     ├── tables_rdbms            (1 doc) — Reusable RDBMS table definitions
     ├── jobs                    (n docs) — Data pipeline jobs
     ├── checkpoints             (n docs) — Change feed progress tracking
@@ -34,7 +33,6 @@ Database: changes_worker_db
 | outputs_rdbms | 1-n | RDBMS destinations | id | — |
 | outputs_http | 1-n | HTTP endpoints | id | — |
 | outputs_cloud | 1-n | Cloud storage | id | — |
-| outputs_stdout | 1-n | Console logging | id | — |
 | tables_rdbms | 1 | RDBMS table definitions library | id | — |
 | jobs | 1-n | Pipeline jobs | id, enabled | — |
 | checkpoints | 1-n | Progress tracking | client_id | — |
@@ -76,12 +74,12 @@ inputs_changes
         └── job: {
             inputs: [InputSource],
             outputs: [OutputDestination],
-            output_type: "rdbms|http|cloud|stdout",
+            output_type: "rdbms|http|cloud",
             mapping: {
               rules: [TransformRule]
             }
           }
-          └── writes to: outputs_rdbms|http|cloud|stdout[*]
+          └── writes to: outputs_rdbms|http|cloud[*]
               └── on failure: dlq[*]
               └── progress: checkpoints[job_id]
 ```

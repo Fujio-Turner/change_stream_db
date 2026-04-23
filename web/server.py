@@ -13,7 +13,8 @@ from aiohttp import web
 
 import datetime
 
-from cbl_store import USE_CBL, CBLStore
+from storage.cbl_store import USE_CBL, CBLStore
+from pipeline.pipeline_logging import configure_logging, log_event
 from schema.mapper import SchemaMapper
 from db.db_base import group_insert_ops, _MultiRowInsert
 from db.db_postgres import PostgresOutputForwarder
@@ -127,6 +128,10 @@ async def page_logs(request):
 
 async def page_dlq(request):
     return web.FileResponse(WEB / "templates" / "dlq.html")
+
+
+async def page_eventing(request):
+    return web.FileResponse(WEB / "templates" / "eventing.html")
 
 
 # --- Logs API ---
@@ -741,12 +746,25 @@ async def get_jobs_status(request):
                 uptime = None
                 error_count = 0
 
+            # Extract input/source info
+            inputs = job.get("inputs") or []
+            first_input = inputs[0] if inputs else {}
+            input_name = first_input.get("name") or first_input.get("id") or ""
+            input_type = first_input.get("source_type") or ""
+
+            # Extract output info
+            outputs = job.get("outputs") or []
+            first_output = outputs[0] if outputs else {}
+            output_name = first_output.get("name") or first_output.get("id") or ""
+            output_type = job.get("output_type") or ""
+
+            # Extract threads
+            system = job.get("system") or {}
+            threads = system.get("threads") or job.get("threads") or 1
+
             status_entry = {
                 "job_id": job_id,
-                "name": (job.get("id") or job_id or "")
-                .replace("job::", "")
-                .replace("job:", "")
-                or job_id,
+                "name": job.get("name") or job_id,
                 "enabled": job.get("enabled", True),
                 "status": status,
                 "uptime_seconds": uptime,
@@ -754,6 +772,11 @@ async def get_jobs_status(request):
                 or checkpoint.get("timestamp"),
                 "docs_processed": checkpoint.get("seq", 0),
                 "errors": error_count,
+                "input_name": input_name,
+                "input_type": input_type,
+                "output_name": output_name,
+                "output_type": output_type,
+                "threads": threads,
             }
             result_jobs.append(status_entry)
 
@@ -814,6 +837,27 @@ async def post_maintenance(request):
         results["reindex"] = store.reindex()
         results["optimize"] = store.optimize()
         all_ok = all(results.values())
+        ops = ", ".join(k for k, v in results.items() if v)
+        failed = ", ".join(k for k, v in results.items() if not v)
+        if all_ok:
+            log_event(
+                logger,
+                "info",
+                "CBL",
+                "manual maintenance completed (%s)" % ops,
+                operation="MAINTENANCE",
+                trigger="manual",
+            )
+        else:
+            log_event(
+                logger,
+                "warn",
+                "CBL",
+                "manual maintenance partial (%s ok, %s failed)"
+                % (ops or "none", failed),
+                operation="MAINTENANCE",
+                trigger="manual",
+            )
         return json_response(
             {
                 "ok": all_ok,
@@ -824,6 +868,14 @@ async def post_maintenance(request):
             }
         )
     except Exception as exc:
+        log_event(
+            logger,
+            "error",
+            "CBL",
+            "manual maintenance error: %s" % exc,
+            operation="MAINTENANCE",
+            trigger="manual",
+        )
         return json_response({"ok": False, "error": str(exc)}, status=500)
 
 
@@ -1861,6 +1913,7 @@ async def validate_mapping(request):
 
     mapping = body.get("mapping")
     doc = body.get("doc")
+    is_delete = bool(body.get("is_delete", False))
     if mapping is None or doc is None:
         return error_response("Both 'mapping' and 'doc' are required")
 
@@ -1870,7 +1923,7 @@ async def validate_mapping(request):
         if not matched:
             return json_response({"matches": False, "ops": []})
 
-        ops, _diag = mapper.map_document(doc)
+        ops, _diag = mapper.map_document(doc, is_delete=is_delete)
         grouped = group_insert_ops(ops)
         result_ops = []
         for op in grouped:
@@ -2184,6 +2237,16 @@ async def test_source(request):
 
 
 def create_app():
+    # Configure logging so log_event() calls write to the log file
+    try:
+        if USE_CBL:
+            log_cfg = (CBLStore().load_config() or {}).get("logging", {})
+        else:
+            log_cfg = json.loads(CONFIG_PATH.read_text()).get("logging", {})
+    except Exception:
+        log_cfg = {}
+    configure_logging(log_cfg)
+
     app = web.Application(middlewares=[cors_middleware])
 
     # Pages
@@ -2199,6 +2262,7 @@ def create_app():
     app.router.add_get("/help", page_help)
     app.router.add_get("/logs", page_logs)
     app.router.add_get("/dlq", page_dlq)
+    app.router.add_get("/eventing", page_eventing)
 
     # Logs API
     app.router.add_get("/api/logs", get_logs)
@@ -2322,4 +2386,5 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--host", default="0.0.0.0")
     args = parser.parse_args()
+    logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
     web.run_app(create_app(), host=args.host, port=args.port)

@@ -18,7 +18,7 @@ import urllib.parse
 from collections import deque
 from datetime import datetime, timezone
 
-from pipeline_logging import log_event, infer_operation
+from pipeline.pipeline_logging import log_event, infer_operation
 
 try:
     from icecream import ic
@@ -434,7 +434,13 @@ class BaseCloudForwarder(abc.ABC):
         """
         ic("send", doc.get("_id", doc.get("id", "unknown")) if doc else "None", method)
         if doc is None:
-            log_event(logger, "debug", "OUTPUT", "received None doc – skipping")
+            log_event(
+                logger,
+                "info",
+                "OUTPUT",
+                "received None doc – skipped",
+                doc_id="unknown",
+            )
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {"ok": True, "doc_id": "unknown", "skipped": True}
@@ -447,6 +453,13 @@ class BaseCloudForwarder(abc.ABC):
         if is_delete:
             if self._on_delete == "ignore":
                 ic("send: delete ignored", doc_id, key)
+                log_event(
+                    logger,
+                    "info",
+                    "OUTPUT",
+                    "delete ignored (on_delete=ignore) – skipped",
+                    doc_id=doc_id,
+                )
                 if self._metrics:
                     self._metrics.inc("output_skipped_total")
                 return {"ok": True, "doc_id": doc_id, "key": key, "skipped": True}
@@ -702,6 +715,7 @@ class BaseCloudForwarder(abc.ABC):
                     self._metrics.inc("output_success_total")
                     if is_delete:
                         self._metrics.inc("output_delete_total")
+                        self._metrics.inc("deletes_forwarded_total")
                     else:
                         self._metrics.inc("uploads_total")
                         self._metrics.inc("bytes_uploaded_total", len(body))

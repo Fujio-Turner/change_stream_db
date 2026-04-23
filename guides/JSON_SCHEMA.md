@@ -344,7 +344,7 @@ All enum values MUST be:
 | Field | Allowed Values |
 |-------|----------------|
 | `type` | Constant per collection (job, checkpoint, dlq, etc) |
-| `output_type` | rdbms, http, cloud, stdout |
+| `output_type` | rdbms, http, cloud |
 | `source_type` | sync_gateway, app_services, edge_server, couchdb |
 | `database_type` | mysql, postgres, mssql, oracle |
 | `cloud_provider` | aws_s3, gcs, azure_blob, oracle_ocs |
@@ -532,7 +532,7 @@ JSON doesn't support comments. Use `_meta` or description fields instead.
   "logging": {
     "level": "info",
     "format": "json",
-    "output": "stdout"
+    "output": "file"
   },
   "database": {
     "max_connections": 50,

@@ -45,7 +45,7 @@ try:
 except ImportError:
     yaml = None
 
-from pipeline_logging import log_event, infer_operation
+from pipeline.pipeline_logging import log_event, infer_operation
 
 logger = logging.getLogger("changes_worker")
 
@@ -203,7 +203,7 @@ class OutputEndpointDown(Exception):
 
 class OutputForwarder:
     """
-    Manages sending processed docs to the consumer endpoint (or stdout).
+    Manages sending processed docs to the consumer endpoint.
 
     When mode=http:
       - Has its own RetryableHTTP with output-specific retry settings
@@ -213,9 +213,6 @@ class OutputForwarder:
             main loop stops processing and does NOT advance the checkpoint
           * If halt_on_failure=false → logs the error and continues
       - Handles 3xx as non-retryable errors
-
-    When mode=stdout:
-      - Writes JSON to stdout, no failure handling needed
     """
 
     def __init__(
@@ -228,7 +225,7 @@ class OutputForwarder:
         build_auth_headers_fn=None,
         retryable_http_cls=None,
     ):
-        self._mode = out_cfg.get("mode", "stdout")
+        self._mode = out_cfg.get("mode", "http")
         self._target_url = out_cfg.get("target_url", "").rstrip("/")
         self._dry_run = dry_run
         self._halt_on_failure = out_cfg.get("halt_on_failure", True)
@@ -299,44 +296,33 @@ class OutputForwarder:
         """Map HTTP method to metrics key prefix: 'put' or 'delete'."""
         return "delete" if method == "DELETE" else "put"
 
+    def _send_stdout(self, doc: dict) -> None:
+        """Write a document to stdout."""
+        import sys
+
+        body, content_type = serialize_doc(doc, self._output_format)
+        if isinstance(body, bytes):
+            sys.stdout.buffer.write(body)
+            sys.stdout.buffer.write(b"\n")
+            sys.stdout.buffer.flush()
+        else:
+            sys.stdout.write(body + "\n")
+            sys.stdout.flush()
+
     async def send(self, doc: dict, method: str = "PUT") -> dict:
         """Send a single doc. Returns result dict with 'ok' bool. Raises OutputEndpointDown if halt_on_failure."""
         if doc is None:
-            ic("send: None doc – skipping", method)
-            log_event(logger, "warn", "OUTPUT", "received None doc – skipping")
+            ic("send: None doc – skipped", method)
+            log_event(
+                logger,
+                "info",
+                "OUTPUT",
+                "received None doc – skipped",
+                doc_id="unknown",
+            )
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {"ok": True, "doc_id": "unknown", "method": method, "skipped": True}
-
-        if self._mode == "stdout":
-            try:
-                self._send_stdout(doc)
-            except (OSError, TypeError, ValueError) as exc:
-                ic("send: stdout serialization/write error", exc)
-                log_event(
-                    logger,
-                    "error",
-                    "OUTPUT",
-                    "stdout write failed",
-                    doc_id=doc.get("_id", doc.get("id", "unknown")),
-                    error_detail=f"{type(exc).__name__}: {exc}",
-                )
-                return {
-                    "ok": False,
-                    "doc_id": doc.get("_id", doc.get("id", "unknown")),
-                    "method": method,
-                    "status": 0,
-                    "error": str(exc)[:500],
-                }
-            if self._metrics:
-                self._metrics.inc("output_requests_total")
-                mk = self._method_key(method)
-                self._metrics.inc(f"output_{mk}_total")
-            return {
-                "ok": True,
-                "doc_id": doc.get("_id", doc.get("id", "unknown")),
-                "method": method,
-            }
 
         doc_id = doc.get("_id", doc.get("id", "unknown"))
         encoded_doc_id = urllib.parse.quote(str(doc_id), safe="")
@@ -379,6 +365,10 @@ class OutputForwarder:
                 bytes=body_len,
             )
             return {"ok": True, "doc_id": doc_id, "method": method, "dry_run": True}
+
+        if self._mode == "stdout":
+            self._send_stdout(doc)
+            return {"ok": True, "doc_id": doc_id, "method": method}
 
         assert self._http is not None
 
@@ -437,6 +427,8 @@ class OutputForwarder:
             )
             if self._metrics:
                 self._metrics.inc("output_success_total")
+                if method == "DELETE":
+                    self._metrics.inc("deletes_forwarded_total")
                 self._metrics.set("output_endpoint_up", 1)
             return {"ok": True, "doc_id": doc_id, "method": method, "status": status}
 
@@ -953,15 +945,6 @@ class OutputForwarder:
 
     # -- Internal --------------------------------------------------------------
 
-    def _send_stdout(self, doc: dict) -> None:
-        body, _ = serialize_doc(doc, self._output_format)
-        if isinstance(body, bytes):
-            sys.stdout.buffer.write(body + b"\n")
-            sys.stdout.buffer.flush()
-        else:
-            sys.stdout.write(body + "\n")
-            sys.stdout.flush()
-
     async def _record_time(self, ms: float) -> None:
         if self._log_response_times:
             async with self._lock:
@@ -971,7 +954,7 @@ class OutputForwarder:
 def determine_method(
     change: dict, write_method: str = "PUT", delete_method: str = "DELETE"
 ) -> str:
-    if change.get("deleted"):
+    if change.get("deleted") or change.get("removed"):
         return delete_method
     return write_method
 
@@ -1004,12 +987,12 @@ class DeadLetterQueue:
     """
 
     def __init__(self, path: str, dlq_cfg: dict | None = None):
-        from cbl_store import USE_CBL as _use_cbl
+        from storage.cbl_store import USE_CBL as _use_cbl
 
         self._use_cbl = _use_cbl
         self._store = None
         if self._use_cbl:
-            from cbl_store import CBLStore
+            from storage.cbl_store import CBLStore
 
             self._store = CBLStore()
         self._path = Path(path) if path and not self._use_cbl else None

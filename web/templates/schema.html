@@ -249,7 +249,12 @@ CREATE TABLE order_items (
     <!-- Validate Result Modal -->
     <dialog id="validateModal" class="modal">
       <div class="modal-box w-11/12 max-w-2xl">
-        <h3 class="font-bold text-lg mb-4">Mapping Validation Result</h3>
+        <h3 class="font-bold text-lg mb-2">Mapping Validation Result</h3>
+        <div class="flex items-center gap-2 mb-4">
+          <span class="text-xs font-semibold opacity-70">SOURCE Insert SQL</span>
+          <input type="checkbox" id="validateDeleteToggle" class="toggle toggle-error toggle-sm" onchange="validateMapping(this.checked)" />
+          <span class="text-xs font-semibold opacity-70">SOURCE Delete SQL</span>
+        </div>
         <div id="validateResultContent"></div>
         <div class="modal-action">
           <form method="dialog"><button class="btn">Close</button></form>
@@ -370,7 +375,7 @@ CREATE TABLE order_items (
                 <a class="tab" id="tabSchema" onclick="switchSourceTab('schema')">JSON Schema</a>
                 <a class="tab" id="tabLive" onclick="fetchLiveSample()">Live Sample</a>
               </div>
-              <button class="btn btn-primary btn-sm" onclick="validateMapping()">Validate Mapping</button>
+              <button class="btn btn-primary btn-sm" onclick="document.getElementById('validateDeleteToggle').checked=false;validateMapping(false)">Validate Mapping</button>
             </div>
 
             <!-- Paste JSON panel -->
@@ -2214,7 +2219,8 @@ async function deleteFile(name) {
   } catch (e) { showStatus('Delete failed: ' + e.message, 'error'); }
 }
 
-async function validateMapping() {
+async function validateMapping(isDelete) {
+  if (typeof isDelete === 'undefined') isDelete = false;
   saveCurrentTableEdits();
   var mapping = buildMapping();
   var sourceText = document.getElementById('sourceEditor').value.trim();
@@ -2225,7 +2231,7 @@ async function validateMapping() {
     var res = await fetch('/api/mappings/validate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mapping: mapping, doc: doc })
+      body: JSON.stringify({ mapping: mapping, doc: doc, is_delete: isDelete })
     });
     var data = await res.json();
     if (data.error) { showStatus('Validate error: ' + data.error, 'error'); return; }

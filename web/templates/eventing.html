@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PouchPipes -- Eventing (Dev Preview)</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link href="/static/css/daisyui.css" rel="stylesheet" type="text/css" />
+    <link href="/static/css/themes.css" rel="stylesheet" type="text/css" />
+    <link href="/static/css/sidebar.css" rel="stylesheet" type="text/css" />
+    <script src="/static/js/tailwind.js"></script>
+    <!-- CodeMirror 5 — light theme + JS mode + code folding -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/fold/foldgutter.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/fold/foldcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/fold/foldgutter.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/fold/brace-fold.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/edit/matchbrackets.min.js"></script>
+    <script>
+      (function () {
+        var t = localStorage.getItem("cw_theme") || "dark";
+        document.documentElement.setAttribute("data-theme", t);
+      })();
+    </script>
+    <style>
+      /* CodeMirror — white background editor matching Couchbase Eventing look */
+      .CodeMirror {
+        height: 480px;
+        font-size: 14px;
+        line-height: 1.55;
+        border: 1px solid #ddd;
+        border-top: none;
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      }
+      .CodeMirror-gutters {
+        background: #f8f8f8;
+        border-right: 1px solid #e0e0e0;
+      }
+      .CodeMirror-linenumber { color: #999; }
+
+      .editor-tab-bar {
+        display: flex;
+        align-items: center;
+        background: #f0f0f0;
+        border: 1px solid #ddd;
+        border-bottom: none;
+        border-radius: 6px 6px 0 0;
+        padding: 0;
+      }
+      .editor-tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 16px;
+        font-size: 0.82rem;
+        color: #333;
+        background: #fff;
+        border-top: 2px solid #7b68ae;
+        border-radius: 6px 6px 0 0;
+        cursor: default;
+        font-family: system-ui, sans-serif;
+      }
+      .editor-tab-inactive {
+        color: #999;
+        background: #f0f0f0;
+        border-top: 2px solid transparent;
+        cursor: pointer;
+      }
+
+      .attachment-thumb {
+        width: 120px;
+        height: 90px;
+        background: #e8e8e8;
+        border: 1px dashed #bbb;
+        border-radius: 0.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        color: #888;
+        text-align: center;
+        line-height: 1.3;
+      }
+    </style>
+  </head>
+  <body class="min-h-screen bg-base-200">
+    <div id="sidebar-root"></div>
+
+    <div class="sidebar-main">
+      <main class="w-full mx-auto p-6 space-y-4">
+
+        <!-- Dev Preview Banner -->
+        <div class="alert alert-warning shadow-lg">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+          <div>
+            <span class="text-lg font-bold">🚧 Dev Preview</span>
+            <span class="ml-2 text-sm opacity-90">— Eventing is experimental. This feature is under active development and may change without notice.</span>
+          </div>
+        </div>
+
+        <!-- Header Bar -->
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-4">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-4">
+                <a href="#" class="text-sm text-primary hover:underline flex items-center gap-1">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
+                  back to Eventing
+                </a>
+                <h1 class="text-xl font-bold">Function Editor</h1>
+                <span class="badge badge-outline badge-sm">bucket_op_sb_beer_sample</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button class="btn btn-ghost btn-sm btn-circle">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Code Editor Area -->
+        <div class="card bg-base-100 shadow rounded-2xl overflow-hidden">
+          <!-- Tab bar -->
+          <div class="editor-tab-bar px-2 pt-2">
+            <div class="editor-tab">
+              <span style="font-weight:600">JS</span>
+              <span style="opacity:0.6">bucket_op_sb_beer_sample.js</span>
+              <span style="margin-left:6px;opacity:0.35;cursor:pointer">✕</span>
+            </div>
+            <div class="editor-tab editor-tab-inactive">Settings</div>
+          </div>
+          <!-- CodeMirror target -->
+          <textarea id="jsEditor">function OnUpdate(doc, meta, xattrs) {
+    log("Doc created/updated", meta.id);
+
+    if(doc["cs300"] > 0){
+
+        log("moving to cake32", meta.id);
+        doc["moved"] = true;
+        var docId = meta.id +":" + uuid()
+        cake32[docId] = doc;
+
+    }else{
+        log("no cs300 to small", meta.id);
+    }
+
+}
+
+
+function OnDelete(meta, options) {
+    log("Doc deleted/expired", meta.id);
+}
+
+function uuid() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
+        .replace(/[xy]/g, function (c) {
+            const r = Math.random() * 16 | 0,
+                v = c == 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+}</textarea>
+        </div>
+
+        <!-- Bottom Action Bar -->
+        <div class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-3">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <button class="btn btn-sm btn-info">Debug</button>
+              </div>
+              <div class="flex items-center gap-3">
+                <button class="btn btn-ghost btn-sm btn-circle">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                </button>
+                <button class="btn btn-ghost btn-sm">Cancel</button>
+                <button class="btn btn-sm btn-primary" style="background: #6366f1; border-color: #6366f1;">Save and Return</button>
+                <button class="btn btn-sm btn-primary" style="background: #6366f1; border-color: #6366f1;">Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+      </main>
+    </div>
+
+    <script src="/static/js/sidebar.js"></script>
+    <script>
+      var editor = CodeMirror.fromTextArea(document.getElementById('jsEditor'), {
+        mode: 'javascript',
+        lineNumbers: true,
+        matchBrackets: true,
+        tabSize: 4,
+        indentUnit: 4,
+        foldGutter: true,
+        gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter'],
+        readOnly: false
+      });
+    </script>
+  </body>
+</html>

@@ -75,7 +75,6 @@ The CBL database gets **16** collections in the `changes-worker` scope, organize
 | `outputs_rdbms` | 1 document: `outputs_rdbms` | Array of RDBMS output configs (postgres, mysql, mssql, oracle) |
 | `outputs_http` | 1 document: `outputs_http` | Array of HTTP/REST output configs |
 | `outputs_cloud` | 1 document: `outputs_cloud` | Array of cloud blob output configs (S3, GCS, Azure) |
-| `outputs_stdout` | 1 document: `outputs_stdout` | Array of stdout output configs |
 | `tables_rdbms` | 1 document: `tables_rdbms` | Reusable RDBMS table definitions library (DDL + parsed columns). Tables are copied into jobs on selection; the job owns its copy. See [`SCHEMA_MAPPING_IN_JOBS.md`](SCHEMA_MAPPING_IN_JOBS.md#rdbms-table-definitions-new-tables_rdbms-collection). |
 | `jobs` | N documents: `job::{uuid}` | Each job connects one input → one output with a schema mapping |
 
@@ -110,7 +109,7 @@ The CBL database gets **16** collections in the `changes-worker` scope, organize
 
 ### Why Split Outputs by Type?
 
-Mixing RDBMS, HTTP, cloud, and stdout configs into one `outputs` document means every entry has a different schema — RDBMS has `engine`, `port`, `pool_max`, `tables[]`; HTTP has `target_url`, `write_method`, `health_check`; cloud has `bucket`, `region`, `storage_class`. Splitting into `outputs_rdbms`, `outputs_http`, `outputs_cloud`, `outputs_stdout` means:
+Mixing RDBMS, HTTP, and cloud configs into one `outputs` document means every entry has a different schema — RDBMS has `engine`, `port`, `pool_max`, `tables[]`; HTTP has `target_url`, `write_method`, `health_check`; cloud has `bucket`, `region`, `storage_class`. Splitting into `outputs_rdbms`, `outputs_http`, `outputs_cloud` means:
 
 1. **Each collection's documents have a consistent schema** — no `class` field to switch on, no optional fields that only apply to one type.
 2. **The wizard UI can load/save one collection per tab** — the RDBMS form only touches `outputs_rdbms`, no risk of accidentally corrupting an HTTP output.
@@ -119,7 +118,7 @@ Mixing RDBMS, HTTP, cloud, and stdout configs into one `outputs` document means 
 
 ### Why One Shared DLQ?
 
-Considered: `dlq_rdbms`, `dlq_http`, `dlq_cloud`, `dlq_stdout`. Decided against because:
+Considered: `dlq_rdbms`, `dlq_http`, `dlq_cloud`. Decided against because:
 
 1. **DLQ entries already carry `job_id` and output type metadata** — you can filter by job or output type without separate collections.
 2. **One trash can is operationally simpler** — one page in the UI, one `GET /api/dlq` endpoint, one purge schedule.
@@ -526,28 +525,6 @@ Cloud blob storage output destinations (S3, GCS, Azure Blob).
 
 ---
 
-### `outputs_stdout` Document
-
-**Collection:** `outputs_stdout`  
-**Doc ID:** `outputs_stdout`
-
-Stdout/console output destinations. Minimal config — mostly used for debugging and development.
-
-```json
-{
-  "type": "output_stdout",
-  "src": [
-    {
-      "id": "console-debug",
-      "name": "Console Debug Output",
-      "enabled": true,
-      "output_format": "json",
-      "pretty_print": true
-    }
-  ]
-}
-```
-
 **Key points across all output collections:**
 - Each `src[]` entry has a unique `id` used to reference it from a job.
 - The job stores which output collection the entry came from (`output_type` field on the job).
@@ -683,7 +660,7 @@ A job document is the heart of the processing pipeline. It **copies** the releva
 
 1. **`inputs` is an array** (currently with one entry) — future-proofs for fan-in (N sources → 1 output).
 2. **`outputs` is an array** (currently with one entry) — future-proofs for fan-out (1 source → N outputs).
-3. **`output_type`** records which `outputs_*` collection the output was copied from (`"rdbms"`, `"http"`, `"cloud"`, `"stdout"`). The worker uses this to know which output forwarder to instantiate.
+3. **`output_type`** records which `outputs_*` collection the output was copied from (`"rdbms"`, `"http"`, `"cloud"`). The worker uses this to know which output forwarder to instantiate.
 4. **Data is copied, not referenced** — the job is self-contained. If you change the `inputs_changes` or `outputs_rdbms` document later, existing jobs are NOT affected until you explicitly update them. This prevents "changing a source and accidentally breaking 5 jobs".
 5. **`schema_mapping` is embedded** — each job has its own mapping. The `mappings/` directory and `mappings` CBL collection are phased out as an edit surface; the mapping lives in the job.
 6. **`system` holds all processing config** — threads, concurrency, retry, checkpoint, attachments. This is the "how to run" config.
@@ -967,7 +944,7 @@ _changes  ──►  filter  ──►  fetch docs  ──►  schema mapping  �
                │              │                    │                    │                    │
                skip           bulk_get             map JSON→SQL        doc (possibly        send to
                deletes/       or individual        columns             modified)            RDBMS/HTTP/
-               removes        GET                                                          cloud/stdout
+               removes        GET                                                          cloud
 ```
 
 ### Middleware Hook Points
@@ -1119,19 +1096,19 @@ All top-level documents follow the same shape to keep things consistent:
 
 ```json
 {
-  "type": "<input_changes|output_rdbms|output_http|output_cloud|output_stdout>",
+  "type": "<input_changes|output_rdbms|output_http|output_cloud>",
   "src": [...]        // catalog collections use src[]
 }
 
 {
   "type": "job",
-  "output_type": "<rdbms|http|cloud|stdout>",
+  "output_type": "<rdbms|http|cloud>",
   "inputs": [...],    // jobs use inputs[] and outputs[]
   "outputs": [...]
 }
 ```
 
-The `src[]` pattern is shared across all catalog collections (`inputs_changes`, `outputs_rdbms`, `outputs_http`, `outputs_cloud`, `outputs_stdout`). When creating a job, the UI copies `inputs_changes.src[i]` into `job.inputs[0]` and `outputs_{type}.src[j]` into `job.outputs[0]`.
+The `src[]` pattern is shared across all catalog collections (`inputs_changes`, `outputs_rdbms`, `outputs_http`, `outputs_cloud`). When creating a job, the UI copies `inputs_changes.src[i]` into `job.inputs[0]` and `outputs_{type}.src[j]` into `job.outputs[0]`.
 
 ---
 
@@ -1161,7 +1138,7 @@ The `src[]` pattern is shared across all catalog collections (`inputs_changes`, 
 └───────────────────────┘
 
          Wizard: "pick a source"  (from inputs_changes)
-         Wizard: "pick an output type"  (rdbms / http / cloud / stdout)
+         Wizard: "pick an output type"  (rdbms / http / cloud)
          Wizard: "pick an output"  (from outputs_{type})
          Wizard: "configure mapping"
          Wizard: "set processing config"
@@ -1182,7 +1159,6 @@ CBL Database: changes_worker_db
     ├── Collection: outputs_rdbms    ← 1 doc: "outputs_rdbms"
     ├── Collection: outputs_http     ← 1 doc: "outputs_http"
     ├── Collection: outputs_cloud    ← 1 doc: "outputs_cloud"
-    ├── Collection: outputs_stdout   ← 1 doc: "outputs_stdout"
     ├── Collection: jobs             ← N docs: "job::{uuid}"
     │
     │── ── Runtime ── ── ── ── ── ── ── ── ── ── ── ── ── ──
@@ -1214,7 +1190,6 @@ On first v2.0 startup, if the old `config` document exists in the `config` colle
    - `mode` = `postgres`/`mysql`/`mssql`/`oracle`/`db` → `outputs_rdbms`
    - `mode` = `http` → `outputs_http`
    - `mode` = `s3` → `outputs_cloud`
-   - `mode` = `stdout` → `outputs_stdout`
 3. **Create one job** from the extracted input + output + existing schema mappings → `job::{uuid}`.
 4. **Create checkpoint** from existing checkpoint data → `checkpoint::{job_uuid}` in the `checkpoints` collection.
 5. **Slim down config** to infrastructure-only keys.
@@ -1237,7 +1212,6 @@ Each phase is designed to be done in a **separate chat/thread**. Phases are orde
   - `COLL_OUTPUTS_RDBMS = "outputs_rdbms"`
   - `COLL_OUTPUTS_HTTP = "outputs_http"`
   - `COLL_OUTPUTS_CLOUD = "outputs_cloud"`
-  - `COLL_OUTPUTS_STDOUT = "outputs_stdout"`
   - `COLL_JOBS = "jobs"`
   - `COLL_CHECKPOINTS = "checkpoints"` (repurposed — now per-job)
   - `COLL_SESSIONS = "sessions"`
@@ -1303,7 +1277,7 @@ Each phase is designed to be done in a **separate chat/thread**. Phases are orde
 
 ### Phase 4: Wizard UI – Outputs Management
 
-**Goal:** Update `wizard.html` to manage `outputs_rdbms`, `outputs_http`, `outputs_cloud`, `outputs_stdout`.
+**Goal:** Update `wizard.html` to manage `outputs_rdbms`, `outputs_http`, `outputs_cloud`.
 
 - [ ] Add "Outputs" tab/section to wizard with sub-tabs for each output type
 - [ ] **RDBMS tab** (`outputs_rdbms`):
@@ -1316,9 +1290,6 @@ Each phase is designed to be done in a **separate chat/thread**. Phases are orde
 - [ ] **Cloud tab** (`outputs_cloud`):
   - provider dropdown (s3/gcs/azure), bucket, region, keys, storage class, encryption
   - Save → `POST /api/outputs_cloud`
-- [ ] **Stdout tab** (`outputs_stdout`):
-  - output_format, pretty_print toggle
-  - Save → `POST /api/outputs_stdout`
 - [ ] List existing outputs per tab with edit/delete
 - [ ] Add REST endpoints (same pattern for each type):
   - `GET /api/outputs_{type}` — load document
@@ -1333,7 +1304,7 @@ Each phase is designed to be done in a **separate chat/thread**. Phases are orde
 - [ ] Add "Jobs" tab/section to wizard
 - [ ] Job creation flow:
   1. Pick an input from `inputs_changes.src[]` dropdown
-  2. Pick an output type (rdbms / http / cloud / stdout)
+  2. Pick an output type (rdbms / http / cloud)
   3. Pick an output from `outputs_{type}.src[]` dropdown
   4. Configure schema mapping (reuse existing mapping editor from `schema.html`)
   5. Configure `system` settings (threads, concurrency, retry, etc.)
@@ -1439,7 +1410,7 @@ main()
 - Wraps a `threading.Thread` + isolated `asyncio.run()` event loop
 - Owns its HTTP session (persistent connection to Sync Gateway)
 - Owns its checkpoint state (resumed from `checkpoints::{job_uuid}`)
-- Owns its output forwarder (PostgreSQL, HTTP, S3, stdout)
+- Owns its output forwarder (PostgreSQL, HTTP, S3)
 - Owns its `ThreadPoolExecutor` for async middleware
 - Accepts a job document + resolved input/output/mapping config
 - Catches exceptions → writes to DLQ → logs with job_id tag
@@ -1616,11 +1587,11 @@ The workload is I/O-bound (HTTP, DB writes). Python threads release the GIL duri
 | `PUT` | `/api/inputs_changes/{id}` | Update one input entry |
 | `DELETE` | `/api/inputs_changes/{id}` | Delete one input entry |
 
-#### Outputs (same pattern × 4 types)
+#### Outputs (same pattern × 3 types)
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/outputs_{type}` | Get outputs document (`type` = `rdbms`, `http`, `cloud`, `stdout`) |
+| `GET` | `/api/outputs_{type}` | Get outputs document (`type` = `rdbms`, `http`, `cloud`) |
 | `POST` | `/api/outputs_{type}` | Save outputs document |
 | `PUT` | `/api/outputs_{type}/{id}` | Update one output entry |
 | `DELETE` | `/api/outputs_{type}/{id}` | Delete one output entry |

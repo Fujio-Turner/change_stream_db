@@ -17,7 +17,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
-from cbl_store import CBLStore, USE_CBL
+from storage.cbl_store import CBLStore, USE_CBL
 from rest.api_v2 import (
     api_get_jobs,
     api_get_job,

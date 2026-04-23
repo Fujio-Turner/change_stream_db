@@ -418,9 +418,8 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
             resp = AsyncMock()
             resp.json = AsyncMock(
                 return_value={
-                    "SGs_Seq": "42",
+                    "remote": "42",
                     "_rev": "1-abc",
-                    "remote": 5,
                     "initial_sync_done": True,
                 }
             )
@@ -442,9 +441,8 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
             resp = AsyncMock()
             resp.json = AsyncMock(
                 return_value={
-                    "SGs_Seq": "200-0",
+                    "remote": "200-0",
                     "_rev": "2-def",
-                    "remote": 10,
                     "initial_sync_done": False,
                 }
             )
@@ -466,7 +464,7 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
             resp = AsyncMock()
             resp.json = AsyncMock(
                 return_value={
-                    "SGs_Seq": "0",
+                    "remote": "0",
                     "_rev": "1-x",
                 }
             )
@@ -487,7 +485,7 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
             resp = AsyncMock()
             resp.json = AsyncMock(
                 return_value={
-                    "SGs_Seq": "42",
+                    "remote": "42",
                     "_rev": "1-x",
                 }
             )
@@ -508,7 +506,7 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
             resp = AsyncMock()
             resp.json = AsyncMock(
                 return_value={
-                    "SGs_Seq": "200-0",
+                    "remote": "200-0",
                     "_rev": "3-y",
                 }
             )
@@ -586,7 +584,7 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
     def test_fallback_file_legacy_nonzero(self):
         """File fallback with flag missing + non-zero seq → True."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump({"SGs_Seq": "55", "time": 1000, "remote": 1}, f)
+            json.dump({"remote": "55", "time": 1000}, f)
             path = f.name
         try:
             cp = cw.Checkpoint({"client_id": "w", "file": path}, self._gw(), [])
@@ -600,7 +598,7 @@ class TestCheckpointInitialSyncDone(unittest.TestCase):
     def test_fallback_file_legacy_zero(self):
         """File fallback with flag missing + seq=0 → False."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump({"SGs_Seq": "0", "time": 1000, "remote": 0}, f)
+            json.dump({"remote": "0", "time": 1000}, f)
             path = f.name
         try:
             cp = cw.Checkpoint({"client_id": "w", "file": path}, self._gw(), [])

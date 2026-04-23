@@ -29,7 +29,7 @@ try:
 except ImportError:  # pragma: no cover
     ic = lambda *a, **kw: None  # noqa: E731
 
-from pipeline_logging import log_event
+from pipeline.pipeline_logging import log_event
 from rest.attachment_config import AttachmentConfig
 from rest.attachment_upload import AttachmentUploadResult
 from rest.changes_http import ClientHTTPError, RetryableHTTP

@@ -111,7 +111,7 @@ Every `log_event()` call requires a **log_key**.  These are the valid keys:
 | `CHANGES`      | `_changes` feed input (polling, parsing, batching)  |
 | `PROCESSING`   | Filtering, routing, batch orchestration             |
 | `MAPPING`      | Schema mapping (doc → SQL ops)                      |
-| `OUTPUT`       | stdout / HTTP / DB / cloud output forwarding        |
+| `OUTPUT`       | HTTP / DB / cloud output forwarding                 |
 | `HTTP`         | HTTP request/response details (non-output)          |
 | `CHECKPOINT`   | Checkpoint load / save                              |
 | `RETRY`        | Retry / backoff decisions                           |
@@ -179,7 +179,7 @@ The `RedactingFormatter` recognizes these extra fields and renders them as
 | `host`           | str         | `"0.0.0.0"`                       |
 | `port`           | int         | `9090`                            |
 | `storage`        | str         | `"sg"`, `"cbl"`, `"file"`, `"fallback"` |
-| `mode`           | str         | `"http"`, `"stdout"`, `"db"`      |
+| `mode`           | str         | `"http"`, `"db"`                  |
 | `db_name`        | str         | `"changes_worker_db"`             |
 | `db_path`        | str         | `"/app/data"`                     |
 | `db_size_mb`     | float       | `12.5`                            |
@@ -430,18 +430,39 @@ log_event(logger, "warn", "CHECKPOINT",
 
 ## Notable Warnings
 
+### Document Fetching — Single-Doc GET & `_bulk_get`
+
+When `include_docs=false` the worker fetches document bodies separately.
+The fetch strategy depends on batch size:
+
+- **Single document** → simple `GET /{keyspace}/{doc_id}?rev={rev}` (avoids
+  `_bulk_get` envelope overhead).  With the greedy drain buffering strategy,
+  single-doc batches only occur when there genuinely is just one change.
+- **Multiple documents** → `POST /{keyspace}/_bulk_get` in batches of
+  `get_batch_number` (default 100).
+
 ### 🍦 `_bulk_get` Missing Documents
 
-When `include_docs=false` the worker fetches document bodies via
-`POST /{keyspace}/_bulk_get` in batches.  After each batch the returned count
-is compared against the requested count.  If any documents are missing, the
-following log messages may appear:
+After each `_bulk_get` batch, the returned count is compared against the
+requested count.  If any documents are missing, the worker falls back to
+individual `GET` requests for the missing IDs:
 
 | Level   | Log Key | Message | Meaning |
 | ------- | ------- | ------- | ------- |
 | `WARN`  | `HTTP`  | `🍦 _bulk_get returned fewer docs than requested` | The server returned fewer documents than were requested.  `batch_size` is the number requested, `doc_count` is how many came back, `input_count` is how many are missing. |
 | `INFO`  | `HTTP`  | `got N document(s) from failed _bulk_get via individual GET` | Missing documents were successfully recovered by falling back to individual `GET /{keyspace}/{docid}?rev=` requests with exponential retry. |
-| `ERROR` | `HTTP`  | `failed to get N doc(s) from failed _bulk_get after retries` | One or more documents could not be recovered even after exponential-backoff retries on individual GETs.  These documents will be missing from the batch output. |
+| `ERROR` | `HTTP`  | `single doc GET failed after retries` | A document could not be fetched even after exponential-backoff retries.  It will be missing from the batch output. |
+
+### Single-Doc GET Errors
+
+When a single-doc GET fails (whether as the primary fetch for a 1-doc batch
+or as a fallback for a missing `_bulk_get` document):
+
+| Level   | Log Key | Message | Meaning |
+| ------- | ------- | ------- | ------- |
+| `WARN`  | `HTTP`  | `single doc GET failed (client error)` | A 4xx response (except 401/403 which are re-raised).  Includes `doc_id`, `status`, `attempt`. |
+| `WARN`  | `RETRY` | `single doc GET failed` | A transient error (timeout, connection failure).  Includes `doc_id`, `attempt`, `error_detail`. |
+| `ERROR` | `HTTP`  | `single doc GET failed after retries` | All retry attempts exhausted.  The document is lost for this batch. |
 
 **Example log output:**
 ```

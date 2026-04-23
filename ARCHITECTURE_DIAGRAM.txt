@@ -14,7 +14,7 @@ DATA VALIDATION & COERCION ARCHITECTURE
                                │
                                ▼
        ┌───────────────────────────────────────────────────────────┐
-       │  Output Selector: route to RDBMS, HTTP, S3, stdout        │
+       │  Output Selector: route to RDBMS, HTTP, S3                │
        │     (based on output definitions)                         │
        └──────────────────────┬────────────────────────────────────┘
                               │

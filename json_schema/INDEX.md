@@ -18,7 +18,6 @@ Complete reference guide for all JSON schema files in the `changes-worker` scope
 | [outputs_rdbms/schema.json](changes-worker/outputs_rdbms/schema.json) | outputs_rdbms | Relational database destinations | `outputs_rdbms` |
 | [outputs_http/schema.json](changes-worker/outputs_http/schema.json) | outputs_http | HTTP/REST endpoints | `outputs_http` |
 | [outputs_cloud/schema.json](changes-worker/outputs_cloud/schema.json) | outputs_cloud | Cloud storage (S3, GCS, Azure) | `outputs_cloud` |
-| [outputs_stdout/schema.json](changes-worker/outputs_stdout/schema.json) | outputs_stdout | Console/log output | `outputs_stdout` |
 
 #### Table Definitions
 
@@ -75,7 +74,7 @@ Complete reference guide for all JSON schema files in the `changes-worker` scope
 
 **Core Pipeline** (Production)
 - `inputs_changes` — Where data comes from
-- `outputs_*` — Where data goes (4 types)
+- `outputs_*` — Where data goes (3 types)
 - `tables_rdbms` — RDBMS table definitions library
 - `jobs` — How data flows (transform)
 
@@ -166,7 +165,7 @@ for field, definition in schema['properties'].items():
 
 - `inputs` — Array of input sources
 - `outputs` — Array of output destinations
-- `output_type` — Destination type (rdbms|http|cloud|stdout)
+- `output_type` — Destination type (rdbms|http|cloud)
 - `mapping` — Data transformation rules
 - `state` — Job execution state
 - `enabled` — Active flag
@@ -249,13 +248,13 @@ When creating/updating documents:
 ## File Statistics
 
 ```
-Total Collections: 17
-- Production: 10 (inputs, outputs×4, tables_rdbms, jobs, checkpoints, dlq, config)
+Total Collections: 16
+- Production: 9 (inputs, outputs×3, tables_rdbms, jobs, checkpoints, dlq, config)
 - Runtime: 2 (data_quality, enrichments)
 - Future: 4 (users, sessions, audit_log, notifications)
 - Deprecated: 1 (mappings)
 
-Total Schema Files: 17
+Total Schema Files: 16
 All Valid JSON: ✓
 ```
 

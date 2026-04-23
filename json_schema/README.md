@@ -90,21 +90,7 @@ Defines cloud storage destinations:
 
 ---
 
-#### 5. **outputs_stdout**
-**Location**: `json_schema/changes-worker/outputs_stdout/schema.json`
-
-Defines console/logging output.
-
-**Key Fields**:
-- `id`: Output identifier
-- `format`: Output format (json, jsonl, pretty, csv)
-- `level`: Log level (debug, info, warn, error)
-- `batch_size`: Documents per flush
-- `include_metadata`: Include metadata in output
-
----
-
-#### 6. **tables_rdbms**
+#### 5. **tables_rdbms**
 **Location**: `json_schema/changes-worker/tables_rdbms/schema.json`
 
 Reusable library of RDBMS table definitions. Stores raw DDL and parsed column metadata. Tables are copied into jobs on selection — the job owns its copy.
@@ -121,7 +107,7 @@ Reusable library of RDBMS table definitions. Stores raw DDL and parsed column me
 
 ---
 
-#### 7. **jobs**
+#### 6. **jobs**
 **Location**: `json_schema/changes-worker/jobs/schema.json`
 
 Defines data pipeline jobs connecting inputs to outputs.
@@ -131,7 +117,7 @@ Defines data pipeline jobs connecting inputs to outputs.
 - `name`: Human-readable name
 - `inputs`: Array of input source definitions
 - `outputs`: Array of output destination definitions
-- `output_type`: Destination type (rdbms, http, cloud, stdout)
+- `output_type`: Destination type (rdbms, http, cloud)
 - `mapping`: Schema transformation rules
 - `state`: Job execution state (idle, running, paused, stopped, error)
 - `system`: System-level configuration
@@ -141,7 +127,7 @@ Defines data pipeline jobs connecting inputs to outputs.
 
 ### Runtime Collections
 
-#### 8. **checkpoints**
+#### 7. **checkpoints**
 **Location**: `json_schema/changes-worker/checkpoints/schema.json`
 
 Tracks the last processed sequence number for resuming change feeds.
@@ -154,7 +140,7 @@ Tracks the last processed sequence number for resuming change feeds.
 
 ---
 
-#### 9. **dlq** (Dead Letter Queue)
+#### 8. **dlq** (Dead Letter Queue)
 **Location**: `json_schema/changes-worker/dlq/schema.json`
 
 Stores documents that failed processing for later retry or analysis.
@@ -173,7 +159,7 @@ Stores documents that failed processing for later retry or analysis.
 
 ---
 
-#### 10. **data_quality**
+#### 9. **data_quality**
 **Location**: `json_schema/changes-worker/data_quality/schema.json`
 
 Tracks data quality metrics and anomalies.
@@ -186,7 +172,7 @@ Tracks data quality metrics and anomalies.
 
 ---
 
-#### 11. **enrichments**
+#### 10. **enrichments**
 **Location**: `json_schema/changes-worker/enrichments/schema.json`
 
 Stores enrichment rules and transformation metadata.
@@ -204,7 +190,7 @@ Stores enrichment rules and transformation metadata.
 
 ### Infrastructure Collections
 
-#### 12. **config**
+#### 11. **config**
 **Location**: `json_schema/changes-worker/config/schema.json`
 
 Global system configuration.
@@ -221,7 +207,7 @@ Global system configuration.
 
 ### Auth & Identity Collections (Future)
 
-#### 13. **users**
+#### 12. **users**
 **Location**: `json_schema/changes-worker/users/schema.json`
 
 User accounts for authentication and access control.
@@ -236,7 +222,7 @@ User accounts for authentication and access control.
 
 ---
 
-#### 14. **sessions**
+#### 13. **sessions**
 **Location**: `json_schema/changes-worker/sessions/schema.json`
 
 User session tokens and authentication state.
@@ -252,7 +238,7 @@ User session tokens and authentication state.
 
 ### Observability Collections (Future)
 
-#### 15. **audit_log**
+#### 14. **audit_log**
 **Location**: `json_schema/changes-worker/audit_log/schema.json`
 
 Audit trail for tracking changes and operations.
@@ -268,7 +254,7 @@ Audit trail for tracking changes and operations.
 
 ---
 
-#### 16. **notifications**
+#### 15. **notifications**
 **Location**: `json_schema/changes-worker/notifications/schema.json`
 
 System notifications and alerts.
@@ -287,7 +273,7 @@ System notifications and alerts.
 
 ### Legacy Collections
 
-#### 17. **mappings** (Deprecated)
+#### 16. **mappings** (Deprecated)
 **Location**: `json_schema/changes-worker/mappings/schema.json`
 
 Legacy schema mapping. **Deprecated in v2.0** — mappings now embedded in jobs.

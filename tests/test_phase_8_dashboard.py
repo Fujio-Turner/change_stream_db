@@ -14,7 +14,7 @@ from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 import asyncio
 
-from cbl_store import CBLStore, USE_CBL
+from storage.cbl_store import CBLStore, USE_CBL
 from web.server import get_jobs_status
 
 

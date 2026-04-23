@@ -470,12 +470,6 @@ Same pattern as Source — each output type shows a **count badge** (🔴 red `0
         <span class="badge badge-error badge-sm font-bold" id="jbOutCountCloud">0</span>
         <span class="text-sm font-semibold">☁️ Cloud Storage</span>
       </div>
-      <div class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-base-200 hover:bg-base-300 transition-colors"
-           onclick="jbShowOutputType('stdout')">
-        <span class="badge badge-success badge-sm font-bold" id="jbOutCountStdout">✓</span>
-        <span class="text-sm font-semibold">📺 Stdout</span>
-        <span class="text-xs opacity-60">(always available)</span>
-      </div>
     </div>
   </div>
 </div>
@@ -1176,7 +1170,6 @@ Clicking "☁️ Cloud Storage" — simpler than HTTP since cloud storage has a 
 - **"In Job" column** — shows which job(s) use this output; if in an active job, Delete button is `disabled`
 - **"Test" button** — validates connectivity to the target
 - **"Select" button** — selects this output for the current job being built, marks step 3 ✓
-- **Stdout** — always available, no drill-down needed, just "Select"
 
 ---
 

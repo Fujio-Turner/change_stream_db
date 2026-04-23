@@ -17,7 +17,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from pipeline_logging import log_event
+from pipeline.pipeline_logging import log_event
 from schema.validator import SchemaValidator, ValidatorConfig, ValidationResult
 
 try:
@@ -353,7 +353,7 @@ class BaseOutputForwarder(abc.ABC):
         # Prefer CBL (single source of truth), fall back to filesystem
         cbl_loaded = False
         try:
-            from cbl_store import USE_CBL, CBLStore
+            from storage.cbl_store import USE_CBL, CBLStore
 
             if USE_CBL:
                 entries = CBLStore().list_mappings()
@@ -720,7 +720,13 @@ class BaseOutputForwarder(abc.ABC):
         """
         ic("send", doc.get("_id", doc.get("id", "unknown")) if doc else "None", method)
         if doc is None:
-            log_event(logger, "debug", "OUTPUT", "received None doc – skipping")
+            log_event(
+                logger,
+                "info",
+                "OUTPUT",
+                "received None doc – skipped",
+                doc_id="unknown",
+            )
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {"ok": True, "doc_id": "unknown", "skipped": True}
@@ -749,10 +755,22 @@ class BaseOutputForwarder(abc.ABC):
         # Find the first matching mapper and map the document.
         # This is CPU-bound (JSONPath extraction + transforms), so offload
         # to the map_executor thread pool when available.
+        #
+        # For deletes (tombstones), the doc body is minimal — typically just
+        # {"_id": "...", "_deleted": true} — so the mapper's content-based
+        # filter (e.g. type == "order") won't match.  Since a DELETE only
+        # needs the doc_id / primary key, we fall back to trying ALL mappers
+        # when no content match is found and is_delete is True.
         def _match_and_map():
             for m in self._mappers:
                 if m.matches(doc):
                     return m, m.map_document(doc, is_delete=is_delete)
+            # Tombstone fallback: try first mapper that produces DELETE ops
+            if is_delete:
+                for m in self._mappers:
+                    result = m.map_document(doc, is_delete=True)
+                    if result[0]:  # has ops
+                        return m, result
             return None, None
 
         try:
@@ -789,13 +807,22 @@ class BaseOutputForwarder(abc.ABC):
             }
 
         if not mapper:
-            log_event(
-                logger,
-                "debug",
-                "MAPPING",
-                "doc does not match any mapping filter – skipping",
-                doc_id=doc_id,
-            )
+            if is_delete:
+                log_event(
+                    logger,
+                    "info",
+                    "MAPPING",
+                    "tombstone (deleted/removed) does not match any mapping – skipped",
+                    doc_id=doc_id,
+                )
+            else:
+                log_event(
+                    logger,
+                    "info",
+                    "MAPPING",
+                    "doc does not match any mapping filter – skipped",
+                    doc_id=doc_id,
+                )
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
                 self._metrics.inc("mapper_skipped_total")
@@ -817,6 +844,13 @@ class BaseOutputForwarder(abc.ABC):
             self._metrics.inc("mapper_matched_total")
 
         if not ops:
+            log_event(
+                logger,
+                "info",
+                "MAPPING",
+                "mapper matched but produced no operations – skipped",
+                doc_id=doc_id,
+            )
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {"ok": True, "doc_id": doc_id, "ops": 0}
@@ -867,6 +901,11 @@ class BaseOutputForwarder(abc.ABC):
 
                 doc_rev = doc.get("_rev", doc.get("rev", "?"))
                 ic("send: OK", doc_id, len(ops), round(elapsed_ms, 1))
+
+                # Track delete operations forwarded to output
+                if is_delete and self._metrics:
+                    self._metrics.inc("deletes_forwarded_total")
+
                 log_event(
                     logger,
                     "debug",

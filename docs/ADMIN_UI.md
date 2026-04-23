@@ -48,7 +48,7 @@ A horizontal bar at the top shows four colored dots representing system health:
 | **Changes Feed** | Polling with < 10% error ratio | Polling with > 10% error ratio | Metrics unreachable / worker not running |
 | **Processing** | Worker uptime > 30s | Worker uptime < 30s (warming up) | Worker not running |
 | **Couchbase Lite** | CBL available (`USE_CBL=True`) | -- | CBL not installed |
-| **Output** | stdout mode + worker up, or HTTP endpoint up with no errors | HTTP endpoint up but > 10% error ratio | HTTP endpoint down |
+| **Output** | HTTP/RDBMS/Cloud endpoint up with no errors | Endpoint up but > 10% error ratio | Endpoint down |
 
 Status for Changes Feed, Processing, and Output is computed **client-side** from the Prometheus metrics the dashboard already fetches (no separate round-trip). CBL status comes from `/api/status` (server-side only knowledge).
 
@@ -163,7 +163,7 @@ Collapsible sections for each config block:
 | **Auth** | Method selector (basic/session/bearer/none) with conditional field visibility |
 | **Changes Feed** | Feed type (grouped: Polling / Continuous with tooltip), poll interval, active only, include docs, channels (Tagify tag input), throttle, HTTP timeout |
 | **Processing** | Ignore delete, ignore remove, sequential, max concurrent, dry run |
-| **Output** | Mode (stdout/http/db) with conditional field visibility: HTTP shows target URL + output format; DB shows engine, host, port, database, credentials, schema, table, pool size, SSL, mapping mode (jsonb/columns) with sub-fields. Halt on failure shown for all modes. |
+| **Output** | Mode (http/db) with conditional field visibility: HTTP shows target URL + output format; DB shows engine, host, port, database, credentials, schema, table, pool size, SSL, mapping mode (jsonb/columns) with sub-fields. Halt on failure shown for all modes. |
 | **Attachments** | Mode indicator banner (green=enabled, yellow=disabled), enable toggle, dry run, fetch mode (individual/bulk/stream), halt on failure, on missing attachment, partial success, skip on Edge Server. Sub-sections: Filter (content types, size, name pattern), Fetch (bulk get, concurrency, timeout, temp dir), Destination (S3/HTTP/filesystem with type-specific fields), Post-Process (action, update field, TTL, cleanup), Retry. |
 | **Checkpoint** | Enabled, client ID, every N docs |
 | **Metrics** | Enabled, host, port |
@@ -409,7 +409,6 @@ Three output modes:
 
 | Mode | Description |
 |---|---|
-| **Stdout** | No additional config needed. Documents printed to console/logs. |
 | **HTTP** | Target URL, output format (json/xml/form/msgpack/csv), write method (PUT/POST), authentication, self-signed certs. **Test Output** button calls `POST /api/wizard/test-output` (HTTP HEAD to the target URL). |
 | **RDBMS** | Same DB connection form as the Schema Mappings import modal (database type auto-detected from installed drivers, host, port, credentials, schema, SSL). Reuses `/api/db/test` and `/api/db/introspect` endpoints. Discovered tables are displayed with checkboxes for selection. |
 
@@ -419,7 +418,7 @@ A split-pane view similar to the Schema Mappings page:
 
 - **Left panel (45%)** — Read-only display of the sample document from Step 1 with extracted source fields listed below. Fields are draggable onto mapping inputs.
 - **Right panel (55%)** — Mapping UI that adapts to the output mode:
-  - Stdout / HTTP: JSON field mapping (target key → source path + optional transform)
+  - HTTP: JSON field mapping (target key → source path + optional transform)
   - RDBMS: Table mapping with tabs, column definitions, parent/FK relationships (pre-populated from Step 2 introspection)
 
 Both modes include the full transform function dropdown (58 functions across 6 categories).

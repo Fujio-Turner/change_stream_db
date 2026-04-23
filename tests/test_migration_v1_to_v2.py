@@ -16,8 +16,8 @@ from unittest.mock import MagicMock, patch
 # Ensure the module under test is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import cbl_store
-from cbl_store import CBLStore
+import storage.cbl_store as cbl_store
+from storage.cbl_store import CBLStore
 
 # Mock the CBL module and internal CFFI objects for testing without actual CBL dependency
 cbl_mock = MagicMock()
@@ -287,7 +287,7 @@ class TestMigrationCheckpoint(TestMigrationV1toV2Base):
         }
 
         # Create a temporary checkpoint file
-        cp_data = {"SGs_Seq": "123", "remote_counter": 50}
+        cp_data = {"remote": "123"}
 
         with (
             patch("pathlib.Path") as mock_path_class,
@@ -312,7 +312,6 @@ class TestMigrationCheckpoint(TestMigrationV1toV2Base):
             call_args = mock_save_checkpoint.call_args[0]
             checkpoint_data = call_args[1]
             self.assertEqual(checkpoint_data["last_seq"], "123")
-            self.assertEqual(checkpoint_data["remote_counter"], 50)
 
 
 class TestMigrationIdempotency(TestMigrationV1toV2Base):

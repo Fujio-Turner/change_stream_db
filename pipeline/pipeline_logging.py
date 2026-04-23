@@ -205,6 +205,7 @@ _EXTRA_FIELDS = (
     "doc_type",
     "manifest_id",
     "maintenance_type",
+    "trigger",
     "duration_ms",
     "error_detail",
 )
@@ -327,7 +328,7 @@ def infer_operation(
     """
     if method == "DELETE":
         return "DELETE"
-    if change and change.get("deleted"):
+    if change and (change.get("deleted") or change.get("removed")):
         return "DELETE"
     if method == "GET":
         return "SELECT"
@@ -475,6 +476,12 @@ def configure_logging(cfg: dict) -> None:
         )
         handler.setFormatter(fmt)
         real_handlers.append(handler)
+
+    # Configure specific logger levels
+    logger_levels = cfg.get("logger_levels", {})
+    for logger_name, level_str in logger_levels.items():
+        level = LEVELS.get(level_str.lower(), logging.INFO)
+        logging.getLogger(logger_name).setLevel(level)
 
     # Route icecream to TRACE
     try:

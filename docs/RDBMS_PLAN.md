@@ -13,7 +13,7 @@ This document outlines the design for forwarding Couchbase `_changes` feed docum
 
 ## Goal
 
-The changes_worker already consumes the `_changes` feed from Sync Gateway / App Services / Edge Server and forwards each document to a REST endpoint (`rest/` module) or stdout. The goal is to add **RDBMS output** so the same feed can write directly into a relational database table — no intermediate REST service required.
+The changes_worker already consumes the `_changes` feed from Sync Gateway / App Services / Edge Server and forwards each document to a REST endpoint (`rest/` module). The goal is to add **RDBMS output** so the same feed can write directly into a relational database table — no intermediate REST service required.
 
 ```
 ┌──────────────────────┐         ┌──────────────────┐         ┌─────────────────────┐
@@ -99,7 +99,7 @@ Each RDBMS engine gets its own `output.mode` value (`"postgres"`, `"mysql"`, `"m
 ```jsonc
 {
   "output": {
-    "mode": "postgres",                    // "stdout" | "http" | "postgres" | "mysql" | "mssql" | "oracle"
+    "mode": "postgres",                    // "http" | "postgres" | "mysql" | "mssql" | "oracle"
     "postgres": {
       "host": "localhost",
       "port": 5432,

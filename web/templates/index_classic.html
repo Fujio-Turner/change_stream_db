@@ -212,12 +212,7 @@
                 <div class="arch-stat" id="archOutS3Stat">--</div>
                 <div class="arch-tip arch-tip-right" id="archTipS3">Loading…</div>
               </div>
-              <div class="arch-node arch-node-std" id="archOutStd" data-mode="stdout" onclick="showArchDetail('stdout')">
-                <div class="arch-title">stdout</div>
-                <div class="arch-sub">JSON / XML / msgpack</div>
-                <div class="arch-stat" id="archOutStdStat">--</div>
-                <div class="arch-tip arch-tip-right" id="archTipStd">Loading…</div>
-              </div>
+
             </div>
           </div>
         </div>
@@ -763,7 +758,7 @@ function lineOptMs(title, series) {
 var archPrev = {};
 var archPrevTs = 0;
 var archRates = { feed: 0, out: 0 };
-var archNodeColors = { http: '#4caf50', db: '#2196f3', s3: '#ff9800', stdout: '#f4511e', attach: '#e91e63' };
+var archNodeColors = { http: '#4caf50', db: '#2196f3', s3: '#ff9800', attach: '#e91e63' };
 var lastArchM = null; // stash for modal
 
 // Arrow color logic: green=healthy, yellow=slow/warning, red=active but erroring, grey=inactive
@@ -789,8 +784,7 @@ function drawArchArrows() {
   var outs = [
     document.getElementById('archOutHttp'),
     document.getElementById('archOutDb'),
-    document.getElementById('archOutS3'),
-    document.getElementById('archOutStd')
+    document.getElementById('archOutS3')
   ];
   var dlqEl = document.getElementById('archDlq');
   var m = lastArchM || {};
@@ -836,7 +830,7 @@ function drawArchArrows() {
   var sx = rx(src), sy = cy(src), wx = lx(work), wy = cy(work);
   var fk = colorKey(feedColor);
   html += '<line x1="'+sx+'" y1="'+sy+'" x2="'+wx+'" y2="'+wy+'" stroke="'+feedColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+fk+')"/>';
-  html += rateBadge((sx+wx)/2, (sy+wy)/2, archRates.feed, feedColor);
+  html += rateBadge((sx+wx)/2, (sy+wy)/2, archRates.feed, feedColor, archRates.feedBytes);
 
   // ─── Worker → Attachments → Outputs (if attachments enabled) ───
   var attachEl = document.getElementById('archAttach');
@@ -866,7 +860,7 @@ function drawArchArrows() {
       if (active) {
         var ok = colorKey(activeOutColor);
         html += '<line x1="'+aRx+'" y1="'+aCy+'" x2="'+ox+'" y2="'+oy+'" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')"/>';
-        html += rateBadge((aRx+ox)/2, (aCy+oy)/2, archRates.out, activeOutColor);
+        html += rateBadge((aRx+ox)/2, (aCy+oy)/2, archRates.out, activeOutColor, archRates.outBytes);
       } else {
         html += '<line x1="'+aRx+'" y1="'+aCy+'" x2="'+ox+'" y2="'+oy+'" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
       }
@@ -882,7 +876,7 @@ function drawArchArrows() {
       if (active) {
         var ok = colorKey(activeOutColor);
         html += '<line x1="'+wxR+'" y1="'+wyC+'" x2="'+ox+'" y2="'+oy+'" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')"/>';
-        html += rateBadge((wxR+ox)/2, (wyC+oy)/2, archRates.out, activeOutColor);
+        html += rateBadge((wxR+ox)/2, (wyC+oy)/2, archRates.out, activeOutColor, archRates.outBytes);
       } else {
         html += '<line x1="'+wxR+'" y1="'+wyC+'" x2="'+ox+'" y2="'+oy+'" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
       }
@@ -906,16 +900,33 @@ function drawArchArrows() {
 }
 
 function fmtRate(r) {
-  if (r <= 0) return '0/s';
-  if (r >= 1e6) return (r / 1e6).toFixed(2) + 'M/s';
-  if (r >= 1e3) return (r / 1e3).toFixed(2) + 'K/s';
-  if (r >= 1)   return r.toFixed(1) + '/s';
-  return r.toFixed(1) + '/s';
+  if (r <= 0) return '0/ops';
+  if (r >= 1e6) return (r / 1e6).toFixed(2) + 'M/ops';
+  if (r >= 1e3) return (r / 1e3).toFixed(2) + 'K/ops';
+  if (r >= 1)   return r.toFixed(1) + '/ops';
+  return r.toFixed(1) + '/ops';
 }
 
-function rateBadge(x, y, rate, color) {
+function fmtByteRate(b) {
+  if (b <= 0) return '0/MBs';
+  var mb = b / (1024 * 1024);
+  if (mb >= 1000) return (mb / 1000).toFixed(2) + '/GBs';
+  if (mb >= 1) return mb.toFixed(1) + '/MBs';
+  return (b / 1024).toFixed(1) + '/KBs';
+}
+
+function rateBadge(x, y, rate, color, byteRate) {
   var label = fmtRate(rate);
-  var w = Math.max(67, label.length * 10.5 + 25);
+  var bLabel = (byteRate != null) ? fmtByteRate(byteRate) : null;
+  var maxLen = bLabel ? Math.max(label.length, bLabel.length) : label.length;
+  var w = Math.max(67, maxLen * 10.5 + 25);
+  if (bLabel) {
+    var h = 48;
+    return '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="17" fill="'+color+'" opacity="0.55"/>'
+         + '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="17" fill="none" stroke="'+color+'" stroke-width="2" opacity="0.7"/>'
+         + '<text x="'+x+'" y="'+(y-3)+'" text-anchor="middle" font-size="14" font-weight="700" font-family="monospace" fill="#111">'+label+'</text>'
+         + '<text x="'+x+'" y="'+(y+15)+'" text-anchor="middle" font-size="14" font-weight="700" font-family="monospace" fill="#111">'+bLabel+'</text>';
+  }
   var h = 34;
   return '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="17" fill="'+color+'" opacity="0.55"/>'
        + '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="17" fill="none" stroke="'+color+'" stroke-width="2" opacity="0.7"/>'
@@ -948,9 +959,13 @@ function updateArchData(m) {
   if (dt > 0 && archPrev._received != null) {
     archRates.feed = Math.max(0, received - archPrev._received) / dt;
     archRates.out  = Math.max(0, outOk - archPrev._outOk) / dt;
+    archRates.feedBytes = Math.max(0, bytesIn - (archPrev._bytesIn || 0)) / dt;
+    archRates.outBytes  = Math.max(0, bytesOut - (archPrev._bytesOut || 0)) / dt;
   }
   archPrev._received = received;
   archPrev._outOk    = outOk;
+  archPrev._bytesIn  = bytesIn;
+  archPrev._bytesOut = bytesOut;
 
   // Node stat labels
   var attachEnabled = cachedCfg && cachedCfg.attachments && cachedCfg.attachments.enabled;
@@ -970,7 +985,6 @@ function updateArchData(m) {
   setText('archOutHttpStat', outMode === 'http' ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
   setText('archOutDbStat',   outMode === 'db'   ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
   setText('archOutS3Stat',   outMode === 's3'   ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
-  setText('archOutStdStat',  outMode === 'stdout' ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
 
   // Attachment node
   var attDetected = m ? (m['changes_worker_attachments_detected_total'] || 0) : 0;
@@ -1019,7 +1033,6 @@ function updateArchData(m) {
   document.getElementById('archTipHttp').innerHTML = outMode === 'http' ? outTip : 'Not active';
   document.getElementById('archTipDb').innerHTML   = outMode === 'db'   ? outTip : 'Not active';
   document.getElementById('archTipS3').innerHTML   = outMode === 's3'   ? outTip : 'Not active';
-  document.getElementById('archTipStd').innerHTML  = outMode === 'stdout' ? outTip : 'Not active';
   document.getElementById('archTipDlq').innerHTML =
     'Dead Letters: <b>' + fmt(dlq) + '</b><br>' +
     'Last Insert: <b>' + fmtEpoch(cachedDlqMeta.last_inserted_at) + '</b><br>' +
@@ -1187,7 +1200,7 @@ function showArchDetail(which) {
   } else {
     // Output nodes
     var outMode = (cachedCfg && cachedCfg.output) ? cachedCfg.output.mode : '';
-    var names = { http: 'HTTP Endpoint', db: 'RDBMS', s3: 'AWS S3', stdout: 'stdout' };
+    var names = { http: 'HTTP Endpoint', db: 'RDBMS', s3: 'AWS S3' };
     title = (names[which] || which) + ' — Output';
     color = archNodeColors[which] || '#475569';
     var isActive = which === outMode;
@@ -1457,7 +1470,7 @@ function computeStatus(m, cfg) {
   setDot('dotProcess', procColor);
 
   // ── Output ───────────────────────────────────────────────
-  var outMode  = (cfg && cfg.output) ? cfg.output.mode : 'stdout';
+  var outMode  = (cfg && cfg.output) ? cfg.output.mode : 'http';
   var epUp     = m['changes_worker_output_endpoint_up'];
   var outErr   = m['changes_worker_output_errors_total'] || 0;
   var outTotal = m['changes_worker_output_requests_total'] || 0;
@@ -1482,14 +1495,7 @@ function computeStatus(m, cfg) {
   };
 
   var outColor = 'red';
-  if (outMode === 'stdout') {
-    outColor = uptime > 0 ? 'green' : 'red';
-    if (uptime > 0) {
-      outChecks.push(diagOk('Output mode is stdout — no external endpoint needed'));
-    } else {
-      outChecks.push(diagErr('Worker not running'));
-    }
-  } else if (epUp === 0) {
+  if (epUp === 0) {
     outColor = 'red';
     outChecks.push(diagErr('Output endpoint is DOWN — the target is unreachable'));
     if (outMode === 'http') {

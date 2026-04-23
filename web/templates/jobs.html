@@ -271,12 +271,7 @@
                   <span class="badge badge-error badge-sm font-bold" id="jbOutCountCloud">0</span>
                   <span class="text-sm font-semibold">☁️ Cloud Storage</span>
                 </div>
-                <div class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-base-200 hover:bg-base-300 transition-colors"
-                     onclick="jbSelectStdout()">
-                  <span class="badge badge-success badge-sm font-bold" id="jbOutCountStdout">✓</span>
-                  <span class="text-sm font-semibold">📺 Stdout</span>
-                  <span class="text-xs opacity-60">(always available)</span>
-                </div>
+
               </div>
 
               <!-- Selected output indicator -->
@@ -570,28 +565,31 @@
               ? '<div class="tooltip tooltip-left" data-tip="Stop this job before deleting"><button class="btn btn-ghost btn-xs text-error" disabled>Delete</button></div>'
               : '<button class="btn btn-ghost btn-xs text-error" onclick="deleteJob(\'' + jobId + '\')">Delete</button>';
 
+            // Format source type for display
+            var sourceTypeLabel = (job.input_type || '').replace(/_/g, ' ');
+
             row.innerHTML =
               '<td>' + statusBadge + '</td>' +
-              '<td class="font-semibold cursor-pointer" onclick="editJob(\'' + jobId + '\')">' + jobName + '</td>' +
-              '<td>' +
-                '<div class="font-semibold">' + escHtml(job.input_name || '—') + '</div>' +
-                '<div class="text-xs opacity-60">' + escHtml(job.input_type || '—') + '</div>' +
+              '<td class="font-semibold cursor-pointer align-middle" onclick="editJob(\'' + jobId + '\')" title="' + escHtml(jobName) + '">' + escHtml(jobName) + '</td>' +
+              '<td class="align-middle">' +
+                '<div class="font-semibold text-sm">' + escHtml(job.input_name || '—') + '</div>' +
+                '<div class="text-xs opacity-60">' + escHtml(sourceTypeLabel || '—') + '</div>' +
               '</td>' +
-              '<td><span class="badge badge-info badge-sm">' + escHtml(job.process_type || '—') + '</span></td>' +
-              '<td>' +
-                '<div class="font-semibold">' + escHtml(job.output_name || '—') + '</div>' +
+              '<td class="align-middle"><span class="badge badge-info badge-sm">' + escHtml(job.process_type || '—') + '</span></td>' +
+              '<td class="align-middle">' +
+                '<div class="font-semibold text-sm">' + escHtml(job.output_name || '—') + '</div>' +
                 '<div class="text-xs opacity-60">' + escHtml(job.output_type || '—') + '</div>' +
               '</td>' +
-              '<td class="opacity-60">' + (job.last_sync_time ? new Date(job.last_sync_time).toISOString().split('T')[0] : '—') + '</td>' +
-              '<td class="font-mono">' + (job.threads || 1) + '</td>' +
-              '<td class="text-right">' +
-                '<div class="flex gap-1 justify-end">' +
+              '<td class="opacity-60 text-sm align-middle text-center">' + (job.last_sync_time ? new Date(job.last_sync_time).toISOString().split('T')[0] : '—') + '</td>' +
+              '<td class="font-mono text-sm align-middle text-center">' + (job.threads || 1) + '</td>' +
+              '<td class="align-middle">' +
+                '<div class="flex flex-wrap gap-1 justify-end">' +
                   deleteBtn +
-                  '<button class="btn btn-ghost btn-xs" onclick="editJobMapping(\'' + jobId + '\')" title="Edit schema mapping">📐 Mapping</button>' +
-                  '<button class="btn btn-ghost btn-xs text-warning" onclick="killJob(\'' + jobId + '\')" title="Kill (non-graceful)">Kill</button>' +
+                  '<button class="btn btn-ghost btn-xs text-warning" onclick="killJob(\'' + jobId + '\')" title="Kill">Kill</button>' +
+                  '<button class="btn btn-ghost btn-xs" onclick="stopJob(\'' + jobId + '\')" title="Stop">Stop</button>' +
                   '<button class="btn btn-ghost btn-xs" onclick="restartJob(\'' + jobId + '\')" title="Restart">Restart</button>' +
-                  '<button class="btn btn-ghost btn-xs" onclick="stopJob(\'' + jobId + '\')" title="Stop (graceful)">Stop</button>' +
                   '<button class="btn btn-ghost btn-xs" onclick="startJob(\'' + jobId + '\')" title="Start">Start</button>' +
+                  '<button class="btn btn-ghost btn-xs" onclick="editJobMapping(\'' + jobId + '\')" title="Edit schema mapping">Mapping</button>' +
                   '<button class="btn btn-ghost btn-xs" onclick="editJob(\'' + jobId + '\')" title="Edit">Edit</button>' +
                 '</div>' +
               '</td>';
@@ -623,20 +621,14 @@
     }
 
     function loadOutputCounts() {
-      var types = ['rdbms', 'http', 'cloud', 'stdout'];
-      var badgeIds = { rdbms: 'jbOutCountRDBMS', http: 'jbOutCountHTTP', cloud: 'jbOutCountCloud', stdout: 'jbOutCountStdout' };
+      var types = ['rdbms', 'http', 'cloud'];
+      var badgeIds = { rdbms: 'jbOutCountRDBMS', http: 'jbOutCountHTTP', cloud: 'jbOutCountCloud' };
       types.forEach(function(t){
         fetch('/api/outputs_' + t)
           .then(function(r){ return r.json(); })
           .then(function(data){
             var count = (data.src || []).length;
-            if (t === 'stdout') {
-              // Stdout is always available
-              var el = document.getElementById(badgeIds[t]);
-              if (el) { el.className = 'badge badge-success badge-sm font-bold'; el.textContent = '✓'; }
-            } else {
-              updateCountBadge(badgeIds[t], count);
-            }
+            updateCountBadge(badgeIds[t], count);
           })
           .catch(function(){ /* ignore */ });
       });
@@ -1043,14 +1035,6 @@
       document.getElementById('jbOutputSelected').classList.remove('hidden');
       updateStepIndicators();
       jbBackToOutputTypes();
-    }
-
-    function jbSelectStdout() {
-      currentJobBuilder.outputId = 'stdout';
-      currentJobBuilder.outputType = 'stdout';
-      document.getElementById('jbOutputSelectedValue').textContent = 'Stdout (console)';
-      document.getElementById('jbOutputSelected').classList.remove('hidden');
-      updateStepIndicators();
     }
 
     function jbAddNewOutput() {

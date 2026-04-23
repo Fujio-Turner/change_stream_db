@@ -21,7 +21,7 @@ except ImportError:
     BaseModel = object  # Fallback if pydantic not installed
     ValidationError = Exception
 
-from pipeline_logging import log_event
+from pipeline.pipeline_logging import log_event
 
 logger = logging.getLogger("changes_worker")
 

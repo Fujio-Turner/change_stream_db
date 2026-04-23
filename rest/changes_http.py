@@ -34,7 +34,7 @@ try:
 except ImportError:  # pragma: no cover
     ic = lambda *a, **kw: None  # noqa: E731
 
-from pipeline_logging import log_event, infer_operation
+from pipeline.pipeline_logging import log_event, infer_operation
 from rest import OutputForwarder, OutputEndpointDown, DeadLetterQueue, determine_method
 
 logger = logging.getLogger("changes_worker")
@@ -344,7 +344,8 @@ async def _fetch_single_doc_with_retry(
 ) -> dict | None:
     """Fetch a single doc via GET with exponential backoff.
 
-    Used as a fallback when _bulk_get is missing documents.
+    Used for single-doc batches (cheaper than _bulk_get) and as a
+    fallback when _bulk_get is missing documents.
     """
     url = f"{base_url}/{doc_id}"
     params: dict[str, str] = {}
@@ -369,23 +370,23 @@ async def _fetch_single_doc_with_retry(
         except ClientHTTPError as exc:
             if exc.status in (401, 403):
                 raise
-            ic("bulk_get fallback: client error", doc_id, exc.status, attempt)
+            ic("single doc GET: client error", doc_id, exc.status, attempt)
             log_event(
                 logger,
                 "warn",
                 "HTTP",
-                "bulk_get fallback GET failed (client error)",
+                "single doc GET failed (client error)",
                 doc_id=doc_id,
                 status=exc.status,
                 attempt=attempt,
             )
         except Exception as exc:
-            ic("bulk_get fallback: error", doc_id, type(exc).__name__, attempt)
+            ic("single doc GET: error", doc_id, type(exc).__name__, attempt)
             log_event(
                 logger,
                 "warn",
                 "RETRY",
-                "bulk_get fallback GET failed",
+                "single doc GET failed",
                 doc_id=doc_id,
                 attempt=attempt,
                 error_detail=f"{type(exc).__name__}: {exc}",
@@ -394,12 +395,12 @@ async def _fetch_single_doc_with_retry(
             delay = min(backoff_base * (2 ** (attempt - 1)), 60)
             await asyncio.sleep(delay)
 
-    ic("bulk_get fallback: exhausted retries", doc_id)
+    ic("single doc GET: exhausted retries", doc_id)
     log_event(
         logger,
         "error",
         "HTTP",
-        "failed to get doc from failed _bulk_get after retries",
+        "single doc GET failed after retries",
         doc_id=doc_id,
         attempt=max_retries,
     )
@@ -979,6 +980,31 @@ async def _process_changes_batch(
             metrics.inc("changes_deleted_total", deleted_count)
             metrics.inc("changes_removed_total", removed_count)
             metrics.inc("changes_filtered_total", deleted_count + removed_count)
+        # Note: deletes_forwarded_total is incremented when the delete is actually
+        # sent to the output (in db_base.py, cloud_base.py, or output_http.py),
+        # not here in the feed processor. This avoids double-counting.
+
+    total_tombstones = feed_deletes + feed_removes
+    if total_tombstones:
+        del_fwd = feed_deletes - deleted_count
+        rem_fwd = feed_removes - removed_count
+        log_event(
+            logger,
+            "info",
+            "CHANGES",
+            "tombstones in batch: %d deleted + %d removed "
+            "(forwarded=%d, filtered=%d)"
+            % (
+                feed_deletes,
+                feed_removes,
+                del_fwd + rem_fwd,
+                deleted_count + removed_count,
+            ),
+            deletes_total=feed_deletes,
+            removes_total=feed_removes,
+            tombstones_forwarded=del_fwd + rem_fwd,
+            tombstones_filtered=deleted_count + removed_count,
+        )
 
     if deleted_count or removed_count:
         log_event(
@@ -990,96 +1016,187 @@ async def _process_changes_batch(
             filtered_count=len(filtered),
         )
 
-    # If include_docs was false, fetch full docs
+    # If include_docs was false, fetch full docs.
+    # Skip deleted/removed entries — they only need doc_id for DELETE,
+    # no point fetching a tombstone body from the server.
+    #
+    # In sequential mode we defer fetching until each doc is needed
+    # (lazy fetch) so that an early OutputEndpointDown / shutdown
+    # doesn't waste bandwidth on docs we'll never process.
     docs_by_id: dict[str, dict] = {}
-    if not feed_cfg.get("include_docs") and filtered:
-        batch_size = proc_cfg.get("get_batch_number", 100)
-        fetched = await fetch_docs(
-            http,
-            base_url,
-            filtered,
-            basic_auth,
-            auth_headers,
-            src,
-            max_concurrent,
-            batch_size,
-            metrics=metrics,
-        )
-        for doc in fetched:
-            docs_by_id[doc.get("_id", "")] = doc
-        if metrics:
-            metrics.inc("docs_fetched_total", len(fetched))
+    need_fetch = not feed_cfg.get("include_docs") and filtered
+    if need_fetch and not sequential:
+        fetch_rows = [
+            r for r in filtered if not r.get("deleted") and not r.get("removed")
+        ]
+        if fetch_rows:
+            batch_size = proc_cfg.get("get_batch_number", 100)
+            fetched = await fetch_docs(
+                http,
+                base_url,
+                fetch_rows,
+                basic_auth,
+                auth_headers,
+                src,
+                max_concurrent,
+                batch_size,
+                metrics=metrics,
+            )
+            for doc in fetched:
+                docs_by_id[doc.get("_id", "")] = doc
+            if metrics:
+                metrics.inc("docs_fetched_total", len(fetched))
 
     # Process changes – send each doc to the output
     output_failed = False
     batch_success = 0
     batch_fail = 0
 
-    async def process_one(change: dict) -> dict:
-        async with semaphore:
-            if metrics:
-                metrics.inc("active_tasks")
-            try:
-                doc_id = change.get("id", "")
-                if include_docs:
-                    doc = change.get("doc", change)
-                else:
-                    doc = docs_by_id.get(doc_id, change)
-                # ── ATTACHMENT stage (between MIDDLE and RIGHT) ──
-                if has_attachments:
-                    try:
-                        doc, _skip = await attachment_processor.process(
-                            doc, base_url, http, basic_auth, auth_headers, src
-                        )
-                    except Exception as att_exc:
-                        log_event(
-                            logger,
-                            "error",
-                            "PROCESSING",
-                            "attachment processing failed: %s" % att_exc,
-                            doc_id=doc_id,
-                        )
-                        raise
+    async def _resolve_doc(change: dict) -> dict:
+        """Resolve the full document body for a change row.
 
-                method = delete_method if change.get("deleted") else write_method
-                if log_trace:
-                    op = infer_operation(change=change, doc=doc, method=method)
+        For deleted/removed entries, returns a minimal synthetic doc.
+        In sequential mode with ``include_docs=False``, fetches the doc
+        on-demand (lazy) instead of relying on the pre-fetched
+        ``docs_by_id`` map.  If the fetch fails (doc missing on the
+        server, rev mismatch returning 404/409, or network error after
+        retries) the change is logged and a ``None`` is returned so the
+        caller can skip or DLQ appropriately.
+        """
+        doc_id = change.get("id", "")
+        is_tombstone = change.get("deleted") or change.get("removed")
+
+        if include_docs:
+            return change.get("doc", change)
+
+        # Tombstones are never fetched — build a minimal doc for DELETE.
+        if is_tombstone:
+            return {"_id": doc_id, **change}
+
+        # Pre-fetched (parallel mode)?
+        doc = docs_by_id.get(doc_id)
+        if doc is not None:
+            return doc
+
+        # Lazy fetch (sequential mode) — fetch single doc on demand.
+        rev = ""
+        changes_list = change.get("changes", [])
+        if changes_list:
+            rev = changes_list[0].get("rev", "")
+        doc = await _fetch_single_doc_with_retry(
+            http,
+            base_url,
+            doc_id,
+            rev,
+            basic_auth,
+            auth_headers,
+            metrics=metrics,
+        )
+        if doc is not None:
+            if metrics:
+                metrics.inc("docs_fetched_total")
+            return doc
+
+        # Doc is gone — deleted between _changes and our GET, or rev
+        # mismatch (409/404).  This is normal in an eventually-consistent
+        # system: a mutation and a delete can race.  Treat it as a skip
+        # rather than a hard failure — the next _changes poll will carry
+        # the delete tombstone which we'll handle properly.
+        log_event(
+            logger,
+            "warn",
+            "PROCESSING",
+            "doc not found on fetch (deleted between _changes and GET?) – skipping",
+            doc_id=doc_id,
+        )
+        if metrics:
+            metrics.inc("docs_fetch_skipped_total")
+        return None
+
+    async def _process_one_inner(change: dict, *, track_active: bool) -> dict:
+        if track_active and metrics:
+            metrics.inc("active_tasks")
+        try:
+            doc_id = change.get("id", "")
+            doc = await _resolve_doc(change)
+            if doc is None:
+                return {
+                    "ok": True,
+                    "doc_id": doc_id,
+                    "status": 0,
+                    "skipped": True,
+                    "_change": change,
+                    "_doc": {"_id": doc_id},
+                }
+            # ── ATTACHMENT stage (between MIDDLE and RIGHT) ──
+            if has_attachments:
+                try:
+                    doc, _skip = await attachment_processor.process(
+                        doc, base_url, http, basic_auth, auth_headers, src
+                    )
+                except Exception as att_exc:
                     log_event(
                         logger,
-                        "trace",
-                        "OUTPUT",
-                        "sending document",
-                        operation=op,
+                        "error",
+                        "PROCESSING",
+                        "attachment processing failed: %s" % att_exc,
                         doc_id=doc_id,
-                        mode=output._mode,
-                        http_method=method,
                     )
-                result = await output.send(doc, method)
+                    raise
+
+            method = (
+                delete_method
+                if change.get("deleted") or change.get("removed")
+                else write_method
+            )
+            if log_trace:
+                op = infer_operation(change=change, doc=doc, method=method)
+                log_event(
+                    logger,
+                    "trace",
+                    "OUTPUT",
+                    "sending document",
+                    operation=op,
+                    doc_id=doc_id,
+                    mode=output._mode,
+                    http_method=method,
+                )
+            result = await output.send(doc, method)
+            # Parallel mode needs _change/_doc on the result dict because
+            # the caller only sees results after asyncio.wait(); sequential
+            # mode already has the loop variables in scope.
+            if not sequential:
                 result["_change"] = change
                 result["_doc"] = doc
-                if result.get("ok"):
-                    if log_trace:
-                        log_event(
-                            logger,
-                            "debug",
-                            "OUTPUT",
-                            "document forwarded",
-                            doc_id=doc_id,
-                            status=result.get("status"),
-                        )
-                else:
+            if result.get("ok"):
+                if log_trace:
                     log_event(
                         logger,
-                        "warn",
+                        "debug",
                         "OUTPUT",
-                        "document delivery failed",
+                        "document forwarded",
                         doc_id=doc_id,
                         status=result.get("status"),
                     )
-                return result
-            finally:
-                if metrics:
-                    metrics.inc("active_tasks", -1)
+            else:
+                log_event(
+                    logger,
+                    "warn",
+                    "OUTPUT",
+                    "document delivery failed",
+                    doc_id=doc_id,
+                    status=result.get("status"),
+                )
+            return result
+        finally:
+            if track_active and metrics:
+                metrics.inc("active_tasks", -1)
+
+    async def process_one(change: dict) -> dict:
+        if sequential:
+            return await _process_one_inner(change, track_active=False)
+        async with semaphore:
+            return await _process_one_inner(change, track_active=True)
 
     if every_n_docs > 0 and sequential:
         for i in range(0, len(filtered), every_n_docs):
@@ -1096,15 +1213,16 @@ async def _process_changes_batch(
                                 logger,
                                 "warn",
                                 "OUTPUT",
-                                "data error – skipping doc (data_error_action=skip)",
+                                "data error – skipped doc (data_error_action=skip)",
                                 doc_id=change.get("id", ""),
                             )
                         else:
                             if dlq.enabled and metrics:
                                 metrics.inc("dead_letter_total")
                                 metrics.set("dlq_last_write_epoch", time.time())
+                            dlq_doc = result.get("_doc", {"_id": change.get("id", "")})
                             await dlq.write(
-                                result["_doc"],
+                                dlq_doc,
                                 result,
                                 change.get("seq", ""),
                                 target_url=getattr(output, "target_url", ""),
@@ -1132,14 +1250,19 @@ async def _process_changes_batch(
                         for rem in remaining:
                             rem_doc = (
                                 rem.get("doc", rem)
-                                if feed_cfg.get("include_docs")
+                                if include_docs
                                 else docs_by_id.get(rem.get("id", ""), rem)
+                            )
+                            rem_method = (
+                                delete_method
+                                if rem.get("deleted") or rem.get("removed")
+                                else write_method
                             )
                             await dlq.write(
                                 rem_doc,
                                 {
                                     "doc_id": rem.get("id", ""),
-                                    "method": "PUT",
+                                    "method": rem_method,
                                     "status": 0,
                                     "error": "shutdown_inflight",
                                 },
@@ -1166,11 +1289,19 @@ async def _process_changes_batch(
                 metrics.inc("checkpoint_saves_total")
                 metrics.set("checkpoint_seq", since)
     else:
+        next_unprocessed_idx = 0
+        # Sequential checkpoint stride: save every N docs rather than
+        # every single doc (each save is an HTTP PUT to SG).
+        # Falls back to every_n_docs if set, otherwise default to 100.
+        seq_ckpt_stride = every_n_docs if every_n_docs > 0 else 100
+        seq_since_pending = 0
         try:
             if sequential:
-                for change in filtered:
+                for idx, change in enumerate(filtered):
                     result = await process_one(change)
-                    if result.get("ok"):
+                    if result.get("skipped"):
+                        batch_success += 1
+                    elif result.get("ok"):
                         batch_success += 1
                     else:
                         batch_fail += 1
@@ -1179,20 +1310,34 @@ async def _process_changes_batch(
                                 logger,
                                 "warn",
                                 "OUTPUT",
-                                "data error – skipping doc (data_error_action=skip)",
+                                "data error – skipped doc (data_error_action=skip)",
                                 doc_id=change.get("id", ""),
                             )
                         else:
                             if dlq.enabled and metrics:
                                 metrics.inc("dead_letter_total")
                                 metrics.set("dlq_last_write_epoch", time.time())
+                            dlq_doc = result.get("_doc", {"_id": change.get("id", "")})
                             await dlq.write(
-                                result["_doc"],
+                                dlq_doc,
                                 result,
                                 change.get("seq", ""),
                                 target_url=getattr(output, "target_url", ""),
                                 metrics=metrics,
                             )
+                    # Doc fully resolved — advance cursor
+                    next_unprocessed_idx = idx + 1
+                    since = str(change.get("seq", since))
+                    seq_since_pending += 1
+                    # Checkpoint every N resolved docs (not every single one)
+                    if seq_since_pending >= seq_ckpt_stride:
+                        await checkpoint.save(
+                            since, http, base_url, basic_auth, auth_headers
+                        )
+                        if metrics:
+                            metrics.inc("checkpoint_saves_total")
+                            metrics.set("checkpoint_seq", since)
+                        seq_since_pending = 0
             else:
                 tasks = [asyncio.create_task(process_one(c)) for c in filtered]
                 done, _ = await asyncio.wait(tasks)
@@ -1209,7 +1354,7 @@ async def _process_changes_batch(
                                 logger,
                                 "warn",
                                 "OUTPUT",
-                                "data error – skipping doc (data_error_action=skip)",
+                                "data error – skipped doc (data_error_action=skip)",
                                 doc_id=result.get("doc_id", ""),
                             )
                         else:
@@ -1234,32 +1379,31 @@ async def _process_changes_batch(
                 % ("SHUTDOWN" if is_shutdown else "OUTPUT DOWN", since, exc),
                 error_detail=str(exc),
             )
-            # DLQ all unprocessed docs if shutdown + dlq_inflight_on_shutdown
+            # DLQ unprocessed docs if shutdown + dlq_inflight_on_shutdown
             if (
                 is_shutdown
                 and (shutdown_cfg or {}).get("dlq_inflight_on_shutdown", False)
                 and dlq.enabled
             ):
-                # In sequential mode, we know which docs haven't been tried yet
-                processed_ids = set()  # noqa: F841
-                if sequential:
-                    # Find which docs were already processed (succeeded or failed above)
-                    # The current change that raised is the boundary
-                    pass
-                # For parallel mode, all docs were dispatched as tasks;
-                # unfinished ones got cancelled — DLQ all filtered docs that didn't succeed
+                # In sequential mode, only DLQ docs that haven't been resolved
+                remaining = filtered[next_unprocessed_idx:] if sequential else filtered
                 dlq_count = 0
-                for ch in filtered:
+                for ch in remaining:
                     ch_doc = (
                         ch.get("doc", ch)
-                        if feed_cfg.get("include_docs")
+                        if include_docs
                         else docs_by_id.get(ch.get("id", ""), ch)
+                    )
+                    method = (
+                        delete_method
+                        if ch.get("deleted") or ch.get("removed")
+                        else write_method
                     )
                     await dlq.write(
                         ch_doc,
                         {
                             "doc_id": ch.get("id", ""),
-                            "method": "PUT",
+                            "method": method,
                             "status": 0,
                             "error": "shutdown_inflight",
                         },
@@ -1318,12 +1462,23 @@ async def _process_changes_batch(
             metrics.inc("batches_failed_total")
         return since, True
 
-    if not (every_n_docs > 0 and sequential):
+    if not sequential:
+        # Parallel mode: single checkpoint at end of batch
         since = str(last_seq)
         await checkpoint.save(since, http, base_url, basic_auth, auth_headers)
         if metrics:
             metrics.inc("checkpoint_saves_total")
             metrics.set("checkpoint_seq", since)
+    else:
+        # Sequential modes already checkpointed per-doc/sub-batch;
+        # advance to last_seq if it differs from the last saved seq
+        end_seq = str(last_seq)
+        if end_seq != since:
+            since = end_seq
+            await checkpoint.save(since, http, base_url, basic_auth, auth_headers)
+            if metrics:
+                metrics.inc("checkpoint_saves_total")
+                metrics.set("checkpoint_seq", since)
 
     if metrics:
         metrics.record_batch_processing_time(time.monotonic() - batch_t0)
@@ -1621,10 +1776,12 @@ async def _consume_continuous_stream(
             metrics.inc("stream_reconnects_total")
         failure_count = 0
 
-        # Buffering: collect rows for up to stream_batch_timeout_ms or
-        # get_batch_number docs before processing as one batch.
+        # Greedy-drain buffering: block on the first row, then drain
+        # everything already sitting in the socket buffer before flushing.
+        # This gives zero latency for single docs and automatic batching
+        # under load — no arbitrary timer or count needed.
         batch_max = proc_cfg.get("get_batch_number", 100)
-        batch_timeout = feed_cfg.get("stream_batch_timeout_ms", 100) / 1000.0
+        drain_timeout = feed_cfg.get("stream_batch_timeout_ms", 5) / 1000.0
         buffer: list[dict] = []
         buffer_last_seq = since
 
@@ -1667,58 +1824,63 @@ async def _consume_continuous_stream(
             await _maybe_backpressure(metrics, shutdown_event)
             return result
 
+        def _parse_line(raw_line: bytes) -> dict | None:
+            """Parse a raw line into a change row, returning None on skip."""
+            if metrics:
+                metrics.inc("bytes_received_total", len(raw_line))
+            line = raw_line.strip()
+            if not line:
+                return None  # heartbeat / blank line
+            try:
+                row = _json_loads(line)
+                if metrics:
+                    metrics.inc("stream_messages_total")
+                return row
+            except (json.JSONDecodeError, ValueError):
+                logger.warning("Continuous stream: unparseable line: %s", line[:200])
+                if metrics:
+                    metrics.inc("stream_parse_errors_total")
+                return None
+
         try:
             while not shutdown_event.is_set():
-                # If buffer has rows, use timeout; otherwise block indefinitely
-                read_timeout = batch_timeout if buffer else None
-                try:
-                    raw_line = await asyncio.wait_for(
-                        resp.content.readline(), timeout=read_timeout
-                    )
-                except asyncio.TimeoutError:
-                    # Batch timeout reached – flush what we have
-                    since, output_failed = await _flush_buffer()
-                    if output_failed:
-                        logger.warning(
-                            "Output failed during continuous stream – dropping to catch-up"
-                        )
-                        break
-                    continue
+                # Block indefinitely for the first row
+                raw_line = await resp.content.readline()
 
                 if raw_line == b"":
-                    # EOF – flush remaining buffer before exiting
                     if buffer:
                         await _flush_buffer()
                     logger.warning("Continuous stream closed by server (EOF)")
                     break
 
-                if metrics:
-                    metrics.inc("bytes_received_total", len(raw_line))
+                row = _parse_line(raw_line)
+                if row is not None:
+                    row_seq = str(row.get("seq", since))
+                    ic(row.get("id"), row_seq, "continuous row")
+                    buffer.append(row)
+                    buffer_last_seq = row_seq
 
-                line = raw_line.strip()
-                if not line:
-                    continue  # heartbeat / blank line
+                # Greedy drain: grab everything already in the socket buffer
+                while len(buffer) < batch_max:
+                    try:
+                        raw_line = await asyncio.wait_for(
+                            resp.content.readline(), timeout=drain_timeout
+                        )
+                    except asyncio.TimeoutError:
+                        break  # nothing waiting — flush now
 
-                try:
-                    row = _json_loads(line)
-                    if metrics:
-                        metrics.inc("stream_messages_total")
-                except (json.JSONDecodeError, ValueError):
-                    logger.warning(
-                        "Continuous stream: unparseable line: %s", line[:200]
-                    )
-                    if metrics:
-                        metrics.inc("stream_parse_errors_total")
-                    continue
+                    if raw_line == b"":
+                        break  # EOF
 
-                row_seq = str(row.get("seq", since))
-                ic(row.get("id"), row_seq, "continuous row")
+                    row = _parse_line(raw_line)
+                    if row is not None:
+                        row_seq = str(row.get("seq", since))
+                        ic(row.get("id"), row_seq, "continuous row")
+                        buffer.append(row)
+                        buffer_last_seq = row_seq
 
-                buffer.append(row)
-                buffer_last_seq = row_seq
-
-                # Flush if buffer is full
-                if len(buffer) >= batch_max:
+                # Flush whatever we collected
+                if buffer:
                     since, output_failed = await _flush_buffer()
                     if output_failed:
                         logger.warning(
@@ -1851,10 +2013,10 @@ async def _consume_websocket_stream(
             else:
                 ws_idle_timeout = max(timeout_ms * 2 / 1000.0, 300.0)
 
-            # Buffering: collect rows for up to stream_batch_timeout_ms or
-            # batch_max docs before processing as one batch (same as continuous).
+            # Greedy-drain buffering (same strategy as continuous stream):
+            # block on the first message, then drain whatever is ready.
             batch_max = proc_cfg.get("get_batch_number", 100)
-            batch_timeout = feed_cfg.get("stream_batch_timeout_ms", 100) / 1000.0
+            drain_timeout = feed_cfg.get("stream_batch_timeout_ms", 5) / 1000.0
             buffer: list[dict] = []
             buffer_last_seq = since
 
@@ -1898,81 +2060,106 @@ async def _consume_websocket_stream(
                 await _maybe_backpressure(metrics, shutdown_event)
                 return result
 
-            while not shutdown_event.is_set():
-                # If buffer has rows, use batch_timeout; otherwise use idle timeout
-                read_timeout = batch_timeout if buffer else ws_idle_timeout
+            def _parse_ws_msg(msg) -> tuple[list[dict], bool]:
+                """Parse a WS TEXT message. Returns (change_rows, is_last_seq)."""
+                if not msg.data or not msg.data.strip():
+                    return [], False
+                if metrics:
+                    metrics.inc("bytes_received_total", len(msg.data))
                 try:
-                    msg = await asyncio.wait_for(ws.receive(), timeout=read_timeout)
+                    parsed = _json_loads(msg.data)
+                    if metrics:
+                        metrics.inc("stream_messages_total")
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning(
+                        "WebSocket: unparseable message (length=%d)", len(msg.data)
+                    )
+                    if metrics:
+                        metrics.inc("stream_parse_errors_total")
+                    return [], False
+
+                # Check for final message: dict with "last_seq" and no "id"
+                if (
+                    isinstance(parsed, dict)
+                    and "last_seq" in parsed
+                    and "id" not in parsed
+                ):
+                    return [], True
+
+                rows = parsed if isinstance(parsed, list) else [parsed]
+                change_rows = [r for r in rows if isinstance(r, dict) and "id" in r]
+                return change_rows, False
+
+            while not shutdown_event.is_set():
+                # Block for the first message (use idle timeout for liveness)
+                try:
+                    msg = await asyncio.wait_for(ws.receive(), timeout=ws_idle_timeout)
                 except asyncio.TimeoutError:
-                    if buffer:
-                        # Batch timeout reached – flush what we have
-                        since, output_failed = await _flush_ws_buffer()
-                        payload["since"] = since
-                        if output_failed:
-                            logger.warning(
-                                "Output failed during WebSocket stream – reconnecting"
-                            )
-                            break
-                        continue
-                    else:
-                        # Idle timeout – no data at all
-                        failure_count += 1
-                        logger.warning(
-                            "WebSocket idle timeout (%.0fs) – reconnecting (failure #%d)",
-                            ws_idle_timeout,
-                            failure_count,
-                        )
-                        if metrics:
-                            metrics.inc("poll_errors_total")
-                        break
+                    failure_count += 1
+                    logger.warning(
+                        "WebSocket idle timeout (%.0fs) – reconnecting (failure #%d)",
+                        ws_idle_timeout,
+                        failure_count,
+                    )
+                    if metrics:
+                        metrics.inc("poll_errors_total")
+                    break
 
                 if msg.type == aiohttp.WSMsgType.TEXT:
-                    # SG sends empty frames as heartbeats – skip them
-                    if not msg.data or not msg.data.strip():
-                        continue
-
-                    if metrics:
-                        metrics.inc("bytes_received_total", len(msg.data))
-
-                    try:
-                        parsed = _json_loads(msg.data)
-                        if metrics:
-                            metrics.inc("stream_messages_total")
-                    except (json.JSONDecodeError, ValueError):
-                        logger.warning(
-                            "WebSocket: unparseable message (length=%d)", len(msg.data)
-                        )
-                        if metrics:
-                            metrics.inc("stream_parse_errors_total")
-                        continue
-
-                    # SG may send a single dict or an array of change rows
-                    rows = parsed if isinstance(parsed, list) else [parsed]
-
-                    # Check for final message: dict with "last_seq" and no "id"
-                    if (
-                        isinstance(parsed, dict)
-                        and "last_seq" in parsed
-                        and "id" not in parsed
-                    ):
-                        # Flush remaining buffer before closing
+                    change_rows, is_last = _parse_ws_msg(msg)
+                    if is_last:
                         if buffer:
                             await _flush_ws_buffer()
-                        since = str(parsed["last_seq"])
+                        since = str(_json_loads(msg.data)["last_seq"])
                         ic(since, "websocket last_seq received")
                         payload["since"] = since
                         break
+                    if change_rows:
+                        buffer.extend(change_rows)
+                        buffer_last_seq = str(change_rows[-1].get("seq", since))
 
-                    # Filter out any last_seq-only sentinel dicts in an array
-                    change_rows = [r for r in rows if isinstance(r, dict) and "id" in r]
-                    if not change_rows:
+                    # Greedy drain: grab more messages already queued
+                    while len(buffer) < batch_max:
+                        try:
+                            msg = await asyncio.wait_for(
+                                ws.receive(), timeout=drain_timeout
+                            )
+                        except asyncio.TimeoutError:
+                            break  # nothing waiting — flush now
+
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            change_rows, is_last = _parse_ws_msg(msg)
+                            if is_last:
+                                if buffer:
+                                    await _flush_ws_buffer()
+                                since = str(_json_loads(msg.data)["last_seq"])
+                                ic(since, "websocket last_seq received")
+                                payload["since"] = since
+                                break
+                            if change_rows:
+                                buffer.extend(change_rows)
+                                buffer_last_seq = str(change_rows[-1].get("seq", since))
+                        elif msg.type in (
+                            aiohttp.WSMsgType.CLOSED,
+                            aiohttp.WSMsgType.CLOSING,
+                        ):
+                            break
+                        elif msg.type == aiohttp.WSMsgType.ERROR:
+                            break
+                    else:
+                        # Inner while finished normally (no break) — flush
+                        if buffer:
+                            since, output_failed = await _flush_ws_buffer()
+                            payload["since"] = since
+                            if output_failed:
+                                logger.warning(
+                                    "Output failed during WebSocket stream – reconnecting"
+                                )
+                                break
                         continue
 
-                    buffer.extend(change_rows)
-                    buffer_last_seq = str(change_rows[-1].get("seq", since))
-
-                    # Flush if buffer is full
-                    if len(buffer) >= batch_max:
+                    # Inner while broke out — flush and decide next step
+                    if buffer:
                         since, output_failed = await _flush_ws_buffer()
                         payload["since"] = since
                         if output_failed:

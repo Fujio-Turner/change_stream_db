@@ -14,7 +14,7 @@ import logging
 import uuid
 from aiohttp import web
 
-from cbl_store import CBLStore, USE_CBL
+from storage.cbl_store import CBLStore, USE_CBL
 
 logger = logging.getLogger("changes_worker")
 
@@ -345,7 +345,7 @@ async def api_post_jobs(request: web.Request) -> web.Response:
             return web.json_response({"error": "input_id is required"}, status=400)
         if not data.get("output_type"):
             return web.json_response({"error": "output_type is required"}, status=400)
-        if data["output_type"] not in ("rdbms", "http", "cloud", "stdout"):
+        if data["output_type"] not in ("rdbms", "http", "cloud"):
             return web.json_response(
                 {"error": f"Invalid output_type: {data['output_type']}"}, status=400
             )

@@ -39,8 +39,8 @@ This includes:
 | Stage | What it does |
 |---|---|
 | **LEFT** | Consume `_changes` on SG / App Services / Edge Server / CouchDB via longpoll, continuous (2-phase: batched catch-up → streaming), websocket (SG / App Services only), SSE (Edge Server only), or eventsource (CouchDB). Returns a batch of changes with `last_seq`. |
-| **MIDDLE** | Filter (skip deletes/removes), optionally fetch full docs via `_bulk_get`, serialize to the output format, manage checkpoints. |
-| **RIGHT** | Forward each doc to the output: configurable HTTP method (`PUT`/`POST`/`PATCH`/`DELETE`) to a REST endpoint with URL templating, write to stdout, write to an RDBMS via the `db/` module (UPSERT/DELETE with optional multi-table transactions), or upload to a cloud blob store via the `cloud/` module (S3, GCS, Azure Blob). Track success/failure per doc. Periodic heartbeat monitors endpoint health. |
+| **MIDDLE** | Filter (skip deletes/removes when `ignore_delete`/`ignore_remove` enabled), forward tombstones (`deleted=true`) as DELETE operations when not filtered, optionally fetch full docs via `_bulk_get`, serialize to the output format, manage checkpoints. |
+| **RIGHT** | Forward each doc to the output: configurable HTTP method (`PUT`/`POST`/`PATCH`/`DELETE`) to a REST endpoint with URL templating, write to an RDBMS via the `db/` module (UPSERT/DELETE with optional multi-table transactions), or upload to a cloud blob store via the `cloud/` module (S3, GCS, Azure Blob). Track success/failure per doc. Periodic heartbeat monitors endpoint health. |
 
 The admin UI dashboard mirrors this pipeline with a [charts-first grouped layout](ADMIN_UI.md#charts-row) showing live metrics for each stage.
 
@@ -582,7 +582,7 @@ changes_worker_process_memory_rss_bytes > 1024 * 1024 * 1024
 
 1. **Checkpoint safety:** The checkpoint only advances after a batch is fully processed. If the worker crashes or OOMs mid-batch, it restarts from `since=<last_saved_seq>` — no data is lost.
 2. **Throttle (`throttle_feed`):** Set this to a reasonable limit (e.g., 5000–10000) to cap each `_changes` request. The worker loops immediately for the next bite, so throughput stays high but memory per batch is bounded.
-3. **Continuous & WebSocket buffering:** Both modes buffer incoming changes (up to `get_batch_number` rows or `stream_batch_timeout_ms` timeout, default 100ms) before processing as a single batch. This reduces per-message overhead while keeping memory bounded. TCP backpressure still naturally slows the server during processing.
+3. **Continuous & WebSocket greedy-drain buffering:** Both modes use a greedy drain strategy — block on the first row, then drain everything already in the socket buffer (5ms drain timeout) before flushing as a batch. This self-tunes: high load → big batches, low load → instant single-doc processing. TCP backpressure still naturally slows the server during processing.
 4. **`every_n_docs` + `sequential`:** For longpoll mode, sub-batch checkpointing limits replay on crash (e.g., `every_n_docs: 1000` means at most 1000 docs replayed).
 
 **Recommended flood-safe configuration:**
@@ -593,7 +593,7 @@ changes_worker_process_memory_rss_bytes > 1024 * 1024 * 1024
     "feed_type": "continuous",        // or use longpoll + throttle_feed
     "throttle_feed": 5000,            // cap batch size (longpoll only)
     "continuous_catchup_limit": 5000, // cap catch-up batches
-    "stream_batch_timeout_ms": 100    // buffer window for continuous/websocket
+    "stream_batch_timeout_ms": 5       // greedy drain timeout (ms)
   },
   "processing": {
     "sequential": true,               // predictable memory usage
@@ -719,9 +719,13 @@ increase(changes_worker_backpressure_delays_total[5m]) > 10
                                     │                                 │
   _changes ──► filter ──► fetch ──► send ──► 2xx/OK ──► checkpoint ──►  │
     (LEFT)     (MIDDLE)   (MIDDLE)  (RIGHT)             (MIDDLE)    sleep│
+                 │                                                       │
+                 │  deleted=true? ──► DELETE method ──► RDBMS: DELETE rows│
+                 │                                     HTTP:  DELETE req  │
+                 │                                     Cloud: delete obj  │
                                     │ HTTP: PUT/POST/PATCH/DELETE to endpoint │
                                     │ DB:   UPSERT/DELETE via db/ module │
-                                    │ stdout: print to console           │
+                                    │ Cloud: upload to S3/GCS/Azure      │
                                     │                                 │
                                     ├─────────────────────────────────┤
                                     │     FAILURE + halt_on_failure    │

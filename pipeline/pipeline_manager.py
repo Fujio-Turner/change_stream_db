@@ -18,9 +18,9 @@ import time
 from typing import Dict, Optional, Any, List
 from collections import deque
 
-from pipeline import Pipeline
-from cbl_store import CBLStore
-from pipeline_logging import log_event
+from pipeline.pipeline import Pipeline
+from storage.cbl_store import CBLStore
+from pipeline.pipeline_logging import log_event
 
 
 class PipelineManager:

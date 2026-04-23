@@ -7,7 +7,7 @@ import time
 import logging
 import threading
 
-from pipeline_logging import log_event
+from pipeline.pipeline_logging import log_event
 
 try:
     from icecream import ic
@@ -36,7 +36,6 @@ COLL_INPUTS_CHANGES = "inputs_changes"
 COLL_OUTPUTS_RDBMS = "outputs_rdbms"
 COLL_OUTPUTS_HTTP = "outputs_http"
 COLL_OUTPUTS_CLOUD = "outputs_cloud"
-COLL_OUTPUTS_STDOUT = "outputs_stdout"
 COLL_JOBS = "jobs"
 COLL_TABLES_RDBMS = "tables_rdbms"
 
@@ -511,7 +510,6 @@ class CBLStore:
                 COLL_OUTPUTS_RDBMS,
                 COLL_OUTPUTS_HTTP,
                 COLL_OUTPUTS_CLOUD,
-                COLL_OUTPUTS_STDOUT,
                 COLL_JOBS,
                 COLL_CHECKPOINTS,
                 COLL_DLQ,
@@ -799,9 +797,8 @@ class CBLStore:
         props = doc.properties
         result = {
             "client_id": props.get("client_id", ""),
-            "SGs_Seq": props.get("SGs_Seq", "0"),
             "time": props.get("time", 0),
-            "remote": props.get("remote", 0),
+            "remote": str(props.get("remote", props.get("SGs_Seq", "0"))),
         }
         log_event(
             logger,
@@ -811,12 +808,12 @@ class CBLStore:
             operation="SELECT",
             doc_id=doc_id,
             doc_type="checkpoint",
-            seq=result["SGs_Seq"],
+            seq=result["remote"],
             duration_ms=round(elapsed, 1),
         )
         return result
 
-    def save_checkpoint(self, uuid: str, seq: str, client_id: str, remote: int) -> None:
+    def save_checkpoint(self, uuid: str, seq: str, client_id: str) -> None:
         doc_id = f"checkpoint:{uuid}"
         ic("save_checkpoint: entry", uuid, seq)
         t0 = time.monotonic()
@@ -824,11 +821,9 @@ class CBLStore:
         is_new = doc is None
         if not doc:
             doc = MutableDocument(doc_id)
-        doc["type"] = "checkpoint"
         doc["client_id"] = client_id
-        doc["SGs_Seq"] = seq
         doc["time"] = int(time.time())
-        doc["remote"] = remote
+        doc["remote"] = seq
         _coll_save_doc(self.db, COLL_CHECKPOINTS, doc)
         elapsed = (time.monotonic() - t0) * 1000
         log_event(
@@ -1911,12 +1906,11 @@ class CBLStore:
         )
 
     def load_outputs(self, output_type: str) -> dict | None:
-        """Load output definitions for a given type (rdbms/http/cloud/stdout)."""
+        """Load output definitions for a given type (rdbms/http/cloud)."""
         coll_map = {
             "rdbms": COLL_OUTPUTS_RDBMS,
             "http": COLL_OUTPUTS_HTTP,
             "cloud": COLL_OUTPUTS_CLOUD,
-            "stdout": COLL_OUTPUTS_STDOUT,
         }
         if output_type not in coll_map:
             raise ValueError(f"Invalid output_type: {output_type}")
@@ -1957,12 +1951,11 @@ class CBLStore:
         return result
 
     def save_outputs(self, output_type: str, data: dict) -> None:
-        """Save output definitions for a given type (rdbms/http/cloud/stdout)."""
+        """Save output definitions for a given type (rdbms/http/cloud)."""
         coll_map = {
             "rdbms": COLL_OUTPUTS_RDBMS,
             "http": COLL_OUTPUTS_HTTP,
             "cloud": COLL_OUTPUTS_CLOUD,
-            "stdout": COLL_OUTPUTS_STDOUT,
         }
         if output_type not in coll_map:
             raise ValueError(f"Invalid output_type: {output_type}")
@@ -2903,14 +2896,8 @@ class CBLStore:
                     **output_cfg.get("s3", {}),
                 }
             elif mode == "stdout":
-                output_type = "stdout"
-                output_entry = {
-                    "id": "output_stdout",
-                    "name": "Migrated stdout output",
-                    "enabled": True,
-                    "output_format": output_cfg.get("output_format", "json"),
-                    "pretty_print": False,
-                }
+                # stdout output removed — skip migration (stdout is no longer supported)
+                logger.info("Skipping stdout output migration — stdout mode removed")
 
             if output_type and output_entry:
                 outputs_doc = {
@@ -2939,7 +2926,9 @@ class CBLStore:
             try:
                 cp_file_data = json.loads(cp_path.read_text())
                 checkpoint_data = {
-                    "last_seq": cp_file_data.get("SGs_Seq", "0"),
+                    "last_seq": str(
+                        cp_file_data.get("remote", cp_file_data.get("SGs_Seq", "0"))
+                    ),
                     "remote_counter": cp_file_data.get("remote_counter", 0),
                 }
             except Exception as e:
@@ -2982,7 +2971,7 @@ class CBLStore:
             "enabled": True,
             "inputs": [inputs_changes_doc["src"][0]] if inputs_changes_doc else [],
             "outputs": [output_entry] if output_entry else [],
-            "output_type": output_type or "stdout",
+            "output_type": output_type or "http",
             "system": {
                 "threads": config.get("threads", 4),
                 "processing": config.get("processing", {}),
@@ -3111,6 +3100,7 @@ class CBLMaintenanceScheduler:
                     "CBL",
                     "scheduled maintenance starting",
                     operation="MAINTENANCE",
+                    trigger="scheduled",
                     db_size_mb=info["db_size_mb"],
                 )
                 results = store.run_all_maintenance()
@@ -3121,6 +3111,7 @@ class CBLMaintenanceScheduler:
                     "CBL",
                     "scheduled maintenance complete: %s" % results,
                     operation="MAINTENANCE",
+                    trigger="scheduled",
                 )
             except Exception as exc:
                 log_event(
@@ -3129,6 +3120,7 @@ class CBLMaintenanceScheduler:
                     "CBL",
                     "scheduled maintenance error: %s" % exc,
                     operation="MAINTENANCE",
+                    trigger="scheduled",
                     error_detail=str(exc)[:200],
                 )
 
@@ -3331,7 +3323,7 @@ def migrate_files_to_cbl(config_path: str = "config.json") -> None:
             "checkpoint.json available for migration",
             operation="SELECT",
             doc_type="checkpoint",
-            seq=data.get("SGs_Seq", "0"),
+            seq=str(data.get("remote", data.get("SGs_Seq", "0"))),
         )
 
     ic("migrate_files_to_cbl: done", len(disk_names), added, updated, removed)

@@ -407,7 +407,7 @@ The `PostgresOutputForwarder` reads connection fields from the resolved engine c
 | `sync_commit` | `false` | **Advanced.** When `false` (default), sets `synchronous_commit = OFF` on each connection — Postgres does not wait for WAL flush after commit. **2-5x throughput improvement** for high-volume writes. The pipeline's checkpoint-based recovery makes this safe: on a Postgres crash, the last ~10ms of commits may be lost, but the worker resumes from its checkpoint and re-processes them. Set to `true` for full ACID durability. |
 | `prepared_statements` | `true` | **Advanced.** When `true` (default), asyncpg caches prepared statements per connection (`statement_cache_size=100`). Since the same mapping always produces the same SQL shape, this eliminates repeated parse+plan overhead. **10-30% throughput improvement.** Set to `false` to disable (e.g., if using PgBouncer in transaction mode, which doesn't support prepared statements). |
 
-> **Important:** The `mode` field must be present in the output config entry (e.g., `"postgres"`, `"mysql"`). Without it, the pipeline defaults to stdout output.
+> **Important:** The `mode` field must be present in the output config entry (e.g., `"postgres"`, `"mysql"`). This field is required for the pipeline to select the correct output forwarder.
 
 ### Engine Equivalents for `sync_commit`
 
@@ -578,7 +578,14 @@ mappings/
 
 ## Delete Handling
 
-When the `_changes` feed reports `deleted=true`:
+When the `_changes` feed reports `deleted=true` (a tombstone), the
+document is forwarded to the output as a DELETE operation.  The
+`deletes_forwarded_total` metric tracks how many tombstones reached
+the RDBMS output.  If `ignore_delete=true` in the processing config,
+tombstones are filtered out before reaching the output and counted in
+`changes_deleted_total` instead.
+
+When a tombstone reaches the RDBMS output:
 
 ### Single-Table
 

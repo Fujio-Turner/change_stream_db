@@ -115,6 +115,10 @@
   <div class="sidebar-main">
   <main class="w-full mx-auto p-6 space-y-6">
 
+    <!-- Persistent Config Warning Banner -->
+    <div id="configWarningBanner" class="hidden">
+    </div>
+
     <!-- Status Bar -->
     <div class="card bg-base-100 shadow">
       <div class="card-body py-3 px-6">
@@ -198,7 +202,7 @@
               <div class="arch-node arch-node-work" id="archWork" onclick="showArchDetail('work')">
                 <div class="arch-title">changes_worker</div>
                 <div class="arch-sub">checkpoint · retry · mapping</div>
-                <div class="arch-stat" id="archWorkStat">Processed: -- | Filtered: --</div>
+                <div class="arch-stat" id="archWorkStat">Processed: -- | Filtered: --<br>Skipped: -- | Deletes: -- | DLQ: --</div>
                 <div class="arch-tip" id="archTipWork">Loading…</div>
               </div>
               <div class="arch-node arch-node-dlq" id="archDlq" onclick="showArchDetail('dlq')">
@@ -237,20 +241,15 @@
                 <div class="arch-stat" id="archOutS3Stat">--</div>
                 <div class="arch-tip arch-tip-right" id="archTipS3">Loading…</div>
               </div>
-              <div class="arch-node arch-node-std" id="archOutStd" data-mode="stdout" onclick="showArchDetail('stdout')">
-                <div class="arch-title">stdout</div>
-                <div class="arch-sub">JSON / XML / msgpack</div>
-                <div class="arch-stat" id="archOutStdStat">--</div>
-                <div class="arch-tip arch-tip-right" id="archTipStd">Loading…</div>
-              </div>
+
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Traffic + Activity Timeline -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- Traffic + Pipeline Activity + Pipeline Ratios -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <!-- Network Traffic (Source ↑ / Output ↓) -->
       <div class="card bg-base-100 shadow rounded-2xl">
         <div class="card-body p-4">
@@ -275,31 +274,55 @@
           <div id="chartTraffic" style="width:100%;height:240px"></div>
         </div>
       </div>
-      <!-- Activity Timeline (bottleneck detector) -->
+      <!-- Pipeline Activity (Source, Output, Pending, Deletes) -->
       <div class="card bg-base-100 shadow rounded-2xl">
         <div class="card-body p-4">
           <div class="flex items-center justify-between mb-1">
             <div class="flex items-center gap-2">
-              <h3 class="text-sm font-semibold opacity-70">Activity Timeline</h3>
+              <h3 class="text-sm font-semibold opacity-70">Pipeline Activity</h3>
               <div class="dropdown dropdown-hover dropdown-right" style="z-index:9999;">
                 <label tabindex="0">
                   <svg class="opacity-40 cursor-help" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
                 </label>
                 <div tabindex="0" class="dropdown-content bg-base-100 rounded-xl shadow-lg p-4 w-72 text-xs leading-relaxed border border-base-content/10">
                   <p class="font-bold mb-2">How to read this chart</p>
-                  <p class="mb-1"><span style="color:#7c3aed;">--</span> <strong>Pending</strong> = docs received minus docs output. Your backlog.</p>
-                  <p class="mb-1"><span style="color:#f87272;">- -</span> <strong>In/Out</strong> = received / output ratio. 1.0x = balanced, &gt;1x = backlog growing.</p>
-                  <hr class="my-2 border-base-content/10"/>
-                  <p class="mb-1"><strong>Pending flat at 0</strong> -- healthy, every doc processed</p>
-                  <p class="mb-1"><strong>Pending rising + In/Out &gt; 1x</strong> -- input outpacing output</p>
-                  <p class="mb-1"><strong>In/Out &lt; 1x</strong> -- catching up on backlog</p>
-                  <p><strong>In/Out = 1x + Pending flat</strong> -- steady state</p>
+                  <p class="mb-1"><span style="color:#36d399;">—</span> <strong>Source</strong> = docs/s received from the changes feed.</p>
+                  <p class="mb-1"><span style="color:#3abff8;">—</span> <strong>Output</strong> = docs/s successfully sent to destination.</p>
+                  <p class="mb-1"><span style="color:#7c3aed;">—</span> <strong>Pending</strong> = docs received minus docs output. Your backlog.</p>
+                  <p class="mb-1"><span style="color:#ef4444;">—</span> <strong>Deletes</strong> = tombstones/s forwarded to output.</p>
+                  <p class="mb-1"><span style="color:#3b82f6;">—</span> <strong>Skipped</strong> = docs/s skipped at output.</p>
+                  <p class="mb-1"><span style="color:#f59e0b;">—</span> <strong>Filtered</strong> = docs/s filtered before output.</p>
+                  <p class="mb-1"><span style="color:#000000;">—</span> <strong>DLQ</strong> = docs/s sent to Dead Letter Queue.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="chartActivity" style="width:100%;height:240px"></div>
+        </div>
+      </div>
+      <!-- Pipeline Ratios (Fail %, Thru %, Skipped %, Del Succ %, Del Fail %) -->
+      <div class="card bg-base-100 shadow rounded-2xl">
+        <div class="card-body p-4">
+          <div class="flex items-center justify-between mb-1">
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-semibold opacity-70">Pipeline Ratios</h3>
+              <div class="dropdown dropdown-hover dropdown-right" style="z-index:9999;">
+                <label tabindex="0">
+                  <svg class="opacity-40 cursor-help" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+                </label>
+                <div tabindex="0" class="dropdown-content bg-base-100 rounded-xl shadow-lg p-4 w-72 text-xs leading-relaxed border border-base-content/10">
+                  <p class="font-bold mb-2">How to read this chart</p>
+                  <p class="mb-1"><span style="color:#f87272;">- -</span> <strong>Fail %</strong> = output errors / total received.</p>
+                  <p class="mb-1"><span style="color:#36d399;">- -</span> <strong>Thru %</strong> = output success / total received.</p>
+                  <p class="mb-1"><span style="color:#3b82f6;">···</span> <strong>Skipped %</strong> = skipped / total received.</p>
+                  <p class="mb-1"><span style="color:#ef4444;">···</span> <strong>Del Succ %</strong> = successful delete outputs / total received.</p>
+                  <p class="mb-1"><span style="color:#b91c1c;">···</span> <strong>Del Fail %</strong> = failed delete outputs / total received.</p>
                 </div>
               </div>
             </div>
             <button class="btn btn-xs btn-outline font-mono" id="btnScaleToggle" onclick="toggleYScale()">Y: Linear</button>
           </div>
-          <div id="chartActivity" style="width:100%;height:240px"></div>
+          <div id="chartRatios" style="width:100%;height:240px"></div>
         </div>
       </div>
     </div>
@@ -554,9 +577,13 @@ var chartHistory = {
   failRate: [],
   throughputRate: [],
   skippedRate: [],
+  deletesForwarded: [],
   // Network Traffic (bytes/s)
   bytesIn: [],
-  bytesOut: []
+  bytesOut: [],
+  // Pipeline Ratios
+  deletedRate: [],
+  deleteFailRate: []
 };
 // Track previous totals so we can compute deltas
 var prev = {};
@@ -578,7 +605,8 @@ function pushHistory(m) {
     ['outSuccess',      'changes_worker_output_success_total'],
     ['outErrors',       'changes_worker_output_errors_total'],
     ['outSkipped',      'changes_worker_output_skipped_total'],
-    ['deadLetters',     'changes_worker_dead_letter_total']
+    ['deadLetters',     'changes_worker_dead_letter_total'],
+    ['deletesForwarded','changes_worker_deletes_forwarded_total']
   ];
   for (var i = 0; i < keys.length; i++) {
     var hk = keys[i][0], mk = keys[i][1];
@@ -637,22 +665,43 @@ function pushHistory(m) {
   var pending = Math.max(0, totalReceived - totalOutOk - totalOutErr - totalSkipped);
   chartHistory.pending.push(pending);
   if (chartHistory.pending.length > MAX_POINTS) chartHistory.pending.shift();
-  var totalOut = totalOutOk + totalOutErr;
-  var failPct = totalOut > 0 ? parseFloat(((totalOutErr / totalOut) * 100).toFixed(2)) : 0;
+  var deltaReceived = (prev['_received'] != null) ? Math.max(0, totalReceived - prev['_received']) : 0;
+  var deltaOutOk = (prev['_outOk'] != null) ? Math.max(0, totalOutOk - prev['_outOk']) : 0;
+  var deltaOutErr = (prev['_outErr'] != null) ? Math.max(0, totalOutErr - prev['_outErr']) : 0;
+  var deltaSkipped = (prev['_skipped'] != null) ? Math.max(0, totalSkipped - prev['_skipped']) : 0;
+  prev['_received'] = totalReceived;
+  prev['_outOk'] = totalOutOk;
+  prev['_outErr'] = totalOutErr;
+  prev['_skipped'] = totalSkipped;
+  var failPct = deltaReceived > 0 ? parseFloat(((deltaOutErr / deltaReceived) * 100).toFixed(2)) : 0;
   chartHistory.failRate.push(failPct);
   if (chartHistory.failRate.length > MAX_POINTS) chartHistory.failRate.shift();
-  var totalAttempted = totalOutOk + totalOutErr;
-  var thruPct = totalAttempted > 0 ? parseFloat(((totalOutOk / totalAttempted) * 100).toFixed(2)) : 0;
+  var thruPct = deltaReceived > 0 ? parseFloat(((deltaOutOk / deltaReceived) * 100).toFixed(2)) : 0;
   chartHistory.throughputRate.push(thruPct);
   if (chartHistory.throughputRate.length > MAX_POINTS) chartHistory.throughputRate.shift();
-  var skippedPct = totalReceived > 0 ? parseFloat(((totalSkipped / totalReceived) * 100).toFixed(2)) : 0;
+  var skippedPct = deltaReceived > 0 ? parseFloat(((deltaSkipped / deltaReceived) * 100).toFixed(2)) : 0;
   chartHistory.skippedRate.push(skippedPct);
   if (chartHistory.skippedRate.length > MAX_POINTS) chartHistory.skippedRate.shift();
+  var curDelFwd = m['changes_worker_deletes_forwarded_total'] || 0;
+  var curDelSeen = m['changes_worker_feed_deletes_seen_total'] || 0;
+  var deltaDelFwd = (prev['_delFwd'] != null) ? Math.max(0, curDelFwd - prev['_delFwd']) : 0;
+  var deltaDelSeen = (prev['_delSeen'] != null) ? Math.max(0, curDelSeen - prev['_delSeen']) : 0;
+  prev['_delFwd'] = curDelFwd;
+  prev['_delSeen'] = curDelSeen;
+  var deletedPct = deltaDelSeen > 0 ? parseFloat(((deltaDelFwd / deltaDelSeen) * 100).toFixed(2)) : 0;
+  chartHistory.deletedRate.push(deletedPct);
+  if (chartHistory.deletedRate.length > MAX_POINTS) chartHistory.deletedRate.shift();
+  var curDelErr = getLabeled(m, 'changes_worker_output_errors_by_method_total', 'method="DELETE"');
+  var deltaDelErr = (prev['_delErr'] != null) ? Math.max(0, curDelErr - prev['_delErr']) : 0;
+  prev['_delErr'] = curDelErr;
+  var delFailPct = deltaDelSeen > 0 ? parseFloat(((deltaDelErr / deltaDelSeen) * 100).toFixed(2)) : 0;
+  chartHistory.deleteFailRate.push(delFailPct);
+  if (chartHistory.deleteFailRate.length > MAX_POINTS) chartHistory.deleteFailRate.shift();
 }
 
 // ── ECharts ──────────────────────────────────────────────────
 var yAxisLog = false;
-var cFeed, cProcess, cOutput, cFeedAvg, cProcessAvg, cOutputAvg, cActivity, cTraffic;
+var cFeed, cProcess, cOutput, cFeedAvg, cProcessAvg, cOutputAvg, cActivity, cTraffic, cRatios;
 
 function chartColors() {
   var dark = document.documentElement.getAttribute('data-theme') === 'dark';
@@ -669,6 +718,7 @@ function makeChart(el) {
 
 function rebuildCharts() {
   if (cActivity) cActivity.dispose();
+  if (cRatios) cRatios.dispose();
   if (cTraffic) cTraffic.dispose();
   if (cFeed) cFeed.dispose();
   if (cProcess) cProcess.dispose();
@@ -677,6 +727,7 @@ function rebuildCharts() {
   if (cProcessAvg) cProcessAvg.dispose();
   if (cOutputAvg) cOutputAvg.dispose();
   cActivity   = makeChart(document.getElementById('chartActivity'));
+  cRatios     = makeChart(document.getElementById('chartRatios'));
   cTraffic    = makeChart(document.getElementById('chartTraffic'));
   cFeed       = makeChart(document.getElementById('chartFeed'));
   cProcess    = makeChart(document.getElementById('chartProcess'));
@@ -688,7 +739,7 @@ function rebuildCharts() {
   drawArchArrows();
 
   // Sync crosshair across all charts
-  echarts.connect([cTraffic, cActivity, cFeed, cProcess, cOutput, cFeedAvg, cProcessAvg, cOutputAvg]);
+  echarts.connect([cTraffic, cActivity, cRatios, cFeed, cProcess, cOutput, cFeedAvg, cProcessAvg, cOutputAvg]);
 }
 
 function toggleYScale() {
@@ -761,7 +812,7 @@ function lineOptMs(title, series) {
 var archPrev = {};
 var archPrevTs = 0;
 var archRates = { feed: 0, out: 0 };
-var archNodeColors = { http: '#4caf50', db: '#2196f3', s3: '#ff9800', stdout: '#f4511e', attach: '#e91e63' };
+var archNodeColors = { http: '#4caf50', db: '#2196f3', s3: '#ff9800', attach: '#e91e63' };
 var lastArchM = null; // stash for modal
 
 // Arrow color logic: green=healthy, yellow=slow/warning, red=active but erroring, grey=inactive
@@ -787,8 +838,7 @@ function drawArchArrows() {
   var outs = [
     document.getElementById('archOutHttp'),
     document.getElementById('archOutDb'),
-    document.getElementById('archOutS3'),
-    document.getElementById('archOutStd')
+    document.getElementById('archOutS3')
   ];
   var dlqEl = document.getElementById('archDlq');
   var m = lastArchM || {};
@@ -847,7 +897,7 @@ function drawArchArrows() {
   var sx = rx(src), sy = cy(src), wx = lx(work), wy = cy(work);
   var fk = colorKey(feedColor);
   html += '<path d="'+hBezier(sx,sy,wx,wy)+'" fill="none" stroke="'+feedColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+fk+')" filter="url(#glow_'+fk+')"/>';
-  html += rateBadge((sx+wx)/2, (sy+wy)/2, archRates.feed, feedColor);
+  html += rateBadge((sx+wx)/2, (sy+wy)/2, archRates.feed, feedColor, archRates.feedBytes);
 
   // ─── Worker → Attachments → Outputs (if attachments enabled) ───
   var attachEl = document.getElementById('archAttach');
@@ -877,7 +927,7 @@ function drawArchArrows() {
       if (active) {
         var ok = colorKey(activeOutColor);
         html += '<path d="'+hBezier(aRx,aCy,ox,oy)+'" fill="none" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')" filter="url(#glow_'+ok+')"/>';
-        html += rateBadge((aRx+ox)/2, (aCy+oy)/2, archRates.out, activeOutColor);
+        html += rateBadge((aRx+ox)/2, (aCy+oy)/2, archRates.out, activeOutColor, archRates.outBytes);
       } else {
         html += '<path d="'+hBezier(aRx,aCy,ox,oy)+'" fill="none" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
       }
@@ -893,7 +943,7 @@ function drawArchArrows() {
       if (active) {
         var ok = colorKey(activeOutColor);
         html += '<path d="'+hBezier(wxR,wyC,ox,oy)+'" fill="none" stroke="'+activeOutColor+'" stroke-width="2.5" stroke-opacity="0.7" marker-end="url(#ah_'+ok+')" filter="url(#glow_'+ok+')"/>';
-        html += rateBadge((wxR+ox)/2, (wyC+oy)/2, archRates.out, activeOutColor);
+        html += rateBadge((wxR+ox)/2, (wyC+oy)/2, archRates.out, activeOutColor, archRates.outBytes);
       } else {
         html += '<path d="'+hBezier(wxR,wyC,ox,oy)+'" fill="none" stroke="'+ARROW_GREY+'" stroke-width="1" stroke-opacity="0.12" marker-end="url(#ah_grey)"/>';
       }
@@ -917,16 +967,34 @@ function drawArchArrows() {
 }
 
 function fmtRate(r) {
-  if (r <= 0) return '0/s';
-  if (r >= 1e6) return (r / 1e6).toFixed(2) + 'M/s';
-  if (r >= 1e3) return (r / 1e3).toFixed(2) + 'K/s';
-  if (r >= 1)   return r.toFixed(1) + '/s';
-  return r.toFixed(1) + '/s';
+  if (r <= 0) return '0/ops';
+  if (r >= 1e6) return (r / 1e6).toFixed(2) + 'M/ops';
+  if (r >= 1e3) return (r / 1e3).toFixed(2) + 'K/ops';
+  if (r >= 1)   return r.toFixed(1) + '/ops';
+  return r.toFixed(1) + '/ops';
 }
 
-function rateBadge(x, y, rate, color) {
+function fmtByteRate(b) {
+  if (b <= 0) return '0/MBs';
+  var mb = b / (1024 * 1024);
+  if (mb >= 1000) return (mb / 1000).toFixed(2) + '/GBs';
+  if (mb >= 1) return mb.toFixed(1) + '/MBs';
+  return (b / 1024).toFixed(1) + '/KBs';
+}
+
+function rateBadge(x, y, rate, color, byteRate) {
   var label = fmtRate(rate);
-  var w = Math.max(64, label.length * 9.5 + 22);
+  var bLabel = (byteRate != null) ? fmtByteRate(byteRate) : null;
+  var topLabel = bLabel || label;
+  var maxLen = bLabel ? Math.max(label.length, bLabel.length) : label.length;
+  var w = Math.max(64, maxLen * 9.5 + 22);
+  if (bLabel) {
+    var h = 42;
+    return '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="14" fill="#1e1e2e" opacity="0.88"/>'
+         + '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="14" fill="none" stroke="'+color+'" stroke-width="1.5" opacity="0.5"/>'
+         + '<text x="'+x+'" y="'+(y-3)+'" text-anchor="middle" font-size="12" font-weight="700" font-family="monospace" fill="#e2e8f0">'+label+'</text>'
+         + '<text x="'+x+'" y="'+(y+13)+'" text-anchor="middle" font-size="12" font-weight="700" font-family="monospace" fill="#e2e8f0">'+bLabel+'</text>';
+  }
   var h = 28;
   return '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="14" fill="#1e1e2e" opacity="0.88"/>'
        + '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="14" fill="none" stroke="'+color+'" stroke-width="1.5" opacity="0.5"/>'
@@ -959,15 +1027,20 @@ function updateArchData(m) {
   if (dt > 0 && archPrev._received != null) {
     archRates.feed = Math.max(0, received - archPrev._received) / dt;
     archRates.out  = Math.max(0, outOk - archPrev._outOk) / dt;
+    archRates.feedBytes = Math.max(0, bytesIn - (archPrev._bytesIn || 0)) / dt;
+    archRates.outBytes  = Math.max(0, bytesOut - (archPrev._bytesOut || 0)) / dt;
   }
   archPrev._received = received;
   archPrev._outOk    = outOk;
+  archPrev._bytesIn  = bytesIn;
+  archPrev._bytesOut = bytesOut;
 
   // Node stat labels
   var attachEnabled = cachedCfg && cachedCfg.attachments && cachedCfg.attachments.enabled;
   setText('archSrcStat', 'Received: ' + fmt(received) + ' · ' + fmtBytes(bytesIn));
   var modeLabel = attachEnabled ? '📎 ' : '';
-  setText('archWorkStat', modeLabel + 'Processed: ' + fmt(processed) + ' | Filtered: ' + fmt(filtered) + ' | DLQ: ' + fmt(dlq));
+  var delFwd    = m ? (m['changes_worker_deletes_forwarded_total'] || 0) : 0;
+  document.getElementById('archWorkStat').innerHTML = modeLabel + 'Processed: ' + fmt(processed) + ' | Filtered: ' + fmt(filtered) + '<br>Skipped: ' + fmt(outSkip) + ' | Deletes: ' + fmt(delFwd) + ' | DLQ: ' + fmt(dlq);
 
   // Output nodes — active vs dimmed
   var outEls = document.querySelectorAll('[data-mode]');
@@ -981,7 +1054,6 @@ function updateArchData(m) {
   setText('archOutHttpStat', outMode === 'http' ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
   setText('archOutDbStat',   outMode === 'db'   ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
   setText('archOutS3Stat',   outMode === 's3'   ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
-  setText('archOutStdStat',  outMode === 'stdout' ? fmt(outOk) + ' ok · ' + fmt(outErr) + ' err' : '--');
 
   // Attachment node
   var attDetected = m ? (m['changes_worker_attachments_detected_total'] || 0) : 0;
@@ -1030,7 +1102,6 @@ function updateArchData(m) {
   document.getElementById('archTipHttp').innerHTML = outMode === 'http' ? outTip : 'Not active';
   document.getElementById('archTipDb').innerHTML   = outMode === 'db'   ? outTip : 'Not active';
   document.getElementById('archTipS3').innerHTML   = outMode === 's3'   ? outTip : 'Not active';
-  document.getElementById('archTipStd').innerHTML  = outMode === 'stdout' ? outTip : 'Not active';
   document.getElementById('archTipDlq').innerHTML =
     'Dead Letters: <b>' + fmt(dlq) + '</b><br>' +
     'Last Insert: <b>' + fmtEpoch(cachedDlqMeta.last_inserted_at) + '</b><br>' +
@@ -1076,6 +1147,7 @@ function showArchDetail(which) {
   var chkSaves  = m['changes_worker_checkpoint_saves_total'] || 0;
   var feedDel   = m['changes_worker_feed_deletes_seen_total'] || 0;
   var feedRem   = m['changes_worker_feed_removes_seen_total'] || 0;
+  var delFwd2   = m['changes_worker_deletes_forwarded_total'] || 0;
 
   if (which === 'src') {
     title = 'Sync Gateway — Changes Feed';
@@ -1135,21 +1207,24 @@ function showArchDetail(which) {
     rows = [
       ['Docs Processed', fmt(processed)],
       ['Docs Filtered', fmt(filtered)],
+      ['Docs Skipped', fmt(outSkip)],
+      ['Deletes Forwarded', fmt(delFwd2)],
       ['Dead Letters', fmt(dlq)],
       ['Checkpoint Saves', fmt(chkSaves)],
       ['Retries', fmt(retries)],
       ['Uptime', fmtUptime(uptime)]
     ];
-    // Chart 1: bar — processed vs filtered vs DLQ
-    chart1Opt = barOpt('Document Fate', ['Processed','Filtered','Dead Letter'], [
-      { name: 'Count', type: 'bar', data: [processed, filtered, dlq],
-        itemStyle: { color: function(p) { return ['#6c56a4','#fbbd23','#f87272'][p.dataIndex]; } },
+    // Chart 1: bar — processed vs filtered vs skipped vs DLQ
+    chart1Opt = barOpt('Document Fate', ['Processed','Filtered','Skipped','Deletes','Dead Letter'], [
+      { name: 'Count', type: 'bar', data: [processed, filtered, outSkip, delFwd2, dlq],
+        itemStyle: { color: function(p) { return ['#6c56a4','#fbbd23','#a3a3a3','#ef4444','#f87272'][p.dataIndex]; } },
         barWidth: '50%', label: { show: true, position: 'top', color: c.text, fontSize: 10 } }
     ]);
     // Chart 2: line — processing history
     chart2Opt = lineOpt('Processing Over Time', [
       lineSeries('Processed', chartHistory.processed, '#6c56a4'),
-      lineSeries('Filtered', chartHistory.filtered, c.yellow)
+      lineSeries('Filtered', chartHistory.filtered, c.yellow),
+      lineSeries('Skipped', chartHistory.outSkipped, '#a3a3a3')
     ]);
   } else if (which === 'attach') {
     title = 'Attachments — Processing';
@@ -1200,7 +1275,7 @@ function showArchDetail(which) {
   } else {
     // Output nodes
     var outMode = (cachedCfg && cachedCfg.output) ? cachedCfg.output.mode : '';
-    var names = { http: 'HTTP Endpoint', db: 'RDBMS', s3: 'AWS S3', stdout: 'stdout' };
+    var names = { http: 'HTTP Endpoint', db: 'RDBMS', s3: 'AWS S3' };
     title = (names[which] || which) + ' — Output';
     color = archNodeColors[which] || '#475569';
     var isActive = which === outMode;
@@ -1287,7 +1362,7 @@ function barOpt(title, cats, series) {
 
 function renderCharts() {
   var c = chartColors();
-  // Activity Timeline
+  // Pipeline Activity (Source, Output, Pending, Deletes – absolute counts)
   var yType = yAxisLog ? 'log' : 'value';
   if (cActivity) {
     cActivity.setOption({
@@ -1300,9 +1375,7 @@ function renderCharts() {
           for (var i = 0; i < params.length; i++) {
             var p = params[i];
             tip += '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + p.color + ';margin-right:4px"></span>';
-            if (p.seriesName === 'Fail %' || p.seriesName === 'Thru %' || p.seriesName === 'Skipped %') {
-              tip += p.seriesName + ': <b>' + (p.value != null ? p.value.toFixed(2) + '%' : '--') + '</b><br/>';
-            } else if (p.seriesName === 'Pending') {
+            if (p.seriesName === 'Pending') {
               tip += p.seriesName + ': <b>' + fmt(p.value) + '</b><br/>';
             } else {
               tip += p.seriesName + ': <b>' + fmt(p.value) + '/s</b><br/>';
@@ -1312,22 +1385,53 @@ function renderCharts() {
         }
       },
       legend: { top: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
-      grid: { top: 30, left: 50, right: 55, bottom: 30 },
+      grid: { top: 30, left: 40, right: 12, bottom: 30 },
       xAxis: {
         type: 'category', data: chartHistory.labels, boundaryGap: false,
         axisLabel: { show: false }, axisLine: { lineStyle: { color: c.split } }, axisTick: { show: false }
       },
-      yAxis: [
-        { type: yType, minInterval: yAxisLog ? null : 1, min: yAxisLog ? 1 : null, axisLine: { show: false }, axisLabel: { fontSize: 9, color: c.text }, splitLine: { lineStyle: { color: c.split } } },
-        { type: 'value', position: 'right', min: 0, max: 100, axisLabel: { fontSize: 9, color: '#f87272', formatter: '{value}%' }, axisLine: { lineStyle: { color: '#f87272' } }, splitLine: { show: false } }
-      ],
+      yAxis: { type: yType, minInterval: yAxisLog ? null : 1, min: yAxisLog ? 1 : null, axisLine: { show: false }, axisLabel: { fontSize: 9, color: c.text }, splitLine: { lineStyle: { color: c.split } } },
       series: [
         { name: 'Source', type: 'line', smooth: true, symbol: 'none', data: chartHistory.changesReceived, lineStyle: { width: 1.5, color: c.green }, itemStyle: { color: c.green }, areaStyle: { opacity: 0.06 } },
         { name: 'Output', type: 'line', smooth: true, symbol: 'none', data: chartHistory.outSuccess, lineStyle: { width: 1.5, color: '#3abff8' }, itemStyle: { color: '#3abff8' } },
         { name: 'Pending', type: 'line', smooth: true, symbol: 'none', data: chartHistory.pending, lineStyle: { width: 2, color: '#7c3aed' }, itemStyle: { color: '#7c3aed' }, areaStyle: { opacity: 0.08, color: '#7c3aed' } },
-        { name: 'Fail %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.failRate, lineStyle: { width: 2, color: '#f87272', type: 'dashed' }, itemStyle: { color: '#f87272' }, yAxisIndex: 1 },
-        { name: 'Thru %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.throughputRate, lineStyle: { width: 2, color: '#36d399', type: 'dashed' }, itemStyle: { color: '#36d399' }, yAxisIndex: 1 },
-        { name: 'Skipped %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.skippedRate, lineStyle: { width: 2, color: '#3b82f6', type: 'dotted' }, itemStyle: { color: '#3b82f6' }, yAxisIndex: 1 }
+        { name: 'Deletes', type: 'line', smooth: true, symbol: 'none', data: chartHistory.deletesForwarded, lineStyle: { width: 2, color: '#ef4444' }, itemStyle: { color: '#ef4444' } },
+        { name: 'Skipped', type: 'line', smooth: true, symbol: 'none', data: chartHistory.outSkipped, lineStyle: { width: 1.5, color: '#3b82f6' }, itemStyle: { color: '#3b82f6' } },
+        { name: 'Filtered', type: 'line', smooth: true, symbol: 'none', data: chartHistory.filtered, lineStyle: { width: 1.5, color: '#f59e0b' }, itemStyle: { color: '#f59e0b' } },
+        { name: 'DLQ', type: 'line', smooth: true, symbol: 'none', data: chartHistory.deadLetters, lineStyle: { width: 1.5, color: '#000000' }, itemStyle: { color: '#000000' } }
+      ]
+    }, false);
+  }
+  // Pipeline Ratios (Fail %, Thru %, Skipped %, Del Succ %, Del Fail % – percentage only)
+  if (cRatios) {
+    cRatios.setOption({
+      backgroundColor: 'transparent',
+      textStyle: { color: c.text, fontSize: 10 },
+      tooltip: { trigger: 'axis', textStyle: { fontSize: 11 },
+        axisPointer: { type: 'cross', crossStyle: { color: '#666' }, lineStyle: { color: '#666' } },
+        formatter: function(params) {
+          var tip = params[0].axisValueLabel + '<br/>';
+          for (var i = 0; i < params.length; i++) {
+            var p = params[i];
+            tip += '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + p.color + ';margin-right:4px"></span>';
+            tip += p.seriesName + ': <b>' + (p.value != null ? p.value.toFixed(2) + '%' : '--') + '</b><br/>';
+          }
+          return tip;
+        }
+      },
+      legend: { top: 0, textStyle: { color: c.text, fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+      grid: { top: 30, left: 45, right: 12, bottom: 30 },
+      xAxis: {
+        type: 'category', data: chartHistory.labels, boundaryGap: false,
+        axisLabel: { show: false }, axisLine: { lineStyle: { color: c.split } }, axisTick: { show: false }
+      },
+      yAxis: { type: yType, position: 'left', min: yAxisLog ? 1 : 0, max: yAxisLog ? null : 100, axisLabel: { fontSize: 9, color: c.text, formatter: '{value}%' }, axisLine: { show: false }, splitLine: { lineStyle: { color: c.split } } },
+      series: [
+        { name: 'Fail %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.failRate, lineStyle: { width: 2, color: '#f87272', type: 'dashed' }, itemStyle: { color: '#f87272' } },
+        { name: 'Thru %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.throughputRate, lineStyle: { width: 2, color: '#36d399', type: 'dashed' }, itemStyle: { color: '#36d399' } },
+        { name: 'Skipped %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.skippedRate, lineStyle: { width: 2, color: '#3b82f6', type: 'dotted' }, itemStyle: { color: '#3b82f6' } },
+        { name: 'Del Succ %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.deletedRate, lineStyle: { width: 2, color: '#ef4444', type: 'dotted' }, itemStyle: { color: '#ef4444' } },
+        { name: 'Del Fail %', type: 'line', smooth: true, symbol: 'none', data: chartHistory.deleteFailRate, lineStyle: { width: 2, color: '#b91c1c', type: 'dotted' }, itemStyle: { color: '#b91c1c' } }
       ]
     }, false);
   }
@@ -1418,6 +1522,7 @@ function renderCharts() {
 
 window.addEventListener('resize', function() {
   if (cActivity) cActivity.resize();
+  if (cRatios) cRatios.resize();
   if (cTraffic) cTraffic.resize();
   if (cFeed) cFeed.resize();
   if (cProcess) cProcess.resize();
@@ -1573,7 +1678,7 @@ function computeStatus(m, cfg) {
   setDot('dotProcess', procColor);
 
   // ── Output ───────────────────────────────────────────────
-  var outMode  = (cfg && cfg.output) ? cfg.output.mode : 'stdout';
+  var outMode  = (cfg && cfg.output) ? cfg.output.mode : 'http';
   var epUp     = m['changes_worker_output_endpoint_up'];
   var outErr   = m['changes_worker_output_errors_total'] || 0;
   var outTotal = m['changes_worker_output_requests_total'] || 0;
@@ -1598,14 +1703,7 @@ function computeStatus(m, cfg) {
   };
 
   var outColor = 'red';
-  if (outMode === 'stdout') {
-    outColor = uptime > 0 ? 'green' : 'red';
-    if (uptime > 0) {
-      outChecks.push(diagOk('Output mode is stdout — no external endpoint needed'));
-    } else {
-      outChecks.push(diagErr('Worker not running'));
-    }
-  } else if (epUp === 0) {
+  if (epUp === 0) {
     outColor = 'red';
     outChecks.push(diagErr('Output endpoint is DOWN — the target is unreachable'));
     if (outMode === 'http') {
@@ -1641,7 +1739,7 @@ function computeStatus(m, cfg) {
     outChecks.push(diagWarn(fmt(mapErr) + ' schema mapper error(s) — check mapping definitions'));
   }
   if (outSkip > 0) {
-    outChecks.push(diagInfo(fmt(outSkip) + ' document(s) skipped (no mapper match or null doc)'));
+    outChecks.push(diagInfo(fmt(outSkip) + ' document(s) skipped — did not reach output (no mapper match, null doc, or empty mapping result). Check Logs page for details.'));
   }
   statusDiag.output = { color: outColor, checks: outChecks, metrics: outMetrics };
   setDot('dotOutput', outColor);
@@ -1771,6 +1869,7 @@ function loadConfig() {
       var src = { sync_gateway: 0, app_services: 0, edge_server: 0, couchdb: 0 };
       var proc = { data: 0, data_attach: 0, async: 0 };
       var out = { cloud: 0, rdbms: 0, http: 0 };
+      var configWarnings = [];
 
       for (var i = 0; i < jobDocs.length; i++) {
         var jd = jobDocs[i];
@@ -1794,7 +1893,26 @@ function loadConfig() {
         if (isAsync) { proc.async++; }
         else if (hasAttach) { proc.data_attach++; }
         else { proc.data++; }
+
+        // Check for risky config: non-sequential + no DLQ
+        var jobOutputs = jd.outputs || [];
+        var jobOut = jobOutputs[0] || {};
+        var hasDlqPath = !!jobOut.dead_letter_path;
+        var hasCbl = !!(cfg.couchbase_lite && cfg.couchbase_lite.enabled);
+        var jobName = jd.name || jd._id || jd.id || ('Job ' + (i + 1));
+        if (isAsync && !hasDlqPath && !hasCbl) {
+          configWarnings.push(
+            '<strong>' + escapeHtml(jobName) + '</strong> is running in non-sequential (parallel) mode ' +
+            '<strong>without a Dead Letter Queue</strong>. If the output goes down or the worker shuts down mid-batch, ' +
+            'in-flight documents will be lost — there is no DLQ to catch them and the checkpoint will not advance past them. ' +
+            'Either enable the DLQ (<code>output.dead_letter_path</code>) or switch to sequential mode (<code>processing.sequential: true</code>). ' +
+            '<a href="/help#pending" class="link link-primary">Learn more</a>'
+          );
+        }
       }
+
+      // Show persistent config warning banner if issues found
+      showConfigWarnings(configWarnings);
 
       // Update badge counts + dim badges with 0 count
       function setBadge(id, count) {
@@ -2090,6 +2208,26 @@ function setUnknown() {
   chartHistory.inOutRatio.push(0);
   if (chartHistory.inOutRatio.length > MAX_POINTS) chartHistory.inOutRatio.shift();
   renderCharts();
+}
+
+// ── Persistent Config Warning Banner ────────────────────────
+function showConfigWarnings(warnings) {
+  var banner = document.getElementById('configWarningBanner');
+  if (!banner) return;
+  if (!warnings || warnings.length === 0) {
+    banner.classList.add('hidden');
+    banner.innerHTML = '';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < warnings.length; i++) {
+    html += '<div class="alert alert-warning shadow-lg mb-2 text-sm">'
+      + '<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>'
+      + '<span>⚠️ <strong>Config Risk:</strong> ' + warnings[i] + '</span>'
+      + '</div>';
+  }
+  banner.innerHTML = html;
+  banner.classList.remove('hidden');
 }
 
 // ── Toast Notification ──────────────────────────────────────

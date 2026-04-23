@@ -19,7 +19,7 @@ except ImportError:
     ic = lambda *a, **kw: None  # noqa: E731
 
 from db.db_base import BaseOutputForwarder, group_insert_ops, _MultiRowInsert
-from pipeline_logging import log_event
+from pipeline.pipeline_logging import log_event
 
 logger = logging.getLogger("changes_worker")
 

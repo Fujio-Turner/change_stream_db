@@ -7,7 +7,7 @@ Production-ready _changes feed processor for:
 
 Supports longpoll with configurable intervals, checkpoint management,
 bulk_get fallback, async parallel or sequential processing, and
-forwarding results via stdout or HTTP.
+forwarding results to external systems (HTTP, RDBMS, Cloud).
 """
 
 __version__ = "2.2.2"
@@ -81,7 +81,7 @@ from rest.changes_http import (
     _maybe_backpressure,
 )
 from rest import determine_method  # re-export for backward compat
-from cbl_store import (
+from storage.cbl_store import (
     USE_CBL,
     CBLStore,
     CBLMaintenanceScheduler,
@@ -93,11 +93,11 @@ from cbl_store import (
 )
 from rest.attachment_config import parse_attachment_config
 from rest.attachments import AttachmentProcessor
-from pipeline_logging import (
+from pipeline.pipeline_logging import (
     configure_logging,
     log_event,
 )
-from pipeline_manager import PipelineManager
+from pipeline.pipeline_manager import PipelineManager
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -167,10 +167,14 @@ class MetricsCollector:
         # _changes feed content tracking (always counted, regardless of filter settings)
         self.feed_deletes_seen_total: int = 0  # changes with deleted=true in the feed
         self.feed_removes_seen_total: int = 0  # changes with removed=true in the feed
+        self.deletes_forwarded_total: int = (
+            0  # Tombstones forwarded to output (deleted=true, not filtered)
+        )
 
         # Doc fetch
         self.doc_fetch_requests_total: int = 0
         self.doc_fetch_errors_total: int = 0
+        self.docs_fetch_skipped_total: int = 0
 
         # Mapper (DB mode)
         self.mapper_matched_total: int = 0
@@ -600,6 +604,11 @@ class MetricsCollector:
             "Total changes with removed=true seen in the feed.",
             self.feed_removes_seen_total,
         )
+        _counter(
+            "changes_worker_deletes_forwarded_total",
+            "Total tombstones (deleted=true) forwarded to the output (not filtered).",
+            self.deletes_forwarded_total,
+        )
 
         # -- Bytes --
         _counter(
@@ -628,6 +637,11 @@ class MetricsCollector:
             "changes_worker_doc_fetch_errors_total",
             "Total doc fetch errors.",
             self.doc_fetch_errors_total,
+        )
+        _counter(
+            "changes_worker_docs_fetch_skipped_total",
+            "Docs skipped because they vanished between _changes and GET.",
+            self.docs_fetch_skipped_total,
         )
 
         # -- Output --
@@ -1026,6 +1040,36 @@ class MetricsCollector:
             "Downloads where digest didn't match (re-downloaded).",
             self.attachments_digest_mismatch_total,
         )
+        _counter(
+            "changes_worker_attachments_stale_total",
+            "Attachments skipped because the parent doc revision was superseded.",
+            self.attachments_stale_total,
+        )
+        _counter(
+            "changes_worker_attachments_post_process_skipped_total",
+            "Post-processing steps skipped (e.g. no matching rule).",
+            self.attachments_post_process_skipped_total,
+        )
+        _counter(
+            "changes_worker_attachments_conflict_retries_total",
+            "Attachment conflict retries (revision conflict during post-process).",
+            self.attachments_conflict_retries_total,
+        )
+        _counter(
+            "changes_worker_attachments_orphaned_uploads_total",
+            "Uploads that became orphaned (parent doc deleted or superseded).",
+            self.attachments_orphaned_uploads_total,
+        )
+        _counter(
+            "changes_worker_attachments_partial_success_total",
+            "Documents where some but not all attachments succeeded.",
+            self.attachments_partial_success_total,
+        )
+        _counter(
+            "changes_worker_attachments_temp_files_cleaned_total",
+            "Temporary attachment files cleaned up from disk.",
+            self.attachments_temp_files_cleaned_total,
+        )
 
         # ── SYSTEM metrics (psutil / gc / threading) ────────────────────
         try:
@@ -1406,6 +1450,58 @@ async def _status_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
     return aiohttp.web.json_response({"online": not is_offline})
 
 
+async def _collect_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """POST /_collect — generate diagnostic zip and stream it back."""
+    from rest.log_collect import DiagnosticsCollector
+    from pipeline.pipeline_logging import get_redactor
+
+    cfg = request.app.get("config", {})
+    metrics = request.app.get("metrics")
+    redactor = get_redactor()
+
+    include_profiling = request.query.get("include_profiling", "true").lower() == "true"
+
+    zip_path = None
+    try:
+        collector = DiagnosticsCollector(cfg, metrics, redactor)
+        zip_path = await collector.collect(include_profiling=include_profiling)
+
+        log_event(
+            logger,
+            "info",
+            "CONTROL",
+            "diagnostics collection complete: %s" % os.path.basename(zip_path),
+        )
+
+        # Stream the zip and clean up after sending
+        resp = aiohttp.web.StreamResponse(
+            headers={
+                "Content-Type": "application/zip",
+                "Content-Disposition": f'attachment; filename="{os.path.basename(zip_path)}"',
+            },
+        )
+        await resp.prepare(request)
+        with open(zip_path, "rb") as f:
+            while True:
+                chunk = f.read(1024 * 1024)
+                if not chunk:
+                    break
+                await resp.write(chunk)
+        await resp.write_eof()
+        return resp
+    except Exception as e:
+        logger.exception("Error generating diagnostics: %s", e)
+        return aiohttp.web.json_response(
+            {"error": f"Failed to collect diagnostics: {e}"}, status=500
+        )
+    finally:
+        if zip_path:
+            try:
+                os.remove(zip_path)
+            except FileNotFoundError:
+                pass
+
+
 async def start_metrics_server(
     metrics: MetricsCollector,
     host: str,
@@ -1416,12 +1512,14 @@ async def start_metrics_server(
     cbl_scheduler: CBLMaintenanceScheduler | None = None,
     shutdown_cfg: dict | None = None,
     extra_routes_cb=None,
+    cfg: dict | None = None,
 ) -> aiohttp.web.AppRunner:
     """Start a lightweight HTTP server that serves /_metrics in Prometheus format."""
     from aiohttp import web
 
     app = web.Application()
     app["metrics"] = metrics
+    app["config"] = cfg or {}
     app["shutdown_cfg"] = shutdown_cfg or {}
     if restart_event is not None:
         app["restart_event"] = restart_event
@@ -1433,6 +1531,7 @@ async def start_metrics_server(
         app["cbl_scheduler"] = cbl_scheduler
     app.router.add_get("/_metrics", _metrics_handler)
     app.router.add_get("/metrics", _metrics_handler)
+    app.router.add_post("/_collect", _collect_handler)
     app.router.add_post("/_restart", _restart_handler)
     app.router.add_post("/_shutdown", _shutdown_handler)
     app.router.add_post("/_offline", _offline_handler)
@@ -1445,15 +1544,13 @@ async def start_metrics_server(
     app.router.add_put("/api/inputs_changes/{id}", api_put_inputs_changes_entry)
     app.router.add_delete("/api/inputs_changes/{id}", api_delete_inputs_changes_entry)
 
-    app.router.add_get(r"/api/outputs_{type:rdbms|http|cloud|stdout}", api_get_outputs)
-    app.router.add_post(
-        r"/api/outputs_{type:rdbms|http|cloud|stdout}", api_post_outputs
-    )
+    app.router.add_get(r"/api/outputs_{type:rdbms|http|cloud}", api_get_outputs)
+    app.router.add_post(r"/api/outputs_{type:rdbms|http|cloud}", api_post_outputs)
     app.router.add_put(
-        r"/api/outputs_{type:rdbms|http|cloud|stdout}/{id}", api_put_outputs_entry
+        r"/api/outputs_{type:rdbms|http|cloud}/{id}", api_put_outputs_entry
     )
     app.router.add_delete(
-        r"/api/outputs_{type:rdbms|http|cloud|stdout}/{id}", api_delete_outputs_entry
+        r"/api/outputs_{type:rdbms|http|cloud}/{id}", api_delete_outputs_entry
     )
 
     # Register job control endpoints BEFORE generic /api/jobs/{id} routes
@@ -1731,14 +1828,16 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
 
     # -- output ----------------------------------------------------------------
     out_cfg = cfg.get("output", {})
-    out_mode = out_cfg.get("mode", "stdout")
+    out_mode = out_cfg.get("mode")
     _DB_ENGINE_ALIASES = {"postgres", "mysql", "mssql", "oracle"}
-    if (
-        out_mode not in ("stdout", "http", "db", "s3")
+    if out_mode is None:
+        errors.append("output.mode is required (http, db, s3, or a db engine name)")
+    elif (
+        out_mode not in ("http", "db", "s3", "stdout")
         and out_mode not in _DB_ENGINE_ALIASES
     ):
         errors.append(
-            f"output.mode must be 'stdout', 'http', 'db', 's3', or a db engine name "
+            f"output.mode must be 'http', 'db', 's3', or a db engine name "
             f"(postgres/mysql/mssql/oracle), got '{out_mode}'"
         )
     if out_mode == "http" and not out_cfg.get("target_url"):
@@ -1817,6 +1916,25 @@ def validate_config(cfg: dict) -> tuple[str, list[str], list[str]]:
             errors.append(
                 f"output.data_error_action must be 'dlq' or 'skip', got '{data_error_action}'"
             )
+
+    # -- non-sequential + no DLQ -----------------------------------------------
+    proc_cfg = cfg.get("processing", cfg.get("gateway", {}).get("processing", {}))
+    is_sequential = proc_cfg.get("sequential", False)
+    dlq_path = cfg.get("output", {}).get("dead_letter_path", "")
+    has_dlq = bool(dlq_path)
+    # CBL is always available as DLQ backend, so only warn when no CBL either
+    try:
+        from storage.cbl_store import USE_CBL as _use_cbl_check
+    except ImportError:
+        _use_cbl_check = False
+    if not is_sequential and not has_dlq and not _use_cbl_check:
+        warnings.append(
+            "RISK: non-sequential (parallel) mode is enabled WITHOUT a Dead Letter Queue. "
+            "If the output goes down or the worker shuts down mid-batch, in-flight documents "
+            "will be lost — there is no DLQ to catch them and no way to replay them. "
+            "Either enable the DLQ (set output.dead_letter_path) or switch to sequential mode "
+            "(set processing.sequential=true)."
+        )
 
     # -- retry -----------------------------------------------------------------
     retry_cfg = cfg.get("retry", {})
@@ -2036,7 +2154,7 @@ def migrate_legacy_config_to_job(db: CBLStore, cfg: dict) -> dict | None:
             "enabled": True,
             "inputs": [gw],
             "outputs": [out],
-            "output_type": out.get("mode", "stdout"),
+            "output_type": out.get("mode", "http"),
             "mapping": None,
             "system": cfg.get("system", {}),
             "retry": cfg.get("retry", {}),
@@ -2071,9 +2189,8 @@ class Checkpoint:
     The checkpoint document contains (CBL-compatible):
         {
             "client_id": "<local_client_id>",
-            "SGs_Seq": "<last_seq>",
             "time": <epoch timestamp>,
-            "remote": <monotonic counter>
+            "remote": "<last_seq>"
         }
     """
 
@@ -2085,7 +2202,6 @@ class Checkpoint:
         self._lock = asyncio.Lock()
         self._seq: str = "0"
         self._rev: str | None = None  # SG doc _rev for updates
-        self._internal: int = 0
         self._initial_sync_done: bool = False
 
         # Build the deterministic UUID the same way CBL does:
@@ -2148,9 +2264,8 @@ class Checkpoint:
             resp = await http.request("GET", url, auth=auth, headers=headers)
             data = await resp.json()
             resp.release()
-            self._seq = str(data.get("SGs_Seq", "0"))
+            self._seq = str(data.get("remote", data.get("SGs_Seq", "0")))
             self._rev = data.get("_rev")
-            self._internal = data.get("remote", data.get("local_internal", 0))
             raw_isd = data.get("initial_sync_done", None)
             if raw_isd is None:
                 self._initial_sync_done = self._seq != "0"
@@ -2230,20 +2345,18 @@ class Checkpoint:
             return
 
         async with self._lock:
-            self._internal += 1
             self._seq = seq
             body: dict = {
                 "client_id": self._client_id,
-                "SGs_Seq": seq,
                 "time": int(time.time()),
-                "remote": self._internal,
+                "remote": seq,
                 "initial_sync_done": self._initial_sync_done,
             }
             if self._rev:
                 body["_rev"] = self._rev
 
             url = f"{base_url}/{self.local_doc_path}"
-            ic("checkpoint save", url, seq, self._internal)
+            ic("checkpoint save", url, seq)
             try:
                 req_headers = {**headers, "Content-Type": "application/json"}
                 resp = await http.request(
@@ -2296,7 +2409,7 @@ class Checkpoint:
         if USE_CBL:
             data = self._get_fallback_store().load_checkpoint(self._uuid)
             if data:
-                seq = data.get("SGs_Seq", "0")
+                seq = str(data.get("remote", data.get("SGs_Seq", "0")))
                 raw_isd = data.get("initial_sync_done", None)
                 if raw_isd is None:
                     self._initial_sync_done = seq != "0"
@@ -2308,7 +2421,9 @@ class Checkpoint:
         # Original file fallback
         if self._fallback_path.exists():
             data = json.loads(self._fallback_path.read_text())
-            seq = str(data.get("SGs_Seq", data.get("last_seq", "0")))
+            seq = str(
+                data.get("remote", data.get("SGs_Seq", data.get("last_seq", "0")))
+            )
             raw_isd = data.get("initial_sync_done", None)
             if raw_isd is None:
                 self._initial_sync_done = seq != "0"
@@ -2320,18 +2435,16 @@ class Checkpoint:
 
     def _save_fallback(self, seq: str) -> None:
         if USE_CBL:
-            self._get_fallback_store().save_checkpoint(
-                self._uuid, seq, self._client_id, self._internal
-            )
+            self._get_fallback_store().save_checkpoint(self._uuid, seq, self._client_id)
             ic("checkpoint saved to CBL", seq)
             return
         # Original file fallback
         self._fallback_path.write_text(
             json.dumps(
                 {
-                    "SGs_Seq": seq,
+                    "client_id": self._client_id,
                     "time": int(time.time()),
-                    "remote": self._internal,
+                    "remote": seq,
                     "initial_sync_done": self._initial_sync_done,
                 }
             )
@@ -2425,7 +2538,7 @@ async def poll_changes(
             http.set_metrics(metrics)
         http.set_shutdown_event(stop_event)
 
-        output_mode = out_cfg.get("mode", "stdout")
+        output_mode = out_cfg.get("mode")
         db_output = None  # track DB forwarder for cleanup
         cloud_output = None  # track cloud forwarder for cleanup
 
@@ -2490,6 +2603,18 @@ async def poll_changes(
             dlq_cfg=out_cfg.get("dlq"),
         )
         every_n_docs = cfg.get("checkpoint", {}).get("every_n_docs", 0)
+
+        # Warn at runtime if non-sequential + no DLQ
+        is_seq = proc_cfg.get("sequential", False)
+        if not is_seq and not dlq.enabled:
+            log_event(
+                logger,
+                "warn",
+                "PROCESSING",
+                "RISK: running in non-sequential (parallel) mode WITHOUT a Dead Letter Queue. "
+                "If the output goes down mid-batch, in-flight documents may be lost. "
+                "Enable the DLQ or switch to sequential mode.",
+            )
 
         # If output is HTTP, verify the endpoint is reachable before starting
         if output_mode == "http":
@@ -2989,7 +3114,9 @@ async def test_connection(cfg: dict, src: str) -> bool:
                 )
                 ok = False
         else:
-            print(f"  [–] Output mode=stdout (no endpoint to check)")
+            print(
+                f"  [–] Output mode={out_cfg.get('mode', '?')} (no endpoint to check)"
+            )
 
     print(f"\n{'=' * 60}")
     if ok:
@@ -3085,7 +3212,7 @@ def main() -> None:
         # Backward compat: fall back to legacy "cbl_maintenance" key
         maint_cfg = cbl_cfg.get("maintenance", cfg.get("cbl_maintenance", {}))
         if cbl_cfg.get("db_dir") or cbl_cfg.get("db_name"):
-            from cbl_store import configure_cbl
+            from storage.cbl_store import configure_cbl
 
             configure_cbl(cbl_cfg.get("db_dir"), cbl_cfg.get("db_name"))
         if maint_cfg.get("enabled", True):
@@ -3108,7 +3235,7 @@ def main() -> None:
         log_dir = os.path.dirname(log_dir) or "logs"
         cbl_db_dir = ""
         if USE_CBL:
-            from cbl_store import CBL_DB_DIR, CBL_DB_NAME
+            from storage.cbl_store import CBL_DB_DIR, CBL_DB_NAME
 
             cbl_db_dir = os.path.join(CBL_DB_DIR, f"{CBL_DB_NAME}.cblite2")
         metrics = MetricsCollector(
@@ -3181,6 +3308,7 @@ def main() -> None:
                     cbl_scheduler=cbl_scheduler,
                     shutdown_cfg=cfg.get("shutdown", {}),
                     extra_routes_cb=_register_extra_routes,
+                    cfg=cfg,
                 )
             )
 
