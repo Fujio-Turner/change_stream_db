@@ -12,12 +12,17 @@
     <!-- CodeMirror 5 (local) — JS mode + code folding -->
     <link rel="stylesheet" href="/static/css/codemirror/codemirror.min.css" />
     <link rel="stylesheet" href="/static/css/codemirror/foldgutter.min.css" />
+    <link rel="stylesheet" href="/static/css/codemirror/lint.min.css" />
     <script src="/static/js/codemirror/codemirror.min.js"></script>
     <script src="/static/js/codemirror/javascript.min.js"></script>
     <script src="/static/js/codemirror/foldcode.min.js"></script>
     <script src="/static/js/codemirror/foldgutter.min.js"></script>
     <script src="/static/js/codemirror/brace-fold.min.js"></script>
     <script src="/static/js/codemirror/matchbrackets.min.js"></script>
+    <!-- JSHint + CodeMirror lint addon (local) -->
+    <script src="/static/js/codemirror/jshint.min.js"></script>
+    <script src="/static/js/codemirror/lint.min.js"></script>
+    <script src="/static/js/codemirror/javascript-lint.min.js"></script>
     <script>
       (function () {
         var t = localStorage.getItem("cw_theme") || "dark";
@@ -111,8 +116,7 @@
           <!-- Tab bar -->
           <div class="editor-tab-bar px-2 pt-2">
             <div class="editor-tab" id="tabJs" onclick="switchTab('js')">
-              <span style="font-weight:600">JS</span>
-              <span style="opacity:0.6">handler.js</span>
+              <span style="font-weight:600">JavaScript</span>
             </div>
             <div class="editor-tab editor-tab-inactive" id="tabSettings" onclick="switchTab('settings')">Settings</div>
           </div>
@@ -171,6 +175,9 @@ function OnDelete(meta) {
           <div class="alert alert-success"><span id="statusMsg"></span></div>
         </div>
 
+        <!-- Restart required toast container -->
+        <div id="toastContainer" class="toast toast-end" style="z-index:1000;"></div>
+
         <!-- Bottom Action Bar -->
         <div class="card bg-base-100 shadow rounded-2xl">
           <div class="card-body p-3">
@@ -215,6 +222,34 @@ function OnDelete(meta) {
 
     <script src="/static/js/sidebar.js"></script>
     <script>
+      // Custom lint: tells JSHint that OnUpdate/OnDelete are exported entry points
+      function eventingLint(text) {
+        if (!window.JSHINT) return [];
+        var prefix = "/* exported OnUpdate, OnDelete */\n";
+        JSHINT(prefix + text, {
+          esversion: 6,
+          undef: true,
+          unused: "vars",
+          latedef: "nofunc"
+        }, { log: false });
+        var data = JSHINT.data();
+        var errs = (data && data.errors) || [];
+        var result = [];
+        for (var i = 0; i < errs.length; i++) {
+          var e = errs[i];
+          if (!e) continue;
+          var line = e.line - 2;  // offset for the 1-line prefix (JSHint is 1-based)
+          if (line < 0) continue;
+          result.push({
+            from: CodeMirror.Pos(line, Math.max(0, (e.character || 1) - 1)),
+            to:   CodeMirror.Pos(line, (e.character || 1)),
+            message: e.reason,
+            severity: e.code && e.code.charAt(0) === 'E' ? 'error' : 'warning'
+          });
+        }
+        return result;
+      }
+
       var editor = CodeMirror.fromTextArea(document.getElementById('jsEditor'), {
         mode: 'javascript',
         lineNumbers: true,
@@ -222,7 +257,8 @@ function OnDelete(meta) {
         tabSize: 4,
         indentUnit: 4,
         foldGutter: true,
-        gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter'],
+        lint: { getAnnotations: eventingLint, async: false },
+        gutters: ['CodeMirror-lint-markers', 'CodeMirror-linenumbers', 'CodeMirror-foldgutter'],
         readOnly: false
       });
 
@@ -358,9 +394,80 @@ function OnDelete(meta) {
           if (data.error) { showToast(data.error, true); return; }
           updateEnabledBadge();
           showToast('Saved!');
+          showRestartRequiredToast();
         } catch(e) {
           showToast('Save failed: ' + e.message, true);
         }
+      }
+
+      function showRestartRequiredToast() {
+        var container = document.getElementById('toastContainer');
+        var id = 'restartRequiredToast';
+        if (document.getElementById(id)) return;
+        var el = document.createElement('div');
+        el.id = id;
+        el.className = 'alert alert-warning shadow-lg';
+        el.style.cssText = 'border-left:4px solid #f59e0b;max-width:420px';
+        el.innerHTML =
+          '<div class="flex flex-col gap-2 w-full">' +
+            '<span>Eventing saved. Restart the job to apply changes?</span>' +
+            '<div class="flex gap-2">' +
+              '<button class="btn btn-sm btn-warning" id="restartNowBtn">Restart Now</button>' +
+              '<button class="btn btn-sm btn-ghost" onclick="document.getElementById(\'' + id + '\').remove()">Dismiss</button>' +
+            '</div>' +
+            '<div id="restartStatus" class="text-xs hidden"></div>' +
+          '</div>';
+        container.appendChild(el);
+
+        document.getElementById('restartNowBtn').addEventListener('click', function() {
+          var btn = this;
+          var status = document.getElementById('restartStatus');
+          btn.classList.add('loading');
+          btn.textContent = 'Restarting...';
+          status.classList.remove('hidden');
+          status.textContent = '⏳ Sending restart signal...';
+
+          fetch('/api/jobs/' + encodeURIComponent(currentJobId) + '/restart', { method: 'POST' })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+              if (data.error) {
+                status.textContent = '⚠️ ' + data.error;
+                btn.classList.remove('loading');
+                btn.textContent = 'Restart Now';
+                return;
+              }
+              btn.classList.remove('loading', 'btn-warning');
+              btn.classList.add('btn-disabled');
+              status.textContent = '🔄 Job restarting — applying eventing changes...';
+              var attempts = 0;
+              var pollId = setInterval(function() {
+                attempts++;
+                status.textContent = '🔄 Waiting for job... (' + attempts + 's)';
+                fetch('/api/jobs/' + encodeURIComponent(currentJobId)).then(function(r) { return r.json(); }).then(function(j) {
+                  var st = (j.state && j.state.status) || j.status;
+                  if (st === 'running') {
+                    clearInterval(pollId);
+                    status.textContent = '✅ Job is running with updated eventing config!';
+                    btn.textContent = '✓ Done';
+                    btn.classList.remove('btn-disabled');
+                    btn.classList.add('btn-success');
+                    setTimeout(function() { el.remove(); }, 3000);
+                  }
+                }).catch(function() {});
+                if (attempts > 30) {
+                  clearInterval(pollId);
+                  status.textContent = '⚠️ Restart sent but job took too long. Check logs.';
+                  btn.classList.remove('loading', 'btn-disabled');
+                  btn.textContent = 'Retry';
+                }
+              }, 1000);
+            })
+            .catch(function(err) {
+              status.textContent = '❌ ' + err.message;
+              btn.classList.remove('loading');
+              btn.textContent = 'Restart Now';
+            });
+        });
       }
 
       function updateEnabledBadge() {
@@ -392,9 +499,7 @@ function OnDelete(meta) {
           delete body._rev;
           var isDelete = document.getElementById('debugIsDelete').checked;
           var code = editor.getValue();
-          var fn = new Function('return (' + code + '\nreturn {OnUpdate: typeof OnUpdate !== "undefined" ? OnUpdate : null, OnDelete: typeof OnDelete !== "undefined" ? OnDelete : null})');
           // Simple local eval for preview (not V8, just browser JS)
-          var sandbox = {};
           var logs = [];
           var evalCode = 'var __logs = [];\nfunction log() { __logs.push(Array.from(arguments).join(" ")); }\n' + code;
           if (isDelete) {

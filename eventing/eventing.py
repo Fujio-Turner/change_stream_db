@@ -17,7 +17,10 @@ import logging
 import re
 import time
 
-from mini_racer import MiniRacer
+try:
+    from mini_racer import MiniRacer
+except ImportError:
+    MiniRacer = None
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +266,13 @@ def create_eventing_handler(
     Returns None if eventing is not enabled.
     """
     if not eventing_cfg or not eventing_cfg.get("enabled", False):
+        return None
+
+    if MiniRacer is None:
+        logger.error(
+            "Eventing enabled but py_mini_racer is not installed — "
+            "pip install py_mini_racer"
+        )
         return None
 
     handler_code = eventing_cfg.get("handler", "")

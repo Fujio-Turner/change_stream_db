@@ -2588,6 +2588,10 @@ async def poll_changes(
         base_url = build_base_url(gw)
     except KeyError as e:
         watcher_task.cancel()
+        try:
+            await watcher_task
+        except asyncio.CancelledError:
+            pass
         raise KeyError(
             f"Missing gateway field {e} — check that the job's input has "
             f"'url' (or 'host') and 'database' configured"
@@ -3088,6 +3092,10 @@ async def poll_changes(
                 )
         finally:
             watcher_task.cancel()
+            try:
+                await watcher_task
+            except asyncio.CancelledError:
+                pass
             await output.stop_heartbeat() if hasattr(output, "stop_heartbeat") else None
             if db_output is not None:
                 await db_output.close()
