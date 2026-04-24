@@ -22,14 +22,34 @@ try:
 except ImportError:
     MiniRacer = None
 
-logger = logging.getLogger(__name__)
+from pipeline.pipeline_logging import log_event
+
+logger = logging.getLogger("changes_worker")
 
 _LOG_HELPER = """\
 var __logs = [];
 function log() {
     var args = Array.prototype.slice.call(arguments);
-    __logs.push(args.map(String).join(" "));
+    __logs.push({level: "info", msg: args.map(String).join(" ")});
 }
+var console = {
+    log: function() {
+        var args = Array.prototype.slice.call(arguments);
+        __logs.push({level: "info", msg: args.map(String).join(" ")});
+    },
+    warn: function() {
+        var args = Array.prototype.slice.call(arguments);
+        __logs.push({level: "warn", msg: args.map(String).join(" ")});
+    },
+    error: function() {
+        var args = Array.prototype.slice.call(arguments);
+        __logs.push({level: "error", msg: args.map(String).join(" ")});
+    },
+    debug: function() {
+        var args = Array.prototype.slice.call(arguments);
+        __logs.push({level: "debug", msg: args.map(String).join(" ")});
+    }
+};
 """
 
 _VALID_JS_IDENT = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
@@ -99,9 +119,11 @@ class EventingHandler:
             if not key:
                 continue
             if not _VALID_JS_IDENT.match(key):
-                logger.warning(
-                    "Eventing: skipping invalid constant key %r (not a valid JS identifier)",
-                    key,
+                log_event(
+                    logger,
+                    "warn",
+                    "EVENTING",
+                    "skipping invalid constant key %r" % key,
                 )
                 continue
             lines.append(f"const {key} = {json.dumps(value)};")
@@ -112,9 +134,63 @@ class EventingHandler:
             logs = self._ctx.eval("__logs.splice(0)")
         except Exception:
             return
-        if logs:
-            for msg in logs:
-                logger.info("[eventing-js] %s", msg)
+        if not logs:
+            return
+
+        from pipeline.pipeline_logging import get_eventing_js_logger
+
+        js_logger = get_eventing_js_logger()
+
+        _JS_LEVELS = {
+            "debug": logging.DEBUG,
+            "info": logging.INFO,
+            "warn": logging.WARNING,
+            "error": logging.ERROR,
+        }
+
+        for entry in logs:
+            if isinstance(entry, dict):
+                msg = entry.get("msg", "")
+                lvl = _JS_LEVELS.get(entry.get("level", "info"), logging.INFO)
+            else:
+                # Backwards compat: plain string from older JS code
+                msg = str(entry)
+                lvl = logging.INFO
+
+            # Write to dedicated eventing log file (Node.js style)
+            if js_logger:
+                js_logger.log(lvl, "[eventing-js] %s", msg)
+
+            # Also emit to main changes_worker logger at debug so it
+            # appears in the main log when debug is enabled
+            log_event(logger, "debug", "EVENTING", "[js] %s" % msg)
+
+    def _log_js_error(self, handler: str, doc_id: str, exc: Exception) -> None:
+        """Write full error detail to the dedicated JS log file."""
+        from pipeline.pipeline_logging import get_eventing_js_logger
+
+        js_logger = get_eventing_js_logger()
+        if js_logger:
+            js_logger.error(
+                "[eventing-js] %s error  doc_id=%s  %s: %s",
+                handler,
+                doc_id,
+                type(exc).__name__,
+                exc,
+            )
+
+    def _log_js_timeout(self, handler: str, doc_id: str) -> None:
+        """Write timeout detail to the dedicated JS log file."""
+        from pipeline.pipeline_logging import get_eventing_js_logger
+
+        js_logger = get_eventing_js_logger()
+        if js_logger:
+            js_logger.error(
+                "[eventing-js] %s timed out after %dms  doc_id=%s",
+                handler,
+                self._timeout_ms,
+                doc_id,
+            )
 
     def _maybe_collect_heap_stats(self) -> None:
         """Sample V8 heap stats every N invocations and push to metrics."""
@@ -175,6 +251,7 @@ class EventingHandler:
 
     def _handle_delete(self, change: dict) -> dict | None:
         _, meta = self._split_doc(change)
+        doc_id = meta.get("_id", "")
         try:
             result = self._ctx.call(
                 "OnDelete",
@@ -183,13 +260,19 @@ class EventingHandler:
                 max_memory=self._max_memory,
             )
         except TimeoutError:
-            logger.warning("Eventing OnDelete timed out after %dms", self._timeout_ms)
+            log_event(
+                logger, "warn", "EVENTING", "JS timeout in eventing", doc_id=doc_id
+            )
+            self._log_js_timeout("OnDelete", doc_id)
             self._flush_logs()
             if self._metrics:
                 self._metrics.inc("eventing_timeouts_total")
             return self._apply_policy(self._on_timeout, change, "timeout")
         except Exception as exc:
-            logger.error("Eventing OnDelete error: %s", exc)
+            log_event(
+                logger, "error", "EVENTING", "JS error in eventing", doc_id=doc_id
+            )
+            self._log_js_error("OnDelete", doc_id, exc)
             self._flush_logs()
             if self._metrics:
                 self._metrics.inc("eventing_errors_total")
@@ -199,6 +282,7 @@ class EventingHandler:
 
     def _handle_update(self, change: dict) -> dict | None:
         doc_body, meta = self._split_doc(change)
+        doc_id = meta.get("_id", "")
         try:
             result = self._ctx.call(
                 "OnUpdate",
@@ -208,13 +292,19 @@ class EventingHandler:
                 max_memory=self._max_memory,
             )
         except TimeoutError:
-            logger.warning("Eventing OnUpdate timed out after %dms", self._timeout_ms)
+            log_event(
+                logger, "warn", "EVENTING", "JS timeout in eventing", doc_id=doc_id
+            )
+            self._log_js_timeout("OnUpdate", doc_id)
             self._flush_logs()
             if self._metrics:
                 self._metrics.inc("eventing_timeouts_total")
             return self._apply_policy(self._on_timeout, change, "timeout")
         except Exception as exc:
-            logger.error("Eventing OnUpdate error: %s", exc)
+            log_event(
+                logger, "error", "EVENTING", "JS error in eventing", doc_id=doc_id
+            )
+            self._log_js_error("OnUpdate", doc_id, exc)
             self._flush_logs()
             if self._metrics:
                 self._metrics.inc("eventing_errors_total")
@@ -269,15 +359,19 @@ def create_eventing_handler(
         return None
 
     if MiniRacer is None:
-        logger.error(
-            "Eventing enabled but py_mini_racer is not installed — "
-            "pip install py_mini_racer"
+        log_event(
+            logger,
+            "error",
+            "EVENTING",
+            "eventing enabled but py_mini_racer is not installed — pip install py_mini_racer",
         )
         return None
 
     handler_code = eventing_cfg.get("handler", "")
     if not handler_code:
-        logger.warning("Eventing enabled but no handler provided")
+        log_event(
+            logger, "warn", "EVENTING", "eventing enabled but no handler provided"
+        )
         return None
 
     return EventingHandler(

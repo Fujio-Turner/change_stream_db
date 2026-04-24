@@ -17,7 +17,12 @@ from typing import Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
 
 from storage.cbl_store import CBLStore
-from pipeline.pipeline_logging import log_event
+from pipeline.pipeline_logging import (
+    log_event,
+    set_job_tag,
+    generate_session_id,
+    set_session_id,
+)
 from rest.changes_http import ClientHTTPError
 
 
@@ -82,6 +87,12 @@ class Pipeline:
             self._error = None
             self._auth_failure = False
 
+            # Tag all log lines from this thread with the job's short ID
+            # and a unique session ID for this run.
+            set_job_tag(self.job_id)
+            session_id = generate_session_id()
+            set_session_id(session_id)
+
             if not self.poll_changes_func:
                 raise RuntimeError(
                     f"Pipeline started without poll_changes_func for job {self.job_id}"
@@ -94,7 +105,7 @@ class Pipeline:
                 self.logger,
                 "info",
                 "CHANGES",
-                f"Pipeline starting for job",
+                "pipeline starting for job",
                 job_id=self.job_id,
             )
 
@@ -129,7 +140,7 @@ class Pipeline:
                 self.logger,
                 "info",
                 "CHANGES",
-                f"Pipeline stopped cleanly",
+                "pipeline stopped cleanly",
                 job_id=self.job_id,
             )
 
@@ -159,7 +170,7 @@ class Pipeline:
                         self.logger,
                         "error",
                         "CHANGES",
-                        "Cloud authentication failed — fix credentials and restart the job manually.",
+                        "cloud authentication failed — fix credentials and restart the job manually.",
                         job_id=self.job_id,
                     )
             except ImportError:
@@ -168,7 +179,7 @@ class Pipeline:
                 self.logger,
                 "error",
                 "CHANGES",
-                f"Pipeline crashed: {e}",
+                "pipeline crashed: %s" % e,
                 job_id=self.job_id,
             )
             # Write to DLQ if available
@@ -179,7 +190,7 @@ class Pipeline:
                     self.logger,
                     "error",
                     "DLQ",
-                    f"Failed to write crash to DLQ: {dlq_err}",
+                    "failed to write crash to DLQ: %s" % dlq_err,
                     job_id=self.job_id,
                 )
 
@@ -205,7 +216,7 @@ class Pipeline:
                 self.logger,
                 "info",
                 "CHANGES",
-                f"Signaling pipeline to stop",
+                "signaling pipeline to stop",
                 job_id=self.job_id,
             )
 
@@ -227,9 +238,9 @@ class Pipeline:
             if thread.is_alive():
                 log_event(
                     self.logger,
-                    "warning",
+                    "warn",
                     "CHANGES",
-                    f"Pipeline did not stop within {timeout_seconds}s",
+                    "pipeline did not stop within %ss" % timeout_seconds,
                     job_id=self.job_id,
                 )
                 return False
@@ -238,7 +249,7 @@ class Pipeline:
             self.logger,
             "info",
             "CHANGES",
-            f"Pipeline stopped",
+            "pipeline stopped",
             job_id=self.job_id,
         )
         return True
@@ -249,9 +260,9 @@ class Pipeline:
             if self._running:
                 log_event(
                     self.logger,
-                    "warning",
+                    "warn",
                     "CHANGES",
-                    f"Pipeline already running",
+                    "pipeline already running",
                     job_id=self.job_id,
                 )
                 return
@@ -269,7 +280,7 @@ class Pipeline:
             self.logger,
             "info",
             "CHANGES",
-            f"Pipeline restarting",
+            "pipeline restarting",
             job_id=self.job_id,
         )
         self.stop(timeout_seconds)

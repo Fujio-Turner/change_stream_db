@@ -2938,7 +2938,12 @@ class CBLStore:
                 }
             elif mode == "stdout":
                 # stdout output removed — skip migration (stdout is no longer supported)
-                logger.info("Skipping stdout output migration — stdout mode removed")
+                log_event(
+                    logger,
+                    "info",
+                    "CBL",
+                    "skipping stdout output migration — stdout mode removed",
+                )
 
             if output_type and output_entry:
                 outputs_doc = {

@@ -95,7 +95,12 @@ from rest.attachment_config import parse_attachment_config
 from rest.attachments import AttachmentProcessor
 from pipeline.pipeline_logging import (
     configure_logging,
+    generate_session_id,
+    get_redactor,
+    get_session_id,
     log_event,
+    set_job_tag,
+    set_session_id,
 )
 from pipeline.pipeline_manager import PipelineManager
 
@@ -181,6 +186,7 @@ class MetricsCollector:
         self.mapper_skipped_total: int = 0
         self.mapper_errors_total: int = 0
         self.mapper_ops_total: int = 0
+        self.output_ops_total: int = 0
 
         # DB transaction retry / error classification
         self.db_retries_total: int = 0
@@ -1586,7 +1592,13 @@ async def _collect_handler(request: aiohttp.web.Request) -> aiohttp.web.Response
         await resp.write_eof()
         return resp
     except Exception as e:
-        logger.exception("Error generating diagnostics: %s", e)
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error generating diagnostics",
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return aiohttp.web.json_response(
             {"error": f"Failed to collect diagnostics: {e}"}, status=500
         )
@@ -1688,7 +1700,12 @@ def load_config(path: str | None = None) -> dict:
         store = CBLStore()
         cfg = store.load_config()
         if cfg:
-            logger.info("Config loaded from CBL (config.json is ignored)")
+            log_event(
+                logger,
+                "info",
+                "CONTROL",
+                "config loaded from CBL (config.json is ignored)",
+            )
             ic(cfg)
             return cfg
         # First run: seed from file → CBL
@@ -1696,7 +1713,12 @@ def load_config(path: str | None = None) -> dict:
             with open(path) as f:
                 cfg = json.load(f)
             store.save_config(cfg)
-            logger.info("First start — seeded config from %s into CBL", path)
+            log_event(
+                logger,
+                "info",
+                "CONTROL",
+                "first start — seeded config from %s into CBL" % path,
+            )
             ic(cfg)
             return cfg
     # Fallback: no CBL — read from file directly
@@ -2117,15 +2139,21 @@ def build_auth_headers(
         headers["Accept-Encoding"] = "gzip"
     if method == "bearer":
         if src == "edge_server":
-            logger.warning(
-                "Bearer token auth is not supported by Edge Server – falling back to basic"
+            log_event(
+                logger,
+                "warn",
+                "HTTP",
+                "bearer token auth is not supported by Edge Server – falling back to basic",
             )
         else:
             headers["Authorization"] = f"Bearer {auth_cfg['bearer_token']}"
     elif method == "session":
         if src == "couchdb":
-            logger.warning(
-                "Session cookie auth is not supported by CouchDB – falling back to basic"
+            log_event(
+                logger,
+                "warn",
+                "HTTP",
+                "session cookie auth is not supported by CouchDB – falling back to basic",
             )
         else:
             headers["Cookie"] = f"SyncGatewaySession={auth_cfg['session_cookie']}"
@@ -2161,14 +2189,20 @@ def load_enabled_jobs(db: CBLStore | None) -> list[dict]:
         }
     """
     if not db:
-        logger.warning("CBL not available – no jobs")
+        log_event(logger, "warn", "CONTROL", "CBL not available – no jobs")
         return []
 
     try:
         jobs = db.list_jobs()  # Returns all jobs from CBL
         return [j for j in jobs if j.get("enabled", True)]
     except Exception as e:
-        logger.error("Failed to load jobs: %s", e)
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "failed to load jobs",
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return []
 
 
@@ -2237,8 +2271,11 @@ def migrate_legacy_config_to_job(db: CBLStore, cfg: dict) -> dict | None:
         out = cfg.get("output", {})
 
         if not gw or not out:
-            logger.warning(
-                "Legacy config missing gateway or output – cannot auto-migrate"
+            log_event(
+                logger,
+                "warn",
+                "CONTROL",
+                "legacy config missing gateway or output – cannot auto-migrate",
             )
             return None
 
@@ -2258,13 +2295,25 @@ def migrate_legacy_config_to_job(db: CBLStore, cfg: dict) -> dict | None:
 
         # Save to CBL (save_job expects job_id and job_data separately)
         db.save_job(job_id, job_data)
-        logger.info("Auto-migrated legacy config.json to job %s", job_id)
+        log_event(
+            logger,
+            "info",
+            "CONTROL",
+            "auto-migrated legacy config.json to job %s" % job_id,
+            job_id=job_id,
+        )
 
         # Return the full document as it would be retrieved
         job_doc = {"_id": job_id, "id": job_id, **job_data}
         return job_doc
     except Exception as e:
-        logger.error("Failed to auto-migrate legacy config: %s", e)
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "failed to auto-migrate legacy config",
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return None
 
 
@@ -2463,7 +2512,7 @@ class Checkpoint:
                 self._rev = resp_data.get("rev", self._rev)
                 log_event(
                     logger,
-                    "info",
+                    "debug",
                     "CHECKPOINT",
                     "checkpoint saved",
                     operation="UPDATE",
@@ -2552,6 +2601,313 @@ class Checkpoint:
 # Core: changes feed loop
 # ---------------------------------------------------------------------------
 
+# Keys whose values are always sensitive and should never appear in logs,
+# even when the Redactor misses them (e.g., nested inside provider blocks).
+_SENSITIVE_CONFIG_KEYS = frozenset(
+    {
+        "password",
+        "passwd",
+        "pass",
+        "secret",
+        "api_key",
+        "access_key_id",
+        "secret_access_key",
+        "session_token",
+        "bearer_token",
+        "token",
+        "session_cookie",
+        "authorization",
+        "cookie",
+        "refresh_token",
+        "username",
+        "user",
+    }
+)
+
+
+def _sanitize_config(obj, *, _depth: int = 0):
+    """Deep-copy *obj* with sensitive values replaced by '***'.
+
+    Works on nested dicts/lists.  Uses the Redactor for string
+    pattern matching and additionally strips any key in
+    ``_SENSITIVE_CONFIG_KEYS`` regardless of nesting.
+    """
+    if _depth > 20:
+        return "..."
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if k.lower() in _SENSITIVE_CONFIG_KEYS:
+                out[k] = "***"
+            else:
+                out[k] = _sanitize_config(v, _depth=_depth + 1)
+        return out
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_config(i, _depth=_depth + 1) for i in obj]
+    # Redact URLs with embedded credentials
+    if isinstance(obj, str):
+        return get_redactor().redact_string(obj)
+    return obj
+
+
+def _log_job_config(
+    job_id: str | None,
+    src: str,
+    gw: dict,
+    feed_cfg: dict,
+    proc_cfg: dict,
+    out_cfg: dict,
+    retry_cfg: dict,
+    cfg: dict,
+) -> None:
+    """Emit a block of INFO-level log lines describing the job's
+    non-sensitive configuration.  Called once at job startup so
+    operators can trace what a job was set up to do.
+    """
+    # -- Source / Gateway --
+    safe_gw = _sanitize_config(gw)
+    log_event(
+        logger,
+        "info",
+        "CONTROL",
+        "job config: source",
+        job_id=job_id,
+        mode="source=%s url=%s db=%s scope=%s collection=%s"
+        % (
+            src,
+            safe_gw.get("url", safe_gw.get("host", "?")),
+            safe_gw.get("database", "?"),
+            safe_gw.get("scope", ""),
+            safe_gw.get("collection", ""),
+        ),
+    )
+
+    # -- Changes Feed --
+    log_event(
+        logger,
+        "info",
+        "CONTROL",
+        "job config: changes_feed",
+        job_id=job_id,
+        mode="feed_type=%s include_docs=%s active_only=%s since=%s "
+        "timeout_ms=%s heartbeat_ms=%s channels=%s limit=%s throttle=%s "
+        "optimize_initial=%s catchup_limit=%s flood_threshold=%s"
+        % (
+            feed_cfg.get("feed_type", "longpoll"),
+            feed_cfg.get("include_docs", False),
+            feed_cfg.get("active_only", False),
+            feed_cfg.get("since", "0"),
+            feed_cfg.get("timeout_ms", 60000),
+            feed_cfg.get("heartbeat_ms", 30000),
+            feed_cfg.get("channels", []),
+            feed_cfg.get("limit", 0),
+            feed_cfg.get("throttle_feed", 0),
+            feed_cfg.get("optimize_initial_sync", False),
+            feed_cfg.get("continuous_catchup_limit", 500),
+            feed_cfg.get("flood_threshold", 10000),
+        ),
+    )
+
+    # -- Processing --
+    log_event(
+        logger,
+        "info",
+        "CONTROL",
+        "job config: processing",
+        job_id=job_id,
+        mode="sequential=%s max_concurrent=%s dry_run=%s "
+        "ignore_delete=%s ignore_remove=%s write_method=%s "
+        "get_batch_number=%s"
+        % (
+            proc_cfg.get("sequential", False),
+            proc_cfg.get("max_concurrent", 20),
+            proc_cfg.get("dry_run", False),
+            proc_cfg.get("ignore_delete", False),
+            proc_cfg.get("ignore_remove", False),
+            proc_cfg.get("write_method", "PUT"),
+            proc_cfg.get("get_batch_number", 100),
+        ),
+    )
+
+    # -- Output --
+    safe_out = _sanitize_config(out_cfg)
+    output_mode = safe_out.get("mode", "http")
+    out_summary = "mode=%s" % output_mode
+    if output_mode == "http":
+        out_summary += " target_url=%s write_method=%s delete_method=%s" % (
+            safe_out.get("target_url", ""),
+            safe_out.get("write_method", "PUT"),
+            safe_out.get("delete_method", "DELETE"),
+        )
+        out_summary += " url_template=%s send_delete_body=%s" % (
+            safe_out.get("url_template", ""),
+            safe_out.get("send_delete_body", False),
+        )
+        out_summary += " timeout=%ss halt_on_failure=%s data_error_action=%s" % (
+            safe_out.get("request_timeout_seconds", 30),
+            safe_out.get("halt_on_failure", True),
+            safe_out.get("data_error_action", "dlq"),
+        )
+    elif output_mode in ("postgres", "mysql", "mssql", "oracle", "db"):
+        db_block = safe_out.get(output_mode, safe_out.get("db", {}))
+        out_summary += " host=%s port=%s database=%s schema=%s" % (
+            db_block.get("host", "?"),
+            db_block.get("port", "?"),
+            db_block.get("database", "?"),
+            db_block.get("schema", "public"),
+        )
+        out_summary += " pool_min=%s pool_max=%s ssl=%s" % (
+            db_block.get("pool_min", 2),
+            db_block.get("pool_max", 10),
+            db_block.get("ssl", False),
+        )
+    elif output_mode in ("s3", "gcs", "azure"):
+        cloud_block = safe_out.get(output_mode, {})
+        out_summary += " bucket=%s region=%s key_prefix=%s" % (
+            cloud_block.get("bucket", ""),
+            cloud_block.get("region", ""),
+            cloud_block.get("key_prefix", ""),
+        )
+    log_event(
+        logger,
+        "info",
+        "CONTROL",
+        "job config: output",
+        job_id=job_id,
+        mode=out_summary,
+    )
+
+    # -- DLQ --
+    dlq_cfg = out_cfg.get("dlq") or {}
+    log_event(
+        logger,
+        "info",
+        "CONTROL",
+        "job config: dlq",
+        job_id=job_id,
+        mode="dead_letter_path=%s retention_s=%s max_replay=%s"
+        % (
+            out_cfg.get("dead_letter_path", ""),
+            dlq_cfg.get("retention_seconds", 86400),
+            dlq_cfg.get("max_replay_attempts", 10),
+        ),
+    )
+
+    # -- Retry --
+    log_event(
+        logger,
+        "info",
+        "CONTROL",
+        "job config: retry",
+        job_id=job_id,
+        mode="max_retries=%s backoff_base=%ss backoff_max=%ss retry_on_status=%s"
+        % (
+            retry_cfg.get("max_retries", 5),
+            retry_cfg.get("backoff_base_seconds", 1),
+            retry_cfg.get("backoff_max_seconds", 60),
+            retry_cfg.get("retry_on_status", [500, 502, 503, 504]),
+        ),
+    )
+
+    # -- Checkpoint --
+    chk_cfg = cfg.get("checkpoint", {})
+    log_event(
+        logger,
+        "info",
+        "CONTROL",
+        "job config: checkpoint",
+        job_id=job_id,
+        mode="enabled=%s client_id=%s every_n_docs=%s"
+        % (
+            chk_cfg.get("enabled", True),
+            chk_cfg.get("client_id", "changes_worker"),
+            chk_cfg.get("every_n_docs", 0),
+        ),
+    )
+
+    # -- Shutdown --
+    shut_cfg = cfg.get("shutdown", {})
+    log_event(
+        logger,
+        "info",
+        "CONTROL",
+        "job config: shutdown",
+        job_id=job_id,
+        mode="drain_timeout=%ss dlq_inflight=%s"
+        % (
+            shut_cfg.get("drain_timeout_seconds", 60),
+            shut_cfg.get("dlq_inflight_on_shutdown", False),
+        ),
+    )
+
+    # -- Attachments (only if configured) --
+    att_cfg = cfg.get("attachments", {})
+    if att_cfg.get("enabled", False):
+        safe_att = _sanitize_config(att_cfg)
+        dest = safe_att.get("destination", {})
+        log_event(
+            logger,
+            "info",
+            "CONTROL",
+            "job config: attachments",
+            job_id=job_id,
+            mode="mode=%s dry_run=%s dest_type=%s "
+            "partial_success=%s halt_on_failure=%s"
+            % (
+                safe_att.get("mode", "individual"),
+                safe_att.get("dry_run", False),
+                dest.get("type", "s3"),
+                safe_att.get("partial_success", "continue"),
+                safe_att.get("halt_on_failure", True),
+            ),
+        )
+
+    # -- Eventing (only if configured) --
+    ev_cfg = cfg.get("eventing", {})
+    if ev_cfg.get("handlers") or ev_cfg.get("source") or ev_cfg.get("source_file"):
+        log_event(
+            logger,
+            "info",
+            "CONTROL",
+            "job config: eventing",
+            job_id=job_id,
+            mode="source=%s timeout_ms=%s"
+            % (
+                "inline" if ev_cfg.get("source") else ev_cfg.get("source_file", "?"),
+                ev_cfg.get("timeout_ms", 5000),
+            ),
+        )
+
+    # -- Mapping (only if configured) --
+    map_cfg = cfg.get("mapping", {})
+    if map_cfg:
+        tables = map_cfg.get("tables", [])
+        table_names = [t.get("table", "?") for t in tables] if tables else []
+        log_event(
+            logger,
+            "info",
+            "CONTROL",
+            "job config: mapping",
+            job_id=job_id,
+            mode="tables=%s" % table_names,
+        )
+
+    # -- Recursion guard (only if configured) --
+    rg_cfg = cfg.get("recursion_guard", {})
+    if rg_cfg.get("enabled", False):
+        log_event(
+            logger,
+            "info",
+            "CONTROL",
+            "job config: recursion_guard",
+            job_id=job_id,
+            mode="max_tracked=%s ttl=%ss"
+            % (
+                rg_cfg.get("max_tracked_docs", 50000),
+                rg_cfg.get("ttl_seconds", 300),
+            ),
+        )
+
 
 async def poll_changes(
     cfg: dict,
@@ -2562,6 +2918,27 @@ async def poll_changes(
     job_id: str | None = None,  # Phase 6: job-specific identifier
     map_executor=None,  # ThreadPoolExecutor for CPU-bound schema mapping
 ) -> None:
+    # Set job tag and session ID in context so every log_event in this
+    # async context automatically includes them in the prefix.
+    if job_id:
+        set_job_tag(job_id)
+    # Generate a unique session ID for this job run.  If Pipeline.run()
+    # already set one (thread context), reuse it; otherwise create one.
+    if not get_session_id():
+        set_session_id(generate_session_id())
+    session_id = get_session_id()
+
+    # Log the full session UUID once at startup so operators can correlate
+    # the short #s:.. tag in subsequent lines back to this session.
+    log_event(
+        logger,
+        "info",
+        "CONTROL",
+        "session started",
+        job_id=job_id,
+        mode="session=%s" % session_id,
+    )
+
     gw = cfg.get(
         "gateway", cfg.get("inputs", [{}])[0]
     )  # Support both old and new configs
@@ -2576,6 +2953,11 @@ async def poll_changes(
         "output", cfg.get("outputs", [{}])[0]
     )  # Support both old and new configs
     retry_cfg = cfg.get("retry", {})
+
+    # Dump the full job configuration at startup (non-sensitive fields only).
+    # These config lines share the same #s:.. session tag, so you can
+    # always connect a session's config to its runtime log lines.
+    _log_job_config(job_id, src, gw, feed_cfg, proc_cfg, out_cfg, retry_cfg, cfg)
 
     log_event(logger, "info", "PROCESSING", "source type: %s" % src)
 
@@ -2691,7 +3073,7 @@ async def poll_changes(
                         logger,
                         "info",
                         "OUTPUT",
-                        f"cloud output ready (provider={output_mode})",
+                        "cloud output ready (provider=%s)" % output_mode,
                     )
                     break
                 except asyncio.CancelledError:
@@ -2706,10 +3088,13 @@ async def poll_changes(
                             "Cloud output unreachable — waiting for cloud store to become available (will retry with backoff)",
                         )
                     else:
-                        logger.debug(
-                            "Cloud output connect failed (attempt #%d): %s",
-                            cloud_connect_failure_count,
-                            exc,
+                        log_event(
+                            logger,
+                            "debug",
+                            "OUTPUT",
+                            "cloud output connect failed (attempt #%d)"
+                            % cloud_connect_failure_count,
+                            error_detail=str(exc),
                         )
                     if cloud_connect_failure_count >= 100:
                         log_event(
@@ -2791,9 +3176,12 @@ async def poll_changes(
                         "HTTP output endpoint unreachable — waiting for endpoint to become available (will retry with backoff)",
                     )
                 else:
-                    logger.debug(
-                        "Output endpoint reachability check failed (attempt #%d)",
-                        output_failure_count,
+                    log_event(
+                        logger,
+                        "debug",
+                        "OUTPUT",
+                        "output endpoint reachability check failed (attempt #%d)"
+                        % output_failure_count,
                     )
                 if output_failure_count < 100:  # Safety limit to prevent infinite loop
                     delay = min(
@@ -3170,12 +3558,24 @@ async def poll_changes(
                         )
                     resp.release()
                 except (ClientHTTPError, RedirectHTTPError) as exc:
-                    logger.error("Non-retryable error polling _changes: %s", exc)
+                    log_event(
+                        logger,
+                        "error",
+                        "CHANGES",
+                        "non-retryable error polling _changes",
+                        error_detail=str(exc),
+                    )
                     if metrics:
                         metrics.inc("poll_errors_total")
                     break
                 except (ConnectionError, ServerHTTPError, asyncio.TimeoutError) as exc:
-                    logger.error("Retries exhausted polling _changes: %s", exc)
+                    log_event(
+                        logger,
+                        "error",
+                        "CHANGES",
+                        "retries exhausted polling _changes",
+                        error_detail=str(exc),
+                    )
                     if metrics:
                         metrics.inc("poll_errors_total")
                     await _sleep_or_shutdown(
@@ -3196,10 +3596,13 @@ async def poll_changes(
                 )
 
                 if output_failed:
-                    logger.warning(
-                        "Waiting %ds before retrying (checkpoint held at since=%s)",
-                        feed_cfg.get("poll_interval_seconds", 10),
-                        since,
+                    log_event(
+                        logger,
+                        "warn",
+                        "CHANGES",
+                        "waiting %ds before retrying (checkpoint held)"
+                        % feed_cfg.get("poll_interval_seconds", 10),
+                        seq=since,
                     )
                     await _sleep_or_shutdown(
                         feed_cfg.get("poll_interval_seconds", 10), stop_event
@@ -3245,9 +3648,12 @@ async def poll_changes(
                 # waiting — loop immediately for the next bite. Only sleep once
                 # we get a partial batch (caught up).
                 if throttle > 0 and len(results) >= throttle:
-                    logger.info(
-                        "Throttle: got full batch (%d), fetching next bite immediately",
-                        len(results),
+                    log_event(
+                        logger,
+                        "info",
+                        "CHANGES",
+                        "throttle: got full batch (%d), fetching next bite immediately"
+                        % len(results),
                     )
                     continue
 
@@ -3443,25 +3849,33 @@ def main() -> None:
     src, warnings, errors = validate_config(cfg)
 
     src_label = src.replace("_", " ").title()
-    logger.info("Source type: %s", src_label)
+    log_event(logger, "info", "CONTROL", "source type: %s" % src_label)
 
     for w in warnings:
-        logger.warning("CONFIG WARNING: %s", w)
+        log_event(logger, "warn", "CONTROL", "config warning: %s" % w)
 
     if errors:
-        logger.error("=" * 60)
-        logger.error("  STARTUP ABORTED – config errors detected")
-        logger.error("=" * 60)
-        for e in errors:
-            logger.error("  ✗ %s", e)
-        logger.error("=" * 60)
-        logger.error("Fix the errors above in %s and try again.", args.config)
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "startup aborted – config errors detected",
+            errors=errors,
+            config_file=args.config,
+        )
         sys.exit(1)
 
     if warnings:
-        logger.info("Config validation passed with %d warning(s)", len(warnings))
+        log_event(
+            logger,
+            "info",
+            "CONTROL",
+            "config validation passed with %d warning(s)" % len(warnings),
+        )
     else:
-        logger.info("Config validation passed – all settings OK")
+        log_event(
+            logger, "info", "CONTROL", "config validation passed – all settings OK"
+        )
     # ─────────────────────────────────────────────────────────────────────
 
     if args.test:
@@ -3473,7 +3887,7 @@ def main() -> None:
     offline_event = asyncio.Event()
 
     def _signal_handler() -> None:
-        logger.info("Shutdown signal received")
+        log_event(logger, "info", "SHUTDOWN", "shutdown signal received")
         shutdown_event.set()
 
     # ── CBL maintenance scheduler ───────────────────────────────────────
@@ -3539,8 +3953,11 @@ def main() -> None:
                 enabled_jobs = [job_doc]
 
         if not enabled_jobs:
-            logger.warning(
-                "No enabled jobs found. Visit the web UI to create jobs: http://localhost:8080"
+            log_event(
+                logger,
+                "warn",
+                "CONTROL",
+                "no enabled jobs found. Visit the web UI to create jobs",
             )
             # Keep running for UI management
             log_event(logger, "info", "CONTROL", "waiting for jobs via web UI")
@@ -3586,7 +4003,7 @@ def main() -> None:
 
         # Wire signal handler to PipelineManager
         def _pipeline_signal_handler() -> None:
-            logger.info("Shutdown signal received")
+            log_event(logger, "info", "SHUTDOWN", "shutdown signal received")
             pipeline_manager.trigger_shutdown()
             loop.call_soon_threadsafe(loop.stop)
 
@@ -3610,11 +4027,16 @@ def main() -> None:
         loop.run_forever()
 
     except KeyboardInterrupt:
-        logger.info("Interrupted")
+        log_event(logger, "info", "SHUTDOWN", "interrupted")
         pipeline_manager.trigger_shutdown()
     except Exception as e:
-        logger.error("Fatal error: %s", e)
-        logger.exception("Exception details:")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "fatal error",
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
     finally:
         # Wait for manager thread to finish
         if manager_thread is not None and manager_thread.is_alive():
@@ -3627,7 +4049,7 @@ def main() -> None:
         if USE_CBL:
             close_db()
         loop.close()
-        logger.info("Shutdown complete")
+        log_event(logger, "info", "SHUTDOWN", "shutdown complete")
 
 
 if __name__ == "__main__":

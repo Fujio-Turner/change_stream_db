@@ -667,7 +667,13 @@ async def get_jobs(request):
 
         return json_response({"jobs": result_jobs, "count": len(result_jobs)})
     except Exception as e:
-        logger.exception("Error listing jobs")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error listing jobs",
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return error_response(str(e), status=500)
 
 
@@ -785,7 +791,13 @@ async def get_jobs_status(request):
 
         return json_response({"jobs": result_jobs, "count": len(result_jobs)})
     except Exception as e:
-        logger.exception("Error loading jobs status")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error loading jobs status",
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return json_response({"jobs": [], "count": 0, "error": str(e)})
 
 
@@ -982,7 +994,7 @@ async def job_control_proxy(request, endpoint: str):
         port = 9090
 
     url = f"http://{worker_host}:{port}/{endpoint}"
-    logger.debug(f"Proxying request to {url}")
+    log_event(logger, "debug", "CONTROL", "proxying request", url=url)
     try:
         # Increased timeout from 5s to 30s for job control operations
         # Job operations may take time due to thread pool executor and CBL operations
@@ -996,23 +1008,42 @@ async def job_control_proxy(request, endpoint: str):
                     # If response isn't JSON, get text instead
                     text = await resp.text()
                     data = {"error": f"Invalid response from metrics server: {text}"}
-                logger.debug(f"Proxy response: {resp.status}")
+                log_event(
+                    logger, "debug", "CONTROL", "proxy response", status=resp.status
+                )
                 return json_response(data, status=resp.status)
     except _aiohttp.ClientConnectorError as exc:
-        logger.error(f"Cannot connect to metrics server at {url}: {exc}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "cannot connect to metrics server",
+            url=url,
+            error_detail="%s" % exc,
+        )
         return json_response(
             {"error": f"Metrics server unreachable: {exc}"}, status=502
         )
     except asyncio.TimeoutError as exc:
-        logger.error(f"Timeout calling metrics server at {url} after 30s")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "timeout calling metrics server",
+            url=url,
+            timeout_s=30,
+        )
         return json_response(
             {"error": "Job operation timed out - may be slow"}, status=504
         )
     except Exception as exc:
-        import traceback
-
-        logger.error(f"Job control proxy error: {exc}")
-        logger.error(traceback.format_exc())
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "job control proxy error",
+            error_detail="%s" % exc,
+        )
         return json_response({"error": f"Proxy error: {str(exc)}"}, status=502)
 
 

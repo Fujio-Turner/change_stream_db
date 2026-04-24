@@ -98,7 +98,7 @@ class AttachmentPostProcessor:
                 log_event(
                     logger,
                     "warn",
-                    "PROCESSING",
+                    "ATTACHMENT",
                     "unknown post_process action: %s" % action,
                     doc_id=doc_id,
                 )
@@ -114,7 +114,7 @@ class AttachmentPostProcessor:
             log_event(
                 logger,
                 "warn",
-                "PROCESSING",
+                "ATTACHMENT",
                 "post-process '%s' error (continuing): %s" % (action, exc),
                 doc_id=doc_id,
             )
@@ -151,7 +151,7 @@ class AttachmentPostProcessor:
                 log_event(
                     logger,
                     "info",
-                    "PROCESSING",
+                    "ATTACHMENT",
                     "post-process update_doc succeeded",
                     doc_id=doc_id,
                 )
@@ -177,7 +177,7 @@ class AttachmentPostProcessor:
         log_event(
             logger,
             "warn",
-            "PROCESSING",
+            "ATTACHMENT",
             "post-process update_doc exhausted conflict retries",
             doc_id=doc_id,
         )
@@ -208,7 +208,7 @@ class AttachmentPostProcessor:
                 log_event(
                     logger,
                     "info",
-                    "PROCESSING",
+                    "ATTACHMENT",
                     "post-process set_ttl succeeded (_exp=%d)" % body["_exp"],
                     doc_id=doc_id,
                 )
@@ -231,7 +231,7 @@ class AttachmentPostProcessor:
         log_event(
             logger,
             "warn",
-            "PROCESSING",
+            "ATTACHMENT",
             "post-process set_ttl exhausted conflict retries",
             doc_id=doc_id,
         )
@@ -262,7 +262,7 @@ class AttachmentPostProcessor:
                 log_event(
                     logger,
                     "info",
-                    "PROCESSING",
+                    "ATTACHMENT",
                     "post-process delete_doc succeeded",
                     doc_id=doc_id,
                 )
@@ -286,7 +286,7 @@ class AttachmentPostProcessor:
         log_event(
             logger,
             "warn",
-            "PROCESSING",
+            "ATTACHMENT",
             "post-process delete_doc exhausted conflict retries",
             doc_id=doc_id,
         )
@@ -327,7 +327,7 @@ class AttachmentPostProcessor:
                         log_event(
                             logger,
                             "debug",
-                            "PROCESSING",
+                            "ATTACHMENT",
                             "attachment already missing: %s" % name,
                             doc_id=doc_id,
                         )
@@ -349,7 +349,7 @@ class AttachmentPostProcessor:
                 log_event(
                     logger,
                     "warn",
-                    "PROCESSING",
+                    "ATTACHMENT",
                     "failed to delete attachment %s after retries" % name,
                     doc_id=doc_id,
                 )
@@ -357,7 +357,7 @@ class AttachmentPostProcessor:
         log_event(
             logger,
             "info",
-            "PROCESSING",
+            "ATTACHMENT",
             "post-process delete_attachments completed",
             doc_id=doc_id,
         )
@@ -410,7 +410,7 @@ class AttachmentPostProcessor:
         log_event(
             logger,
             "info",
-            "PROCESSING",
+            "ATTACHMENT",
             "post-process purge succeeded",
             doc_id=doc_id,
         )
@@ -503,7 +503,7 @@ class AttachmentPostProcessor:
             log_event(
                 logger,
                 "warn",
-                "PROCESSING",
+                "ATTACHMENT",
                 "conflict re-fetch returned %d" % exc.status,
                 doc_id=doc_id,
             )
@@ -512,7 +512,7 @@ class AttachmentPostProcessor:
             log_event(
                 logger,
                 "warn",
-                "PROCESSING",
+                "ATTACHMENT",
                 "conflict re-fetch failed: %s" % exc,
                 doc_id=doc_id,
             )
@@ -529,7 +529,7 @@ class AttachmentPostProcessor:
                     log_event(
                         logger,
                         "warn",
-                        "PROCESSING",
+                        "ATTACHMENT",
                         "attachment %s no longer present after conflict" % name,
                         doc_id=doc_id,
                     )
@@ -540,7 +540,7 @@ class AttachmentPostProcessor:
         log_event(
             logger,
             "debug",
-            "PROCESSING",
+            "ATTACHMENT",
             "conflict re-fetch ok, new rev=%s" % fresh_rev,
             doc_id=doc_id,
         )
@@ -560,7 +560,7 @@ class AttachmentPostProcessor:
         log_event(
             logger,
             "warn",
-            "PROCESSING",
+            "ATTACHMENT",
             "document not found during post-process %s (skipping)" % action,
             doc_id=doc_id,
         )

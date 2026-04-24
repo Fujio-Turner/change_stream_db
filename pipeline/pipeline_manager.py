@@ -73,15 +73,15 @@ class PipelineManager:
         This blocks until shutdown signal is received.
         """
         try:
-            log_event(self.logger, "info", "MANAGER_START", "PipelineManager starting")
+            log_event(self.logger, "info", "CONTROL", "PipelineManager starting")
 
             # Load all enabled jobs from CBL
             jobs = self._load_enabled_jobs()
             log_event(
                 self.logger,
                 "info",
-                "JOBS_LOADED",
-                f"loaded {len(jobs)} enabled jobs",
+                "CONTROL",
+                "loaded %d enabled jobs" % len(jobs),
             )
 
             # Create Pipeline for each job
@@ -104,7 +104,7 @@ class PipelineManager:
                         self.logger,
                         "error",
                         "CHANGES",
-                        f"Failed to start job: {e}",
+                        "failed to start job: %s" % e,
                         job_id=job_id,
                     )
 
@@ -121,8 +121,8 @@ class PipelineManager:
             log_event(
                 self.logger,
                 "info",
-                "MANAGER_READY",
-                f"PipelineManager ready with {len(self._pipelines)} jobs",
+                "CONTROL",
+                "PipelineManager ready with %d jobs" % len(self._pipelines),
             )
 
             # Block until shutdown signal
@@ -132,8 +132,8 @@ class PipelineManager:
             log_event(
                 self.logger,
                 "error",
-                "MANAGER_ERROR",
-                f"PipelineManager error: {e}",
+                "CONTROL",
+                "PipelineManager error: %s" % e,
             )
             raise
 
@@ -149,7 +149,7 @@ class PipelineManager:
         log_event(
             self.logger,
             "info",
-            "MANAGER_SHUTDOWN",
+            "CONTROL",
             "shutting down all pipelines",
         )
 
@@ -168,7 +168,7 @@ class PipelineManager:
                     self.logger,
                     "error",
                     "CHANGES",
-                    f"Error stopping job: {e}",
+                    "error stopping job: %s" % e,
                     job_id=job_id,
                 )
 
@@ -179,7 +179,7 @@ class PipelineManager:
         log_event(
             self.logger,
             "info",
-            "MANAGER_STOPPED",
+            "CONTROL",
             "PipelineManager stopped",
         )
 
@@ -199,9 +199,9 @@ class PipelineManager:
                 if self._pipelines[job_id].is_running():
                     log_event(
                         self.logger,
-                        "warning",
+                        "warn",
                         "CHANGES",
-                        f"Job already running",
+                        "job already running",
                         job_id=job_id,
                     )
                     return False
@@ -220,7 +220,7 @@ class PipelineManager:
                     self.logger,
                     "error",
                     "CHANGES",
-                    f"Job not found",
+                    "job not found",
                     job_id=job_id,
                 )
                 return False
@@ -233,7 +233,7 @@ class PipelineManager:
                 self.logger,
                 "error",
                 "CHANGES",
-                f"Error starting job: {e}",
+                "error starting job: %s" % e,
                 job_id=job_id,
             )
             return False
@@ -252,9 +252,9 @@ class PipelineManager:
             if job_id not in self._pipelines:
                 log_event(
                     self.logger,
-                    "warning",
+                    "warn",
                     "CHANGES",
-                    f"Job not in registry",
+                    "job not in registry",
                     job_id=job_id,
                 )
                 return True
@@ -276,9 +276,9 @@ class PipelineManager:
         if not self.stop_job(job_id, timeout_seconds):
             log_event(
                 self.logger,
-                "warning",
+                "warn",
                 "CHANGES",
-                f"Job did not stop within timeout",
+                "job did not stop within timeout",
                 job_id=job_id,
             )
         return self.start_job(job_id)
@@ -288,7 +288,7 @@ class PipelineManager:
         log_event(
             self.logger,
             "info",
-            "RESTART_ALL",
+            "CONTROL",
             "restarting all jobs",
         )
 
@@ -303,7 +303,7 @@ class PipelineManager:
                     self.logger,
                     "error",
                     "CHANGES",
-                    f"Error restarting job: {e}",
+                    "error restarting job: %s" % e,
                     job_id=job_id,
                 )
 
@@ -339,7 +339,7 @@ class PipelineManager:
         log_event(
             self.logger,
             "info",
-            "OFFLINE",
+            "CONTROL",
             "going offline — stopping all jobs",
         )
         with self._lock:
@@ -354,18 +354,18 @@ class PipelineManager:
                     self.logger,
                     "error",
                     "CHANGES",
-                    f"Error stopping job during offline: {e}",
+                    "error stopping job during offline: %s" % e,
                     job_id=job_id,
                 )
 
-        log_event(self.logger, "info", "OFFLINE", "all jobs stopped — offline")
+        log_event(self.logger, "info", "CONTROL", "all jobs stopped — offline")
 
     def go_online(self) -> None:
         """Resume all enabled jobs after an offline pause."""
         log_event(
             self.logger,
             "info",
-            "ONLINE",
+            "CONTROL",
             "going online — starting enabled jobs",
         )
         with self._lock:
@@ -388,15 +388,15 @@ class PipelineManager:
                     self.logger,
                     "error",
                     "CHANGES",
-                    f"Error starting job during online: {e}",
+                    "error starting job during online: %s" % e,
                     job_id=job_id,
                 )
 
         log_event(
             self.logger,
             "info",
-            "ONLINE",
-            f"online — {len(self._pipelines)} jobs running",
+            "CONTROL",
+            "online — %d jobs running" % len(self._pipelines),
         )
 
     def trigger_shutdown(self) -> None:
@@ -404,7 +404,7 @@ class PipelineManager:
         log_event(
             self.logger,
             "info",
-            "SHUTDOWN_TRIGGERED",
+            "SHUTDOWN",
             "shutdown signal received",
         )
         self._shutdown_event.set()
@@ -415,9 +415,9 @@ class PipelineManager:
             if job_id in self._pipelines and self._pipelines[job_id].is_running():
                 log_event(
                     self.logger,
-                    "warning",
+                    "warn",
                     "CHANGES",
-                    f"Job already running",
+                    "job already running",
                     job_id=job_id,
                 )
                 return
@@ -427,9 +427,9 @@ class PipelineManager:
             if running_count >= self.max_threads:
                 log_event(
                     self.logger,
-                    "warning",
+                    "warn",
                     "CHANGES",
-                    f"Max threads limit ({self.max_threads}) reached; queuing job",
+                    "max threads limit (%d) reached; queuing job" % self.max_threads,
                     job_id=job_id,
                 )
                 # For now, just log. In the future, we could queue this.
@@ -456,7 +456,7 @@ class PipelineManager:
                 self.logger,
                 "info",
                 "CHANGES",
-                f"Job started",
+                "job started",
                 job_id=job_id,
             )
 
@@ -469,7 +469,7 @@ class PipelineManager:
         log_event(
             self.logger,
             "info",
-            "MONITOR_STARTED",
+            "CONTROL",
             "thread monitor started",
         )
 
@@ -499,7 +499,7 @@ class PipelineManager:
                                         log_event(
                                             self.logger,
                                             "error",
-                                            "AUTH_FAILURE",
+                                            "CHANGES",
                                             "Job stopped due to authentication failure "
                                             "(401/403). Will not auto-restart. "
                                             "Fix credentials and restart manually.",
@@ -518,9 +518,9 @@ class PipelineManager:
                                     log_event(
                                         self.logger,
                                         "info",
-                                        "OUTPUT_RECOVERED",
-                                        f"Output recovered after {attempt} retries, "
-                                        f"resetting backoff",
+                                        "RETRY",
+                                        "output recovered after %d retries, "
+                                        "resetting backoff" % attempt,
                                         job_id=job_id,
                                     )
                                     self._crash_backoff[job_id] = (0, 0)
@@ -530,7 +530,7 @@ class PipelineManager:
                             self.logger,
                             "error",
                             "CHANGES",
-                            f"Error monitoring job: {e}",
+                            "error monitoring job: %s" % e,
                             job_id=job_id,
                         )
 
@@ -538,15 +538,15 @@ class PipelineManager:
                 log_event(
                     self.logger,
                     "error",
-                    "MONITOR_CRASHED",
-                    f"monitor thread crashed: {e}",
+                    "CONTROL",
+                    "monitor thread crashed: %s" % e,
                 )
                 break
 
         log_event(
             self.logger,
             "info",
-            "MONITOR_STOPPED",
+            "CONTROL",
             "thread monitor stopped",
         )
 
@@ -571,9 +571,9 @@ class PipelineManager:
             log_event(
                 self.logger,
                 "warn",
-                "OUTPUT_RETRY",
-                f"Output down – waiting to retry (attempt {attempt}, "
-                f"backoff {backoff_seconds}s, {remaining:.0f}s remaining)",
+                "RETRY",
+                "output down – waiting to retry (attempt %d, "
+                "backoff %ds, %.0fs remaining)" % (attempt, backoff_seconds, remaining),
                 job_id=job_id,
             )
             self._crash_backoff[job_id] = (attempt, last_time)
@@ -582,9 +582,9 @@ class PipelineManager:
         log_event(
             self.logger,
             "warn",
-            "OUTPUT_RETRY",
-            f"Restarting crashed job (attempt {attempt}, "
-            f"next backoff {backoff_seconds}s)",
+            "RETRY",
+            "restarting crashed job (attempt %d, "
+            "next backoff %ds)" % (attempt, backoff_seconds),
             job_id=job_id,
         )
 
@@ -617,7 +617,7 @@ class PipelineManager:
             log_event(
                 self.logger,
                 "error",
-                "JOBS_LOAD_ERROR",
-                f"error loading jobs: {e}",
+                "CONTROL",
+                "error loading jobs: %s" % e,
             )
             return []

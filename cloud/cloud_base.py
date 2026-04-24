@@ -204,10 +204,12 @@ def render_key(
     key = _KEY_VAR_RE.sub(_replace, template)
     key_bytes = len(key.encode("utf-8"))
     if key_bytes > 1024:
-        logger.warning(
-            "Rendered key exceeds 1024-byte cloud provider limit (%d bytes): %.100s…",
-            key_bytes,
-            key,
+        log_event(
+            logger,
+            "warn",
+            "OUTPUT",
+            "rendered key exceeds 1024-byte cloud provider limit (%d bytes)"
+            % key_bytes,
         )
     return key
 
@@ -870,7 +872,7 @@ class BaseCloudForwarder(abc.ABC):
 
     # ── stats logging ───────────────────────────────────────────────────
 
-    def log_stats(self) -> None:
+    def log_stats(self, force_info: bool = False) -> None:
         """Log accumulated response time statistics."""
         if not self._resp_times:
             return
@@ -880,7 +882,7 @@ class BaseCloudForwarder(abc.ABC):
         hi = max(self._resp_times)
         log_event(
             logger,
-            "info",
+            "info" if force_info else "debug",
             "OUTPUT",
             "%s stats: %d ops | avg=%.1fms | min=%.1fms | max=%.1fms"
             % (self._provider.upper(), n, avg, lo, hi),

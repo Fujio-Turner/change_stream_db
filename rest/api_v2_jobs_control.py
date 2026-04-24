@@ -20,6 +20,7 @@ from typing import Optional, Any, Dict
 
 import aiohttp.web
 
+from pipeline.pipeline_logging import log_event
 from pipeline.pipeline_manager import PipelineManager
 
 logger = logging.getLogger("changes_worker")
@@ -65,20 +66,22 @@ async def api_job_start(
             status=400,
         )
 
-    logger.info(f"[JOB_CONTROL] Starting job {job_id}")
+    log_event(logger, "info", "CONTROL", "starting job", job_id=job_id)
     loop = asyncio.get_event_loop()
     try:
         # Check if already running before attempting start
         state = await loop.run_in_executor(None, manager.get_job_state, job_id)
         if state and state.get("status") == "running":
-            logger.info(f"[JOB_CONTROL] Job {job_id} already running")
+            log_event(logger, "info", "CONTROL", "job already running", job_id=job_id)
             return aiohttp.web.json_response(
                 {"status": "already_running", "job_id": job_id},
                 status=409,
             )
 
         success = await loop.run_in_executor(None, manager.start_job, job_id)
-        logger.info(f"[JOB_CONTROL] Job {job_id} start result: {success}")
+        log_event(
+            logger, "info", "CONTROL", "job start result: %s" % success, job_id=job_id
+        )
         if success:
             return aiohttp.web.json_response(
                 {"status": "started", "job_id": job_id},
@@ -90,7 +93,14 @@ async def api_job_start(
                 status=500,
             )
     except Exception as exc:
-        logger.error(f"[JOB_CONTROL] Error starting job {job_id}: {exc}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error starting job",
+            job_id=job_id,
+            error_detail="%s: %s" % (type(exc).__name__, exc),
+        )
         return aiohttp.web.json_response(
             {"error": str(exc)},
             status=500,

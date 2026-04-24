@@ -623,10 +623,13 @@ class OutputForwarder:
                     )
             elif exc.status in (401, 403):
                 # Subsequent auth failures logged at DEBUG
-                logger.debug(
-                    "Output auth failure (HTTP %d) for doc %s",
-                    exc.status,
-                    doc_id,
+                log_event(
+                    logger,
+                    "debug",
+                    "OUTPUT",
+                    "output auth failure",
+                    doc_id=doc_id,
+                    status=exc.status,
                 )
             # §3.13: Handle 415 (Unsupported Media Type)
             elif exc.status == 415 and not self._media_type_warned:
@@ -643,8 +646,13 @@ class OutputForwarder:
                 )
                 self._media_type_warned = True
             elif exc.status == 415:
-                logger.debug(
-                    "Output 415 for doc %s (content type %s)", doc_id, content_type
+                log_event(
+                    logger,
+                    "debug",
+                    "OUTPUT",
+                    "output 415 repeat",
+                    doc_id=doc_id,
+                    content_type=content_type,
                 )
 
             log_event(
@@ -758,7 +766,14 @@ class OutputForwarder:
                 self._permanent_5xx_warned[exc.status] = True
             elif exc.status in (501, 505, 506, 508, 510, 511):
                 # Subsequent occurrences logged at DEBUG
-                logger.debug("Output permanent 5xx %d for doc %s", exc.status, doc_id)
+                log_event(
+                    logger,
+                    "debug",
+                    "OUTPUT",
+                    "permanent 5xx",
+                    doc_id=doc_id,
+                    status=exc.status,
+                )
 
             log_event(
                 logger,
@@ -1045,7 +1060,7 @@ class OutputForwarder:
             )
             return False
 
-    def log_stats(self) -> None:
+    def log_stats(self, force_info: bool = False) -> None:
         """Log accumulated response time statistics."""
         if not self._log_response_times or not self._resp_times:
             return
@@ -1055,7 +1070,7 @@ class OutputForwarder:
         hi = max(self._resp_times)
         log_event(
             logger,
-            "info",
+            "info" if force_info else "debug",
             "OUTPUT",
             "output stats: %d requests | avg=%.1fms | min=%.1fms | max=%.1fms"
             % (n, avg, lo, hi),

@@ -1226,7 +1226,7 @@ class BaseOutputForwarder(abc.ABC):
 
     # ── stats logging ───────────────────────────────────────────────────
 
-    def log_stats(self) -> None:
+    def log_stats(self, force_info: bool = False) -> None:
         """Log accumulated response time statistics."""
         if not self._resp_times:
             return
@@ -1236,7 +1236,7 @@ class BaseOutputForwarder(abc.ABC):
         hi = max(self._resp_times)
         log_event(
             logger,
-            "info",
+            "info" if force_info else "debug",
             "OUTPUT",
             "%s stats: %d ops | avg=%.1fms | min=%.1fms | max=%.1fms"
             % (self._engine.upper(), n, avg, lo, hi),

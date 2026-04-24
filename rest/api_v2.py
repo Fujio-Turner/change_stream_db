@@ -14,6 +14,7 @@ import logging
 import uuid
 from aiohttp import web
 
+from pipeline.pipeline_logging import log_event
 from storage.cbl_store import CBLStore, USE_CBL
 
 logger = logging.getLogger("changes_worker")
@@ -36,7 +37,13 @@ async def api_get_inputs_changes(request: web.Request) -> web.Response:
             return web.json_response({"type": "inputs_changes", "src": []})
         return web.json_response(doc)
     except Exception as e:
-        logger.exception("Error loading inputs_changes")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error loading inputs_changes",
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -93,7 +100,13 @@ async def api_post_inputs_changes(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     except Exception as e:
-        logger.exception("Error saving inputs_changes")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error saving inputs_changes",
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -127,7 +140,13 @@ async def api_put_inputs_changes_entry(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     except Exception as e:
-        logger.exception(f"Error updating input {entry_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error updating input %s" % entry_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -154,7 +173,13 @@ async def api_delete_inputs_changes_entry(request: web.Request) -> web.Response:
 
         return web.json_response({"status": "ok", "id": entry_id})
     except Exception as e:
-        logger.exception(f"Error deleting input {entry_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error deleting input %s" % entry_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -179,7 +204,13 @@ async def api_get_outputs(request: web.Request) -> web.Response:
             return web.json_response({"type": f"outputs_{output_type}", "src": []})
         return web.json_response(doc)
     except Exception as e:
-        logger.exception(f"Error loading outputs_{output_type}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error loading outputs_%s" % output_type,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -222,7 +253,13 @@ async def api_post_outputs(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     except Exception as e:
-        logger.exception(f"Error saving outputs_{output_type}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error saving outputs_%s" % output_type,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -260,7 +297,13 @@ async def api_put_outputs_entry(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     except Exception as e:
-        logger.exception(f"Error updating output {entry_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error updating output %s" % entry_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -291,7 +334,13 @@ async def api_delete_outputs_entry(request: web.Request) -> web.Response:
 
         return web.json_response({"status": "ok", "id": entry_id})
     except Exception as e:
-        logger.exception(f"Error deleting output {entry_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error deleting output %s" % entry_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -310,7 +359,13 @@ async def api_get_jobs(request: web.Request) -> web.Response:
         jobs = store.list_jobs()
         return web.json_response({"jobs": jobs, "count": len(jobs)})
     except Exception as e:
-        logger.exception("Error listing jobs")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error listing jobs",
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -328,7 +383,13 @@ async def api_get_job(request: web.Request) -> web.Response:
             return web.json_response({"error": f"Job {job_id} not found"}, status=404)
         return web.json_response(job)
     except Exception as e:
-        logger.exception(f"Error loading job {job_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error loading job %s" % job_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -436,7 +497,13 @@ async def api_post_jobs(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     except Exception as e:
-        logger.exception("Error creating job")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error creating job",
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -485,7 +552,13 @@ async def api_put_job(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     except Exception as e:
-        logger.exception(f"Error updating job {job_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error updating job %s" % job_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -527,7 +600,13 @@ async def api_put_job_mapping(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     except Exception as e:
-        logger.exception(f"Error updating mapping for job {job_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error updating mapping for job %s" % job_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -557,7 +636,13 @@ async def api_delete_job(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        logger.exception(f"Error deleting job {job_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error deleting job %s" % job_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -606,7 +691,13 @@ async def api_refresh_job_input(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        logger.exception(f"Error refreshing job input {job_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error refreshing job input %s" % job_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -660,7 +751,13 @@ async def api_refresh_job_output(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        logger.exception(f"Error refreshing job output {job_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error refreshing job output %s" % job_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -681,7 +778,13 @@ async def api_get_tables_rdbms(request: web.Request) -> web.Response:
             return web.json_response({"type": "tables_rdbms", "tables": []})
         return web.json_response(doc)
     except Exception as e:
-        logger.exception("Error loading tables_rdbms")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error loading tables_rdbms",
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -724,7 +827,13 @@ async def api_post_tables_rdbms(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     except Exception as e:
-        logger.exception("Error saving tables_rdbms")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error saving tables_rdbms",
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -744,7 +853,13 @@ async def api_get_table_rdbms_entry(request: web.Request) -> web.Response:
             )
         return web.json_response(entry)
     except Exception as e:
-        logger.exception(f"Error loading table_rdbms {table_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error loading table_rdbms %s" % table_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -766,7 +881,13 @@ async def api_put_table_rdbms_entry(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     except Exception as e:
-        logger.exception(f"Error updating table_rdbms {table_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error updating table_rdbms %s" % table_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -788,7 +909,13 @@ async def api_delete_table_rdbms_entry(request: web.Request) -> web.Response:
         store.delete_table_rdbms(table_id)
         return web.json_response({"status": "ok", "id": table_id})
     except Exception as e:
-        logger.exception(f"Error deleting table_rdbms {table_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error deleting table_rdbms %s" % table_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -804,7 +931,13 @@ async def api_get_table_rdbms_used_by(request: web.Request) -> web.Response:
         used_by = store.get_tables_rdbms_used_by(table_id)
         return web.json_response({"table_id": table_id, "used_by": used_by})
     except Exception as e:
-        logger.exception(f"Error loading used-by for table_rdbms {table_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error loading used-by for table_rdbms %s" % table_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -840,7 +973,13 @@ async def api_get_job_eventing(request: web.Request) -> web.Response:
         )
         return web.json_response({"job_id": job_id, "eventing": eventing})
     except Exception as e:
-        logger.exception(f"Error loading eventing for job {job_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error loading eventing for job %s" % job_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -903,5 +1042,11 @@ async def api_put_job_eventing(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     except Exception as e:
-        logger.exception(f"Error updating eventing for job {job_id}")
+        log_event(
+            logger,
+            "error",
+            "CONTROL",
+            "error updating eventing for job %s" % job_id,
+            error_detail="%s: %s" % (type(e).__name__, e),
+        )
         return web.json_response({"error": str(e)}, status=500)

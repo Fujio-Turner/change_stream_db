@@ -15,7 +15,9 @@ import logging
 import time
 from collections import OrderedDict
 
-logger = logging.getLogger(__name__)
+from pipeline.pipeline_logging import log_event
+
+logger = logging.getLogger("changes_worker")
 
 # Defaults
 _DEFAULT_MAXSIZE = 50_000
@@ -56,7 +58,13 @@ class RecursionGuard:
             return False
         recorded_rev, _ = entry
         if recorded_rev == rev:
-            logger.debug("Recursion guard: suppressing echo for %s@%s", doc_id, rev)
+            log_event(
+                logger,
+                "debug",
+                "EVENTING",
+                "recursion guard: suppressing echo",
+                doc_id=doc_id,
+            )
             del self._cache[doc_id]
             return True
         return False
@@ -89,9 +97,11 @@ def create_recursion_guard(cfg: dict) -> RecursionGuard | None:
     maxsize = cfg.get("max_tracked_docs", _DEFAULT_MAXSIZE)
     ttl = cfg.get("ttl_seconds", _DEFAULT_TTL_SECONDS)
 
-    logger.info(
-        "Recursion guard enabled — tracking up to %d docs with %ds TTL",
-        maxsize,
-        ttl,
+    log_event(
+        logger,
+        "info",
+        "EVENTING",
+        "recursion guard enabled — tracking up to %d docs with %ds TTL"
+        % (maxsize, ttl),
     )
     return RecursionGuard(maxsize=maxsize, ttl=ttl)
