@@ -757,11 +757,16 @@ class BaseOutputForwarder(abc.ABC):
                     if self._pool is not None:
                         return  # restored between check and lock
                     self._pool_reconnecting = True
+                    self._reconnect_event.clear()
                     try:
                         await self._connect_pool()
                         self._pool_generation += 1
+                    except Exception:
+                        self._pool_generation += 1
+                        raise
                     finally:
                         self._pool_reconnecting = False
+                        self._reconnect_event.set()
 
                 log_event(
                     logger,
