@@ -138,7 +138,18 @@ async def page_eventing(request):
 
 # --- Logs API ---
 
-_LOG_LINE_RE = re.compile(
+# New format: TIMESTAMP [LEVEL] [KEY] job=..JOB #s:..SESSION #b:BATCH LOGGER: MESSAGE | field value | ...
+_LOG_LINE_NEW_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[.,]\d{3})\s+"  # timestamp
+    r"\[(\w+)\]\s*"  # level
+    r"\[([A-Z_]+)\]\s+"  # log_key
+    r"(.*?)"  # prefix (job=.. #s:.. #b:..)
+    r"([\w.]+):\s+"  # logger
+    r"(.+)$"  # rest (message | fields)
+)
+
+# Legacy format: TIMESTAMP [LEVEL] LOGGER: MESSAGE [LOG_KEY] key=value ...
+_LOG_LINE_OLD_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[.,]\d{3})\s+"  # timestamp
     r"\[(\w+)\]\s+"  # level
     r"([\w.]+):\s+"  # logger
@@ -147,7 +158,12 @@ _LOG_LINE_RE = re.compile(
 
 _LOG_KEY_RE = re.compile(r"\[([A-Z_]+)\]")
 
-# Known simple fields (before error_detail which can contain anything)
+# Context tag patterns in the prefix
+_JOB_TAG_RE = re.compile(r"job=\.\.(\S+)")
+_SESSION_TAG_RE = re.compile(r"#s:\.\.(\S+)")
+_BATCH_TAG_RE = re.compile(r"#b:(\S+)")
+
+# Known simple fields — legacy key=value format
 _SIMPLE_FIELDS = {
     "doc_id",
     "seq",
@@ -175,11 +191,79 @@ _SIMPLE_FIELDS = {
     "maintenance_type",
     "duration_ms",
     "operation",
+    "job_id",
 }
 
 
 def _parse_log_line(line: str) -> dict | None:
-    m = _LOG_LINE_RE.match(line.strip())
+    stripped = line.strip()
+    if not stripped:
+        return None
+
+    # Try new format first
+    m = _LOG_LINE_NEW_RE.match(stripped)
+    if m:
+        timestamp, level, log_key, prefix, logger_name, rest = m.groups()
+
+        # Extract context tags from prefix
+        job_tag = ""
+        session_tag = ""
+        batch_tag = ""
+        jm = _JOB_TAG_RE.search(prefix)
+        if jm:
+            job_tag = jm.group(1)
+        sm = _SESSION_TAG_RE.search(prefix)
+        if sm:
+            session_tag = sm.group(1)
+        bm = _BATCH_TAG_RE.search(prefix)
+        if bm:
+            batch_tag = bm.group(1)
+
+        # Parse pipe-delimited: MESSAGE_WITH_PIPES | field1 value | field2 value
+        # Fields are at the END.  Scan backwards from the last segment to find
+        # where the contiguous run of known-key segments starts.
+        fields = {}
+        message = rest
+        pipe_idx = rest.find(" | ")
+        if pipe_idx != -1:
+            segments = rest.split(" | ")
+            # Find the boundary: last non-field segment (scanning from end)
+            first_field = len(segments)
+            for i in range(len(segments) - 1, 0, -1):
+                seg = segments[i].strip()
+                if not seg:
+                    continue
+                sp = seg.find(" ")
+                key = seg[:sp] if sp != -1 else seg
+                if key in _PIPE_FIELD_KEYS:
+                    first_field = i
+                    fields[key] = seg[sp + 1 :] if sp != -1 else ""
+                else:
+                    break  # hit a non-field segment, stop
+            message = " | ".join(segments[:first_field])
+
+        # Inject context tags as fields for filtering
+        if job_tag:
+            fields["job_tag"] = job_tag
+        if session_tag:
+            fields["session"] = session_tag
+        if batch_tag:
+            fields["batch"] = batch_tag
+
+        return {
+            "timestamp": timestamp,
+            "level": level,
+            "logger": logger_name,
+            "message": message,
+            "log_key": log_key,
+            "fields": fields,
+            "job_tag": job_tag,
+            "session_tag": session_tag,
+            "batch_tag": batch_tag,
+        }
+
+    # Fallback: legacy format
+    m = _LOG_LINE_OLD_RE.match(stripped)
     if not m:
         return None
     timestamp, level, logger_name, rest = m.groups()
@@ -189,7 +273,6 @@ def _parse_log_line(line: str) -> dict | None:
     key_match = _LOG_KEY_RE.search(rest)
     if key_match:
         log_key = key_match.group(1)
-        # Message is everything before the log_key
         message = rest[: key_match.start()].strip()
         fields_str = rest[key_match.end() :].strip()
     else:
@@ -199,14 +282,12 @@ def _parse_log_line(line: str) -> dict | None:
     # Parse key=value fields
     fields = {}
     if fields_str:
-        # error_detail is special — it's always last and can contain anything
         ed_idx = fields_str.find("error_detail=")
         if ed_idx >= 0:
             before = fields_str[:ed_idx].strip()
             fields["error_detail"] = fields_str[ed_idx + len("error_detail=") :]
             fields_str = before
 
-        # Parse remaining simple key=value pairs
         for part in fields_str.split():
             if "=" in part:
                 k, v = part.split("=", 1)
@@ -220,43 +301,442 @@ def _parse_log_line(line: str) -> dict | None:
         "message": message,
         "log_key": log_key,
         "fields": fields,
+        "job_tag": "",
+        "session_tag": "",
+        "batch_tag": "",
     }
 
 
 _LEVEL_RANK = {"ERROR": 0, "WARNING": 1, "INFO": 2, "DEBUG": 3, "TRACE": 4}
 
 
+_CHUNK = 32_768  # 32 KB read chunk
+_INDEX_STEP = 1000  # record byte offset every N lines
+
+
+# ── Line-count + sparse index cache ───────────────────────
+# Keyed by resolved path string.  Invalidated when mtime or size changes.
+# {
+#   "mtime": float,
+#   "size":  int,
+#   "total": int,                     # total line count
+#   "index": { 0: 0, 1000: 82341, …} # line_number → byte_offset
+# }
+_line_cache: dict[str, dict] = {}
+
+
+def _get_line_info(path: Path) -> dict:
+    """Return total line count + sparse index for *path*.
+
+    First call scans the file counting newlines in 32 KB chunks — O(1) memory,
+    sequential I/O.  Records the byte offset every _INDEX_STEP lines for fast
+    seeking later.  Result is cached until the file's mtime or size changes.
+    """
+    stat = path.stat()
+    key = str(path)
+    cached = _line_cache.get(key)
+    if cached and cached["mtime"] == stat.st_mtime and cached["size"] == stat.st_size:
+        return cached
+
+    index: dict[int, int] = {0: 0}
+    total = 0
+    with open(path, "rb") as f:
+        while True:
+            offset_before = f.tell()
+            chunk = f.read(_CHUNK)
+            if not chunk:
+                break
+            pos = 0
+            while True:
+                nl = chunk.find(b"\n", pos)
+                if nl == -1:
+                    break
+                total += 1
+                if total % _INDEX_STEP == 0:
+                    index[total] = offset_before + nl + 1
+                pos = nl + 1
+
+    entry = {
+        "mtime": stat.st_mtime,
+        "size": stat.st_size,
+        "total": total,
+        "index": index,
+    }
+    _line_cache[key] = entry
+    return entry
+
+
+def _seek_to_line(path: Path, from_line: int):
+    """Seek a file to *from_line* using the sparse index.  Returns (file, info)."""
+    info = _get_line_info(path)
+    idx = info["index"]
+    nearest = 0
+    for k in idx:
+        if k <= from_line and k > nearest:
+            nearest = k
+    f = open(path, "rb")
+    f.seek(idx[nearest])
+    for _ in range(from_line - nearest):
+        f.readline()
+    return f, info
+
+
+# Maps log_key → pipeline stage (server-side, mirrors the frontend)
+_LOG_KEY_STAGE = {
+    "CHANGES": "source",
+    "HTTP": "source",
+    "PROCESSING": "process",
+    "EVENTING": "process",
+    "ATTACHMENT": "process",
+    "MAPPING": "process",
+    "FLOOD": "process",
+    "OUTPUT": "output",
+    "CHECKPOINT": "output",
+    "RETRY": "output",
+    "DLQ": "dlq",
+    "CBL": "infra",
+    "METRICS": "infra",
+    "CONTROL": "infra",
+    "SHUTDOWN": "infra",
+}
+
+_LEVEL_BADGE_CLS = {
+    "ERROR": "badge-error",
+    "CRITICAL": "badge-error",
+    "WARNING": "badge-warning",
+    "INFO": "badge-info",
+    "TRACE": "badge-ghost opacity-50",
+}
+
+_SKIP_FIELDS = {"doc_id", "job_tag", "session", "batch", "job_id"}
+
+# Known pipe-delimited field keys (log keys from GUIDE_LOGGING.md)
+# Used to distinguish "| field value" from message continuations
+_PIPE_FIELD_KEYS = {
+    "job",
+    "op",
+    "doc_id",
+    "seq",
+    "status",
+    "url",
+    "attempt",
+    "el_ms",
+    "dur_ms",
+    "out_ms",
+    "mode",
+    "method",
+    "bytes",
+    "store",
+    "batch",
+    "in_count",
+    "filt_count",
+    "host",
+    "port",
+    "delay_s",
+    "field_ct",
+    "err",
+    "doc_count",
+    "doc_type",
+    "seq_from",
+    "seq_to",
+    "inc_docs",
+    "fetched",
+    "docs_miss",
+    "attach",
+    "ok",
+    "failed",
+    "filt_out",
+    "chkpt",
+    "db_name",
+    "db_path",
+    "db_mb",
+    "manifest",
+    "maint",
+    "trigger",
+    "session",
+}
+
+
+def _esc(s: str) -> str:
+    return (
+        s.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _render_line_html(entry: dict, idx: int) -> str:
+    """Build the HTML for a single log line — same output as the frontend renderLogs()."""
+    stage = _LOG_KEY_STAGE.get(entry.get("log_key") or "", "")
+    stage_cls = f" log-stage-{stage}" if stage else ""
+    parts = [
+        f'<div class="log-line flex flex-wrap items-start gap-2 px-3 py-1{stage_cls}" data-idx="{idx}" onclick="onLogClick({idx})">'
+    ]
+
+    # Timestamp
+    parts.append(f'<span class="log-ts">{_esc(entry.get("timestamp", ""))}</span>')
+
+    # Level badge
+    level = entry.get("level", "")
+    badge_cls = _LEVEL_BADGE_CLS.get(level, "badge-ghost")
+    parts.append(f'<span class="badge badge-xs {badge_cls}">{_esc(level)}</span>')
+
+    # Log key
+    log_key = entry.get("log_key") or ""
+    if log_key:
+        parts.append(
+            f'<span class="badge badge-outline badge-xs">{_esc(log_key)}</span>'
+        )
+
+    # Context tags
+    job_tag = entry.get("job_tag", "")
+    if job_tag:
+        parts.append(
+            f'<span class="badge badge-secondary badge-xs font-mono" title="Job tag">job:..{_esc(job_tag)}</span>'
+        )
+    session_tag = entry.get("session_tag", "")
+    if session_tag:
+        parts.append(
+            f'<span class="badge badge-accent badge-xs font-mono" title="Session ID">#s:..{_esc(session_tag)}</span>'
+        )
+    batch_tag = entry.get("batch_tag", "")
+    if batch_tag:
+        parts.append(
+            f'<span class="badge badge-primary badge-xs font-mono" title="Batch ID">#b:{_esc(batch_tag)}</span>'
+        )
+
+    # Doc ID
+    fields = entry.get("fields") or {}
+    doc_id = fields.get("doc_id", "")
+    if doc_id:
+        parts.append(
+            f'<span class="badge badge-primary badge-xs font-mono">📄 {_esc(doc_id)}</span>'
+        )
+
+    # Message
+    parts.append(
+        f'<span class="log-msg flex-1">{_esc(entry.get("message", ""))}</span>'
+    )
+
+    # Extra fields as badges
+    for k, v in fields.items():
+        if k in _SKIP_FIELDS:
+            continue
+        v_str = str(v)
+        if len(v_str) > 60:
+            v_str = v_str[:57] + "…"
+        parts.append(
+            f'<span class="badge badge-ghost badge-xs font-mono">{_esc(k)}={_esc(v_str)}</span>'
+        )
+
+    parts.append("</div>")
+    return "".join(parts)
+
+
+# Timestamp regex for binary search
+_TS_PREFIX_RE = re.compile(rb"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+
+
+def _find_line_for_time(path: Path, target: str) -> int:
+    """Binary search a chronologically-sorted log for *target* timestamp.
+
+    Returns the line number (0-based from top) of the first line whose
+    timestamp >= target.  Uses the sparse index to convert byte offset
+    to line number.
+    """
+    size = path.stat().st_size
+    if size == 0:
+        return 0
+    target_b = target.encode("utf-8")
+
+    # Binary search on byte offsets to find the target offset
+    with open(path, "rb") as f:
+        lo, hi = 0, size
+        while lo < hi:
+            mid = (lo + hi) // 2
+            f.seek(mid)
+            if mid > 0:
+                f.readline()  # skip to next complete line
+            line_start = f.tell()
+            if line_start >= size:
+                hi = mid
+                continue
+            line = f.readline()
+            m = _TS_PREFIX_RE.match(line)
+            if not m:
+                lo = line_start + len(line)
+                continue
+            if m.group(1) < target_b:
+                lo = line_start + len(line)
+            else:
+                hi = mid
+    target_offset = lo
+
+    # Convert byte offset → line number using the sparse index.
+    # Find the highest index entry whose offset <= target_offset,
+    # then count lines forward from there.
+    info = _get_line_info(path)
+    nearest_line = 0
+    nearest_offset = 0
+    for ln, off in info["index"].items():
+        if off <= target_offset and ln > nearest_line:
+            nearest_line = ln
+            nearest_offset = off
+
+    # Count lines from nearest_offset to target_offset
+    line_num = nearest_line
+    with open(path, "rb") as f:
+        f.seek(nearest_offset)
+        while f.tell() < target_offset:
+            raw = f.readline()
+            if not raw:
+                break
+            line_num += 1
+
+    return line_num
+
+
 async def get_logs(request):
-    max_lines = min(int(request.query.get("lines", "500")), 2000)
+    page_size = min(int(request.query.get("page_size", "500")), 5000)
     file_name = request.query.get("file", "changes_worker.log")
-    min_level = request.query.get("level", "").upper()  # e.g. "INFO" → skip DEBUG/TRACE
-    if not file_name.endswith(".log") or "/" in file_name or "\\" in file_name:
+    min_level = request.query.get("level", "").upper()
+    from_line_param = request.query.get("from_line", "")
+    before_time = request.query.get("before_time", "")
+
+    if not file_name.endswith(".log") or "\\" in file_name or ".." in file_name:
         return error_response("Invalid file name", 400)
-    log_path = ROOT / "logs" / file_name
+    log_path = (ROOT / "logs" / file_name).resolve()
+    if not str(log_path).startswith(str((ROOT / "logs").resolve())):
+        return error_response("Invalid file path", 400)
     if not log_path.is_file():
         return json_response([])
 
     level_threshold = _LEVEL_RANK.get(min_level, -1)
 
-    # Read last N lines efficiently
     try:
-        with open(log_path, "r", errors="replace") as f:
-            all_lines = f.readlines()
-        tail = all_lines[-max_lines:] if len(all_lines) > max_lines else all_lines
+        # Determine start line
+        if before_time:
+            target_line = _find_line_for_time(log_path, before_time)
+            start = max(0, target_line - page_size)
+        elif from_line_param:
+            start = int(from_line_param)
+        else:
+            info = _get_line_info(log_path)
+            start = max(0, info["total"] - page_size)
+
+        # Single pass: seek → read → parse → filter → build HTML → aggregate
+        f, info = _seek_to_line(log_path, start)
+        total = info["total"]
+        size = info["size"]
+
+        entries = []  # lightweight entries for client-side filtering/charts
+        html_lines = []  # pre-rendered HTML per line
+        level_counts = {"ERROR": 0, "WARNING": 0, "INFO": 0, "DEBUG": 0, "TRACE": 0}
+        stage_counts = {"source": 0, "process": 0, "output": 0, "dlq": 0, "infra": 0}
+        time_buckets = {}  # "YYYY-MM-DD HH:MM" → {errors,warnings,info,debug,source,process,...}
+        line_idx = 0
+
+        try:
+            while line_idx < page_size:
+                raw = f.readline()
+                if not raw:
+                    break
+                parsed = _parse_log_line(raw.decode("utf-8", errors="replace"))
+                if not parsed:
+                    line_idx += 1
+                    continue
+
+                line_idx += 1
+
+                # Level filter
+                if level_threshold >= 0:
+                    entry_rank = _LEVEL_RANK.get(parsed["level"], 4)
+                    if entry_rank > level_threshold:
+                        continue
+
+                # Aggregate: level + stage counts
+                lv = parsed["level"]
+                if lv in level_counts:
+                    level_counts[lv] += 1
+                stage = _LOG_KEY_STAGE.get(parsed.get("log_key") or "", "process")
+                if stage in stage_counts:
+                    stage_counts[stage] += 1
+
+                # Aggregate: time buckets for charts
+                ts = parsed.get("timestamp", "")
+                if len(ts) >= 16:
+                    bucket_key = ts[:16].replace(",", ".")  # "YYYY-MM-DD HH:MM"
+                    bkt = time_buckets.get(bucket_key)
+                    if not bkt:
+                        bkt = {
+                            "errors": 0,
+                            "warnings": 0,
+                            "info": 0,
+                            "debug": 0,
+                            "source": 0,
+                            "process": 0,
+                            "output": 0,
+                            "dlq": 0,
+                            "infra": 0,
+                            "docs_in": 0,
+                            "docs_out_ok": 0,
+                            "docs_out_fail": 0,
+                            "retries": 0,
+                        }
+                        time_buckets[bucket_key] = bkt
+                    if lv == "ERROR":
+                        bkt["errors"] += 1
+                    elif lv == "WARNING":
+                        bkt["warnings"] += 1
+                    elif lv == "INFO":
+                        bkt["info"] += 1
+                    elif lv == "DEBUG":
+                        bkt["debug"] += 1
+                    bkt[stage] = bkt.get(stage, 0) + 1
+                    fields = parsed.get("fields") or {}
+                    doc_count = fields.get("doc_count") or fields.get("batch")
+                    if doc_count:
+                        try:
+                            bkt["docs_in"] += int(doc_count)
+                        except ValueError:
+                            pass
+                    if stage == "output" and fields.get("doc_id"):
+                        if lv == "ERROR":
+                            bkt["docs_out_fail"] += 1
+                        else:
+                            bkt["docs_out_ok"] += 1
+                    if parsed.get("log_key") == "RETRY":
+                        bkt["retries"] += 1
+
+                # Build HTML for this line
+                html_lines.append(_render_line_html(parsed, len(entries)))
+
+                # Keep lightweight entry for client-side (search, insight, stakes)
+                entries.append(parsed)
+        finally:
+            f.close()
+
+        actual_from = start
+        actual_to = min(start + line_idx, total)
+
     except Exception as exc:
         return error_response(str(exc), 500)
 
-    entries = []
-    for line in tail:
-        parsed = _parse_log_line(line)
-        if parsed:
-            if level_threshold >= 0:
-                entry_rank = _LEVEL_RANK.get(parsed["level"], 4)
-                if entry_rank > level_threshold:
-                    continue
-            entries.append(parsed)
-
-    return json_response({"entries": entries, "total_lines": len(all_lines)})
+    return json_response(
+        {
+            "entries": entries,
+            "html": "".join(html_lines),
+            "counts": {"levels": level_counts, "stages": stage_counts},
+            "time_buckets": time_buckets,
+            "from_line": actual_from,
+            "to_line": actual_to,
+            "total_lines": total,
+            "file_size": size,
+            "has_older": actual_from > 0,
+            "has_newer": actual_to < total,
+        }
+    )
 
 
 async def get_log_files(request):
@@ -264,12 +744,14 @@ async def get_log_files(request):
     if not logs_dir.is_dir():
         return json_response([])
     files = []
-    for p in logs_dir.iterdir():
-        if p.is_file() and p.suffix == ".log":
+    for p in logs_dir.rglob("*.log"):
+        if p.is_file():
             stat = p.stat()
+            # Use path relative to logs/ so subdirectory files are addressable
+            rel = p.relative_to(logs_dir)
             files.append(
                 {
-                    "name": p.name,
+                    "name": str(rel),
                     "size_bytes": stat.st_size,
                     "modified": datetime.datetime.fromtimestamp(
                         stat.st_mtime, tz=datetime.timezone.utc

@@ -1012,9 +1012,105 @@ Before submitting a PR that adds logging, verify:
 
 ---
 
+## Web UI Log Processing (`server.py` + `logs.html`)
+
+The admin UI Logs & Debugging page reads, parses, and renders log files via a tightly coupled pair:
+
+- **Backend**: `web/server.py` — API endpoint `GET /api/logs`, log file reader, line parser, HTML renderer, chart aggregator
+- **Frontend**: `web/templates/logs.html` — pagination controls, filters, charts, insight panel
+
+### ⚠️ Change Impact Matrix
+
+**If you change the log line format** (timestamp, level, key, prefix, or field layout), you MUST update all three layers:
+
+| What Changed | `pipeline/pipeline_logging.py` | `web/server.py` | `web/templates/logs.html` |
+|---|---|---|---|
+| Timestamp format | `RedactingFormatter` | `_LOG_LINE_NEW_RE`, `_TS_PREFIX_RE` | `LOG_RE_NEW`, `parseTS()` |
+| Level names (add/rename) | `LOG_KEYS` | `_LEVEL_RANK`, `_LEVEL_BADGE_CLS` | `activeLevels`, level filter buttons, `levelBadge()` |
+| Log key (add/rename) | `LOG_KEYS` | `_LOG_KEY_STAGE`, `_PIPE_FIELD_KEYS` | `LOG_KEY_STAGE`, `activeLogKeys` |
+| Prefix tags (job/session/batch) | `RedactingFormatter` | `_JOB_TAG_RE`, `_SESSION_TAG_RE`, `_BATCH_TAG_RE` | prefix regex in `parseLogLine()` |
+| Structured field (add/rename) | `_EXTRA_FIELDS` | `_PIPE_FIELD_KEYS` | `KNOWN_FIELDS` in `parseLogLine()` |
+| Pipeline stage mapping | — | `_LOG_KEY_STAGE` | `LOG_KEY_STAGE`, stage filter buttons, chart colors |
+
+### Architecture: Single-Pass Processing
+
+The backend processes each log line exactly **once**. When a page of logs is requested, a single loop performs all work:
+
+```
+seek to line N (sparse index)  →  readline()  →  parse  →  level filter
+                                                    ↓
+                                         ┌──────────┼──────────┐
+                                         ↓          ↓          ↓
+                                    build HTML   aggregate   append entry
+                                    (pre-render)  counts     (for client
+                                                  + time      filtering)
+                                                  buckets
+```
+
+The response contains:
+
+| Field | Purpose | Used By |
+|---|---|---|
+| `html` | Pre-rendered log viewer HTML | `renderLogs()` — direct `innerHTML` set |
+| `entries` | Parsed entry objects | Client-side search/filter, insight panel, stakes |
+| `counts.levels` | `{ERROR: N, WARNING: N, ...}` | Badge counts, bar chart |
+| `counts.stages` | `{source: N, process: N, ...}` | Badge counts, bar chart |
+| `time_buckets` | `{"YYYY-MM-DD HH:MM": {...}}` | Activity Timeline, Pipeline Timeline charts |
+| `from_line` / `to_line` / `total_lines` | Line-number pagination state | Pagination controls |
+
+The frontend uses `serverHtml` directly when no client-side filters are active (no search, no toggled-off levels/stages, no time range). When filters ARE active, it falls back to client-side rendering from `entries`.
+
+### Line Number Pagination
+
+Log files append at the bottom, so **line numbers from the top are stable references** — line 3000 is always line 3000 regardless of how many new lines are appended.
+
+| API Parameter | Behavior |
+|---|---|
+| *(none)* | Latest page (tail): `total_lines - page_size` to end |
+| `from_line=2500&page_size=500` | Lines 2500–3000 |
+| `before_time=2026-04-24 14:06:34&page_size=2000` | 2000 lines before that timestamp |
+
+Internally:
+- **Sparse line index** (`_get_line_info`): counts newlines in 32 KB chunks, records byte offset every 1000 lines. Cached by file mtime+size.
+- **Seeking** (`_seek_to_line`): uses the index to jump near the target, then skips remaining lines with `readline()` — read-and-discard, O(1) memory.
+- **Time search** (`_find_line_for_time`): binary search on byte offsets (O(log₂ filesize) seeks), then index lookup to convert byte offset → line number.
+
+### File Discovery
+
+`GET /api/log-files` scans `logs/` recursively (`rglob("*.log")`) and returns relative paths. The file picker sends paths like `eventing/eventing.log` to `GET /api/logs?file=...`. Path traversal is blocked (no `..`, resolved path must stay under `logs/`).
+
+### Pipe-Delimited Field Parsing
+
+The message can contain `|` characters as natural-language separators. Structured fields are always at the **end** of the line:
+
+```
+LOGGER: 16ms | batch 2 changes | 2 ok | 0 failed | out_ms 245.1 | seq_from 625000 | chkpt moved
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    MESSAGE                                    STRUCTURED FIELDS
+```
+
+The parser scans **backwards** from the last `|`-segment. Segments whose first word is a known field key (from `_PIPE_FIELD_KEYS` / `KNOWN_FIELDS`) are extracted as fields. The scan stops at the first non-field segment. Everything before that boundary is the message.
+
+**Adding a new structured field requires updating both sets:**
+1. `_PIPE_FIELD_KEYS` in `web/server.py`
+2. `KNOWN_FIELDS` in `web/templates/logs.html` (inside `parseLogLine()`)
+
+### Legacy Format Support
+
+Both parsers try the new format first, then fall back to the legacy format:
+
+| Format | Regex | Field Style |
+|---|---|---|
+| **New** (`_LOG_LINE_NEW_RE`) | `TIMESTAMP [LEVEL] [KEY] job=.. #s:.. #b:.. LOGGER: MSG \| fields` | pipe-delimited, scan from end |
+| **Legacy** (`_LOG_LINE_OLD_RE`) | `TIMESTAMP [LEVEL] LOGGER: MSG [KEY] key=value ...` | `key=value` pairs, whitelist (`_SIMPLE_FIELDS`) |
+
+---
+
 ## Related Documentation
 
 - **Implementation**: [`pipeline/pipeline_logging.py`](../pipeline/pipeline_logging.py) — `log_event()`, `_EXTRA_FIELDS`, `LOG_KEYS`, `RedactingFormatter`, `set_batch_id()`, `set_job_tag()`
+- **Web UI Backend**: [`web/server.py`](../web/server.py) — `get_logs()`, `_parse_log_line()`, `_render_line_html()`, `_get_line_info()`, `_seek_to_line()`, `_find_line_for_time()`
+- **Web UI Frontend**: [`web/templates/logs.html`](../web/templates/logs.html) — `parseLogLine()`, `renderLogs()`, `updateCharts()`, pagination, filters
 - **Configuration**: [`config.json`](../config.json) — `logging` section
 - **JSON Schema Standards**: [`guides/JSON_SCHEMA.md`](./JSON_SCHEMA.md) — field naming conventions (snake_case)
 - **Log Collection**: [`docs/LOG_COLLECTION_API.md`](../docs/LOG_COLLECTION_API.md) — `/_collect` endpoint for gathering diagnostics
@@ -1032,3 +1128,4 @@ Before submitting a PR that adds logging, verify:
 | 1.4     | 2026-04-24 | Renamed batch prefix to `#b:`, added session ID (`#s:..`) for correlating config to runtime across job restarts |
 | 1.5     | 2026-04-24 | Moved `[KEY]` to right after `[LEVEL]`, reordered prefix to `job= #s: #b:`, changed structured fields from `key=value` to pipe-delimited `\| key value` |
 | 1.6     | 2026-04-24 | Duration-first batch summary (`16ms \| batch 2 ...`), updated all examples to new format, added per-tier output samples |
+| 1.7     | 2026-04-24 | Added Web UI Log Processing section: change impact matrix, single-pass architecture, line-number pagination, sparse index, pipe-field parsing, legacy format support |
