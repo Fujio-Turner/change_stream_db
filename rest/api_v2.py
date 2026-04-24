@@ -90,6 +90,13 @@ async def api_post_inputs_changes(request: web.Request) -> web.Response:
         store = CBLStore()
         store.save_inputs_changes(data)
 
+        log_event(
+            logger,
+            "info",
+            "CONTROL",
+            "inputs_changes saved via API",
+            doc_count=len(data.get("src", [])),
+        )
         return web.json_response(
             {
                 "status": "ok",
@@ -134,6 +141,13 @@ async def api_put_inputs_changes_entry(request: web.Request) -> web.Response:
                 src[idx] = {**entry, **data}
                 doc["src"] = src
                 store.save_inputs_changes(doc)
+                log_event(
+                    logger,
+                    "info",
+                    "CONTROL",
+                    "input entry updated via API",
+                    doc_id=entry_id,
+                )
                 return web.json_response({"status": "ok", "id": entry_id})
 
         return web.json_response({"error": f"Input {entry_id} not found"}, status=404)
@@ -171,6 +185,9 @@ async def api_delete_inputs_changes_entry(request: web.Request) -> web.Response:
         doc["src"] = src
         store.save_inputs_changes(doc)
 
+        log_event(
+            logger, "info", "CONTROL", "input entry deleted via API", doc_id=entry_id
+        )
         return web.json_response({"status": "ok", "id": entry_id})
     except Exception as e:
         log_event(
@@ -243,6 +260,13 @@ async def api_post_outputs(request: web.Request) -> web.Response:
         store = CBLStore()
         store.save_outputs(output_type, data)
 
+        log_event(
+            logger,
+            "info",
+            "CONTROL",
+            "outputs_%s saved via API" % output_type,
+            doc_count=len(data.get("src", [])),
+        )
         return web.json_response(
             {
                 "status": "ok",
@@ -291,6 +315,13 @@ async def api_put_outputs_entry(request: web.Request) -> web.Response:
                 src[idx] = {**entry, **data}
                 doc["src"] = src
                 store.save_outputs(output_type, doc)
+                log_event(
+                    logger,
+                    "info",
+                    "CONTROL",
+                    "output entry updated via API",
+                    doc_id=entry_id,
+                )
                 return web.json_response({"status": "ok", "id": entry_id})
 
         return web.json_response({"error": f"Output {entry_id} not found"}, status=404)
@@ -332,6 +363,9 @@ async def api_delete_outputs_entry(request: web.Request) -> web.Response:
         doc["src"] = src
         store.save_outputs(output_type, doc)
 
+        log_event(
+            logger, "info", "CONTROL", "output entry deleted via API", doc_id=entry_id
+        )
         return web.json_response({"status": "ok", "id": entry_id})
     except Exception as e:
         log_event(
@@ -486,6 +520,7 @@ async def api_post_jobs(request: web.Request) -> web.Response:
         }
         store.save_checkpoint(job_id, checkpoint_doc)
 
+        log_event(logger, "info", "CONTROL", "job created via API", job_id=job_id)
         return web.json_response(
             {
                 "status": "ok",
@@ -543,6 +578,7 @@ async def api_put_job(request: web.Request) -> web.Response:
         # Save
         store.save_job(job_id, job)
 
+        log_event(logger, "info", "CONTROL", "job updated via API", job_id=job_id)
         return web.json_response(
             {
                 "status": "ok",
@@ -590,6 +626,9 @@ async def api_put_job_mapping(request: web.Request) -> web.Response:
         # Save
         store.save_job(job_id, job)
 
+        log_event(
+            logger, "info", "CONTROL", "job mapping updated via API", job_id=job_id
+        )
         return web.json_response(
             {
                 "status": "ok",
@@ -629,6 +668,7 @@ async def api_delete_job(request: web.Request) -> web.Response:
         store.delete_job(job_id)
         store.delete_checkpoint(job_id)
 
+        log_event(logger, "info", "CONTROL", "job deleted via API", job_id=job_id)
         return web.json_response(
             {
                 "status": "ok",
@@ -683,6 +723,9 @@ async def api_refresh_job_input(request: web.Request) -> web.Response:
         job["inputs"] = [input_entry]
         store.save_job(job_id, job)
 
+        log_event(
+            logger, "info", "CONTROL", "job input refreshed via API", job_id=job_id
+        )
         return web.json_response(
             {
                 "status": "ok",
@@ -742,6 +785,9 @@ async def api_refresh_job_output(request: web.Request) -> web.Response:
         job["outputs"] = [output_entry]
         store.save_job(job_id, job)
 
+        log_event(
+            logger, "info", "CONTROL", "job output refreshed via API", job_id=job_id
+        )
         return web.json_response(
             {
                 "status": "ok",
@@ -817,6 +863,13 @@ async def api_post_tables_rdbms(request: web.Request) -> web.Response:
         store = CBLStore()
         store.save_tables_rdbms(data)
 
+        log_event(
+            logger,
+            "info",
+            "CONTROL",
+            "tables_rdbms saved via API",
+            doc_count=len(data.get("tables", [])),
+        )
         return web.json_response(
             {
                 "status": "ok",
@@ -877,6 +930,13 @@ async def api_put_table_rdbms_entry(request: web.Request) -> web.Response:
         store = CBLStore()
         store.upsert_table_rdbms(data)
 
+        log_event(
+            logger,
+            "info",
+            "CONTROL",
+            "table_rdbms entry updated via API",
+            doc_id=table_id,
+        )
         return web.json_response({"status": "ok", "id": table_id})
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
@@ -907,6 +967,13 @@ async def api_delete_table_rdbms_entry(request: web.Request) -> web.Response:
             )
 
         store.delete_table_rdbms(table_id)
+        log_event(
+            logger,
+            "info",
+            "CONTROL",
+            "table_rdbms entry deleted via API",
+            doc_id=table_id,
+        )
         return web.json_response({"status": "ok", "id": table_id})
     except Exception as e:
         log_event(
@@ -1038,6 +1105,9 @@ async def api_put_job_eventing(request: web.Request) -> web.Response:
         job["eventing"] = existing
         store.save_job(job_id, job)
 
+        log_event(
+            logger, "info", "CONTROL", "job eventing updated via API", job_id=job_id
+        )
         return web.json_response({"status": "ok", "job_id": job_id})
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)

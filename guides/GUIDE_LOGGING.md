@@ -897,6 +897,66 @@ Use `["*"]` to see all keys (default).
 
 ---
 
+## Admin API & REST Endpoint Logging
+
+All HTTP endpoints that perform **lifecycle or config-mutating operations** log at `info` level with `[CONTROL]` log key. This ensures operators can see who hit which endpoint and when.
+
+### Lifecycle Endpoints (`/_*` and `/api/_*`)
+
+These are one-shot admin actions. Every call logs on entry:
+
+| Endpoint | Log Message | Fields |
+|----------|------------|--------|
+| `POST /_restart` | `restart requested via /_restart endpoint` | — |
+| `POST /_shutdown` | `graceful shutdown requested via /_shutdown endpoint` | — |
+| `POST /_offline` | `offline requested via /_offline endpoint` | — |
+| `POST /_online` | `online requested via /_online endpoint` | — |
+| `POST /_collect` | `diagnostics collection complete: <filename>` | — |
+| `POST /api/jobs/{id}/start` | `starting job` | `job_id` |
+| `POST /api/jobs/{id}/stop` | `stopping job` | `job_id` |
+| `POST /api/jobs/{id}/restart` | `restarting job` | `job_id` |
+| `POST /api/jobs/{id}/kill` | `killing job` | `job_id` |
+| `POST /api/_restart` | `restart all requested via /api/_restart` | — |
+| `POST /api/_offline` | `offline requested via /api/_offline` | — |
+| `POST /api/_online` | `online requested via /api/_online` | — |
+
+Read-only endpoints (`GET /_metrics`, `GET /_status`, `GET /api/jobs/{id}/state`) do **not** log — they fire too frequently.
+
+### CRUD Endpoints (`/api/jobs`, `/api/inputs_changes`, `/api/outputs_*`)
+
+Mutating operations (POST/PUT/DELETE) log on **success** at `info` level:
+
+| Endpoint | Log Message | Fields |
+|----------|------------|--------|
+| `POST /api/inputs_changes` | `inputs_changes saved via API` | `doc_count` |
+| `PUT /api/inputs_changes/{id}` | `input entry updated via API` | `doc_id` |
+| `DELETE /api/inputs_changes/{id}` | `input entry deleted via API` | `doc_id` |
+| `POST /api/outputs_{type}` | `outputs_%s saved via API` | `doc_count` |
+| `PUT /api/outputs_{type}/{id}` | `output entry updated via API` | `doc_id` |
+| `DELETE /api/outputs_{type}/{id}` | `output entry deleted via API` | `doc_id` |
+| `POST /api/jobs` | `job created via API` | `job_id` |
+| `PUT /api/jobs/{id}` | `job updated via API` | `job_id` |
+| `DELETE /api/jobs/{id}` | `job deleted via API` | `job_id` |
+| `POST /api/jobs/{id}/refresh-input` | `job input refreshed via API` | `job_id` |
+| `POST /api/jobs/{id}/refresh-output` | `job output refreshed via API` | `job_id` |
+| `PUT /api/v2/jobs/{id}/mapping` | `job mapping updated via API` | `job_id` |
+| `PUT /api/v2/jobs/{id}/eventing` | `job eventing updated via API` | `job_id` |
+
+GET endpoints do not log (read-only, high frequency).
+
+All error paths log at `error` level with `error_detail=` containing the exception type and message.
+
+### Example Log Output
+
+```
+[INFO] [CONTROL] changes_worker: restart requested via /_restart endpoint
+[INFO] [CONTROL] changes_worker: job created via API | job 2162fb33-6213-456d-93c1-213a64654e59
+[INFO] [CONTROL] changes_worker: stopping job | job job::2162fb33-6213-456d-93c1-213a64654e59
+[ERROR] [CONTROL] changes_worker: error starting job | job job::abc123 | err RuntimeError: job not found
+```
+
+---
+
 ## Anti-Patterns
 
 ### ❌ Using `logger.info()` Directly
@@ -970,6 +1030,8 @@ Before submitting a PR that adds logging, verify:
 - [ ] Messages use `%`-formatting, not f-strings
 - [ ] Messages are short, consistent, and greppable
 - [ ] `None` is passed (not `""`) to suppress optional fields
+- [ ] REST endpoint handlers that mutate state (POST/PUT/DELETE) have a `log_event` on the success path
+- [ ] Lifecycle endpoint handlers (`/_restart`, `/_shutdown`, job start/stop) log at `info` with `[CONTROL]`
 
 ---
 
@@ -1129,3 +1191,4 @@ Both parsers try the new format first, then fall back to the legacy format:
 | 1.5     | 2026-04-24 | Moved `[KEY]` to right after `[LEVEL]`, reordered prefix to `job= #s: #b:`, changed structured fields from `key=value` to pipe-delimited `\| key value` |
 | 1.6     | 2026-04-24 | Duration-first batch summary (`16ms \| batch 2 ...`), updated all examples to new format, added per-tier output samples |
 | 1.7     | 2026-04-24 | Added Web UI Log Processing section: change impact matrix, single-pass architecture, line-number pagination, sparse index, pipe-field parsing, legacy format support |
+| 1.8     | 2026-04-24 | Added Admin API & REST Endpoint Logging section. All `/_*` lifecycle and `/api/*` CRUD endpoints now log at INFO with `[CONTROL]`. Fixed 27 f-string → `%`-formatting violations in `storage/cbl_store.py`. Consolidated `docs/LOGGING.md` (v1) into redirect to this guide. |
