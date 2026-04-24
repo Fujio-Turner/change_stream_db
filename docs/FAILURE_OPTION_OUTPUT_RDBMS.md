@@ -88,3 +88,32 @@
 | **P2** | 3.15 | Consider row-by-row fallback on multi-row INSERT failure. |
 | **P3** | 2.12 | Implement `data_quality` CBL collection writes (v2.1 roadmap). |
 | **P3** | 3.14 | Better SSL error messages at startup. |
+
+---
+
+## Performance Optimizations (Do Less / Do It Less Often / Do It Faster)
+
+> **Philosophy:** *"There are only three optimizations: Do less. Do it less often. Do it faster. The largest gains come from #1, but we spend all our time on #3."*
+
+### Applied Optimizations
+
+| # | Category | What Changed | File | Details |
+|---|----------|-------------|------|---------|
+| OPT-1 | 🥇 Do Less | **Remove duplicate `to_sql()` calls on success path** | `db/db_base.py` — `send()` | After every successful `_execute_ops()`, the code re-serialized every op by calling `op.to_sql()` a second time just to estimate `bytes_output_total`. This duplicated the work already done inside `_execute_ops()` on the hottest path in the system. **Fix:** Replaced with a lightweight `output_ops_total` counter — zero-cost, no re-serialization. |
+| OPT-2 | 🥇 Do Less | **Log "no mapping" once, not per-doc** | `db/db_base.py` — `send()` | When no schema mappings are loaded, every doc triggered a `WARN`-level log with `doc_id`. In multi-type collections where most docs don't match, this generated massive log noise. **Fix:** Added `_no_mapping_warned` flag. First doc logs a one-time `WARNING`: `"No schema mappings loaded — all documents will be skipped until mappings are configured."` Subsequent docs increment `output_skipped_total` silently. Flag resets when `_load_mappers()` runs (so it warns again if mappings are cleared). |
+| OPT-3 | 🥈 Do It Less Often | **Replace reconnect stampede spin-wait with `asyncio.Event`** | `db/db_base.py` — `_reconnect_pool()` | When N parallel docs hit a connection error simultaneously, each called `_reconnect_pool()`. The stampede guard used a spin-wait loop (`for _ in range(100): await asyncio.sleep(0.1)`) — burning 10 seconds of async time per waiting task. **Fix:** Replaced with `asyncio.Event`. The reconnecting task clears the event on entry and sets it on completion (success or failure). Waiters call `await asyncio.wait_for(event.wait(), timeout=10.0)` — they wake instantly when the reconnect finishes, instead of polling 100 times. |
+
+### Investigated But Already Correct
+
+| # | Issue | Finding |
+|---|-------|---------|
+| OPT-INV-1 | **3.3 — Pool reconnect on `TooManyConnections` (`53300`)** | Investigated whether `_reconnect_pool()` is called for `53300`. It is not — `_error_class()` returns `"resource_exhaustion"` for `53300`, which is not in the reconnect set `("connection", "table_not_found", "server_shutdown")`. The code correctly falls through to the backoff-only `else` branch. No change needed. |
+
+### Remaining Optimization Opportunities (Not Yet Applied)
+
+| # | Category | Opportunity | Impact |
+|---|----------|-------------|--------|
+| OPT-R1 | 🥈 Do It Less Often | **Checkpoint every N docs or T seconds** instead of every batch. High-throughput continuous streams with small batches (1–5 docs) write a checkpoint HTTP request per batch. `every_n_docs` config exists but defaults to per-batch. | Medium — reduces SG write load proportional to batch frequency. |
+| OPT-R2 | 🥈 Do It Less Often | **Backoff: don't reset to zero on brief success.** When the source flaps (up 1s, down 1s), backoff resets on each brief success then ramps up again, causing oscillating reconnect storms. | Low–Medium — only affects flapping sources. |
+| OPT-R3 | 🥇 Do Less | **Skip `_validate_and_fix_ops()` call entirely when disabled.** Currently called unconditionally; enters the function and checks `if not enabled: return`. The per-call overhead is small but it's on every doc. | Low — micro-optimization, function call overhead only. |
+| OPT-R4 | 🥇 Do Less | **Binary-search bad op in row-by-row fallback (3.15).** If implemented, the fallback should isolate the bad op via binary search instead of re-executing all N ops linearly. | Low — only triggers on multi-op permanent failures. |

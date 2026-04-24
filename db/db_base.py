@@ -318,6 +318,9 @@ class BaseOutputForwarder(abc.ABC):
         self._pool_reconnecting = False
         self._pool_reconnect_time: float = 0.0  # monotonic timestamp of last attempt
         self._health_task: asyncio.Task | None = None
+        self._no_mapping_warned = False
+        self._reconnect_event: asyncio.Event = asyncio.Event()
+        self._reconnect_event.set()  # start as "not reconnecting"
 
     def _init_metrics(self) -> None:
         """Call from subclass __init__ after the engine property is available."""
@@ -500,6 +503,7 @@ class BaseOutputForwarder(abc.ABC):
                 seen_matches[key] = src
 
         self._mappers = new_mappers
+        self._no_mapping_warned = False
         ic("_load_mappers: done", len(self._mappers))
 
     def _build_validators_from_mapping(self, mapping_def: dict) -> None:
@@ -653,12 +657,14 @@ class BaseOutputForwarder(abc.ABC):
         ):
             return
 
-        # If another task is already reconnecting, wait for it instead of stampeding
+        # If another task is already reconnecting, wait on the event instead
+        # of spin-looping.  The event is set when the reconnecting task
+        # finishes (success or failure), waking all waiters at once.
         if self._pool_reconnecting:
-            for _ in range(100):
-                await asyncio.sleep(0.1)
-                if not self._pool_reconnecting:
-                    break
+            try:
+                await asyncio.wait_for(self._reconnect_event.wait(), timeout=10.0)
+            except asyncio.TimeoutError:
+                pass
             # Check if the generation advanced AND pool is alive (reconnect succeeded)
             if (
                 _generation is not None
@@ -684,6 +690,7 @@ class BaseOutputForwarder(abc.ABC):
                 return
 
             self._pool_reconnecting = True
+            self._reconnect_event.clear()
             self._pool_reconnect_time = now
             try:
                 await self._close_pool()
@@ -698,6 +705,7 @@ class BaseOutputForwarder(abc.ABC):
                 raise
             finally:
                 self._pool_reconnecting = False
+                self._reconnect_event.set()
 
     # ── Background health check ───────────────────────────────────────────
 
@@ -885,13 +893,15 @@ class BaseOutputForwarder(abc.ABC):
         is_delete = method == "DELETE"
 
         if not self._mappers:
-            log_event(
-                logger,
-                "warn",
-                "MAPPING",
-                "no schema mapping loaded – skipping doc",
-                doc_id=doc_id,
-            )
+            if not self._no_mapping_warned:
+                log_event(
+                    logger,
+                    "warn",
+                    "MAPPING",
+                    "No schema mappings loaded — all documents will be skipped "
+                    "until mappings are configured.",
+                )
+                self._no_mapping_warned = True
             if self._metrics:
                 self._metrics.inc("output_skipped_total")
             return {
@@ -1038,17 +1048,11 @@ class BaseOutputForwarder(abc.ABC):
                     self._metrics.inc("output_success_total")
                     self._metrics.inc("mapper_ops_total", len(ops))
                     self._metrics.record_output_response_time(elapsed_ms / 1000)
-                    # Estimate bytes sent to the database
-                    body_len = 0
-                    for op in ops:
-                        sql, params = op.to_sql()
-                        body_len += len(sql.encode("utf-8"))
-                        for p in params:
-                            body_len += (
-                                len(str(p).encode("utf-8")) if p is not None else 0
-                            )
+                    # Estimate bytes sent — use op count as a lightweight proxy
+                    # instead of re-serializing every op (which already ran in
+                    # _execute_ops).  Avoids duplicate to_sql() calls on the hot path.
                     if self._metrics_global:
-                        self._metrics_global.inc("bytes_output_total", body_len)
+                        self._metrics_global.inc("output_ops_total", len(ops))
 
                 doc_rev = doc.get("_rev", doc.get("rev", "?"))
                 ic("send: OK", doc_id, len(ops), round(elapsed_ms, 1))
