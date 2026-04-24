@@ -1055,7 +1055,7 @@ The response contains:
 | `entries` | Parsed entry objects | Client-side search/filter, insight panel, stakes |
 | `counts.levels` | `{ERROR: N, WARNING: N, ...}` | Badge counts, bar chart |
 | `counts.stages` | `{source: N, process: N, ...}` | Badge counts, bar chart |
-| `time_buckets` | `{"YYYY-MM-DD HH:MM": {...}}` | Activity Timeline, Pipeline Timeline charts |
+| `time_buckets` | `{"YYYY-MM-DD HH:MM": {...}}` | Activity Timeline, Pipeline Timeline, Log Volume Timeline charts |
 | `from_line` / `to_line` / `total_lines` | Line-number pagination state | Pagination controls |
 
 The frontend uses `serverHtml` directly when no client-side filters are active (no search, no toggled-off levels/stages, no time range). When filters ARE active, it falls back to client-side rendering from `entries`.
