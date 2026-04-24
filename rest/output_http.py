@@ -51,6 +51,132 @@ logger = logging.getLogger("changes_worker")
 
 
 # ---------------------------------------------------------------------------
+# HTTP status code classification
+# ---------------------------------------------------------------------------
+# Transient statuses: may succeed on retry (server busy, rate limit, timeout).
+# Permanent statuses: same request will always fail (bad data, auth, conflict).
+
+# 4xx codes that are TRANSIENT — retry with backoff
+_TRANSIENT_4XX = frozenset(
+    {
+        404,  # Not Found — resource/endpoint may come back
+        408,  # Request Timeout — server timed out waiting
+        421,  # Misdirected Request — routing issue, retry may hit correct server
+        423,  # Locked (WebDAV) — resource temporarily locked
+        425,  # Too Early — server unwilling to risk replay, try again
+        429,  # Too Many Requests — rate limited, retry after backoff
+    }
+)
+
+# 4xx codes that are PERMANENT — straight to DLQ, will never succeed with same data
+_PERMANENT_4XX = frozenset(
+    {
+        400,  # Bad Request — malformed payload
+        401,  # Unauthorized — auth failure
+        402,  # Payment Required
+        403,  # Forbidden — permission denied
+        405,  # Method Not Allowed — wrong HTTP method
+        406,  # Not Acceptable — content negotiation failure
+        407,  # Proxy Authentication Required
+        409,  # Conflict — data conflict, same data won't resolve it
+        410,  # Gone — resource permanently removed
+        411,  # Length Required — request config issue
+        412,  # Precondition Failed — conditional request failed
+        413,  # Payload Too Large — doc too big for endpoint
+        414,  # URI Too Long
+        415,  # Unsupported Media Type — wrong content type
+        416,  # Range Not Satisfiable
+        417,  # Expectation Failed
+        422,  # Unprocessable Entity — semantic errors in payload
+        426,  # Upgrade Required — protocol mismatch
+        428,  # Precondition Required
+        431,  # Request Header Fields Too Large
+        451,  # Unavailable For Legal Reasons
+    }
+)
+
+# 5xx codes that are TRANSIENT — retry with backoff (default behavior)
+_TRANSIENT_5XX = frozenset(
+    {
+        500,  # Internal Server Error — generic, may recover
+        502,  # Bad Gateway — upstream issue
+        503,  # Service Unavailable — overloaded or maintenance
+        504,  # Gateway Timeout — upstream timeout
+        507,  # Insufficient Storage (WebDAV) — may free up
+    }
+)
+
+# 5xx codes that are PERMANENT — server config/capability issue
+_PERMANENT_5XX = frozenset(
+    {
+        501,  # Not Implemented — server doesn't support this method
+        505,  # HTTP Version Not Supported
+        506,  # Variant Also Negotiates — server config error
+        508,  # Loop Detected (WebDAV) — circular reference
+        510,  # Not Extended
+        511,  # Network Authentication Required — captive portal
+    }
+)
+
+
+def classify_http_status(status: int) -> tuple[str, bool]:
+    """Classify an HTTP status code.
+
+    Returns (error_class, is_transient) where:
+      - error_class: machine-readable classification string
+      - is_transient: True if the request may succeed on retry
+
+    Used by both the RetryableHTTP request loop and the OutputForwarder
+    to decide retry-vs-DLQ behavior.
+    """
+    if 200 <= status < 300:
+        return ("success", False)
+    if 300 <= status < 400:
+        return ("redirect", False)  # handled separately by follow_redirects
+    if status in _TRANSIENT_4XX:
+        if status == 429:
+            return ("rate_limited", True)
+        if status == 408:
+            return ("client_timeout", True)
+        if status == 404:
+            return ("not_found", True)
+        if status == 423:
+            return ("locked", True)
+        return (f"client_transient:{status}", True)
+    if status in _PERMANENT_4XX:
+        if status in (401, 403, 407):
+            return ("auth_failure", False)
+        if status == 409:
+            return ("conflict", False)
+        if status == 410:
+            return ("gone", False)
+        if status in (400, 422):
+            return ("bad_request", False)
+        if status in (405, 415):
+            return ("method_or_media", False)
+        if status == 413:
+            return ("payload_too_large", False)
+        return (f"client_error:{status}", False)
+    if 400 <= status < 500:
+        # Unknown 4xx — assume permanent
+        return (f"client_error:{status}", False)
+    if status in _TRANSIENT_5XX:
+        if status == 503:
+            return ("service_unavailable", True)
+        if status == 502:
+            return ("bad_gateway", True)
+        if status == 504:
+            return ("gateway_timeout", True)
+        return (f"server_transient:{status}", True)
+    if status in _PERMANENT_5XX:
+        return (f"server_permanent:{status}", False)
+    if 500 <= status < 600:
+        # Unknown 5xx — assume transient (server may recover)
+        return (f"server_error:{status}", True)
+    return (f"unknown:{status}", False)
+
+
+# ---------------------------------------------------------------------------
 # Serialization helpers
 # ---------------------------------------------------------------------------
 
@@ -270,13 +396,16 @@ class OutputForwarder:
         self._extra_headers = req_opts.get("headers", {})
 
         # Output-specific retry (separate from the gateway retry)
+        # Default retry_on_status covers transient 5xx; transient 4xx (404,
+        # 408, 429, etc.) are handled automatically by classify_http_status()
+        # inside RetryableHTTP.request() regardless of this list.
         out_retry = out_cfg.get(
             "retry",
             {
                 "max_retries": 3,
                 "backoff_base_seconds": 1,
                 "backoff_max_seconds": 30,
-                "retry_on_status": [500, 502, 503, 504],
+                "retry_on_status": [500, 502, 503, 504, 507],
             },
         )
         _http_cls = retryable_http_cls or _RetryableHTTPLazy
@@ -434,7 +563,14 @@ class OutputForwarder:
 
         except _ClientHTTPError as exc:
             elapsed_ms = (time.monotonic() - t_start) * 1000
-            ic("send: client HTTP error", doc_id, exc.status, exc.body[:200])
+            error_class, _ = classify_http_status(exc.status)
+            ic(
+                "send: client HTTP error",
+                doc_id,
+                exc.status,
+                error_class,
+                exc.body[:200],
+            )
             await self._record_time(elapsed_ms)
             if self._metrics:
                 self._metrics.inc("outbound_auth_total")
@@ -451,12 +587,13 @@ class OutputForwarder:
                 logger,
                 "error",
                 "OUTPUT",
-                "client error (4xx)",
+                "client error (4xx permanent)",
                 operation=infer_operation(doc=doc, method=method),
                 doc_id=doc_id,
                 http_method=method,
                 url=url,
                 status=exc.status,
+                error_class=error_class,
                 elapsed_ms=round(elapsed_ms, 1),
                 error_detail=exc.body[:500],
             )
@@ -466,6 +603,7 @@ class OutputForwarder:
                 "method": method,
                 "status": exc.status,
                 "error": exc.body[:500],
+                "error_class": error_class,
                 "data_error_action": self._data_error_action,
             }
 

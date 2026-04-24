@@ -29,9 +29,13 @@
               Everything you need to know about configuring and operating
               PouchPipes.
             </p>
+            <div class="divider text-xs opacity-60">Core</div>
             <div class="flex flex-wrap gap-2">
               <a href="#overview" class="badge badge-primary badge-outline"
                 >Overview</a
+              >
+              <a href="#source-types" class="badge badge-success badge-outline"
+                >Source Types</a
               >
               <a href="#pipeline" class="badge badge-info badge-outline"
                 >Pipeline</a
@@ -45,6 +49,30 @@
               <a href="#processing" class="badge badge-accent badge-outline"
                 >Processing</a
               >
+              <a href="#advanced-settings" class="badge badge-ghost badge-outline"
+                >Advanced Job Settings</a
+              >
+            </div>
+            <div class="divider text-xs opacity-60">Features</div>
+            <div class="flex flex-wrap gap-2">
+              <a href="#eventing" class="badge badge-accent badge-outline"
+                >Eventing (JS)</a
+              >
+              <a href="#mapping" class="badge badge-secondary badge-outline"
+                >Schema Mapping</a
+              >
+              <a href="#validation" class="badge badge-info badge-outline"
+                >Data Validation</a
+              >
+              <a href="#attachments" class="badge badge-warning badge-outline"
+                >Attachments</a
+              >
+              <a href="#cloud" class="badge badge-success badge-outline"
+                >Cloud Storage</a
+              >
+            </div>
+            <div class="divider text-xs opacity-60">Reliability</div>
+            <div class="flex flex-wrap gap-2">
               <a href="#checkpoint" class="badge badge-primary badge-outline"
                 >Checkpoints</a
               >
@@ -63,17 +91,20 @@
               <a href="#dlq" class="badge badge-warning badge-outline"
                 >Dead Letter Queue</a
               >
+            </div>
+            <div class="divider text-xs opacity-60">Operations</div>
+            <div class="flex flex-wrap gap-2">
               <a href="#endpoints" class="badge badge-info badge-outline"
                 >API Endpoints</a
               >
               <a href="#metrics" class="badge badge-accent badge-outline"
                 >Metrics</a
               >
+              <a href="#logging" class="badge badge-ghost badge-outline"
+                >Logging</a
+              >
               <a href="#recipes" class="badge badge-ghost badge-outline"
                 >Recipes</a
-              >
-              <a href="#mapping" class="badge badge-secondary badge-outline"
-                >Schema Mapping</a
               >
             </div>
           </div>
@@ -84,7 +115,7 @@
           <div class="card-body p-6">
             <h2 class="text-xl font-bold mb-3">Overview</h2>
             <p class="opacity-80">
-              Changes Worker is a production-ready
+              PouchPipes is a production-ready
               <code class="bg-base-200 px-1 rounded">_changes</code> feed
               processor for <strong>Couchbase Sync Gateway</strong>,
               <strong>Capella App Services</strong>,
@@ -99,14 +130,212 @@
               checkpoint-based resumption, automatic retries with exponential
               backoff, and a dead letter queue for failed documents.
             </p>
+            <h3 class="font-semibold mt-4 mb-2">Key Capabilities</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="card bg-base-200 rounded-xl">
+                <div class="card-body p-3">
+                  <span class="font-semibold text-success">Source</span>
+                  <p class="text-sm opacity-70">
+                    Longpoll, continuous, WebSocket, SSE, and EventSource feed
+                    types. Supports scoped keyspaces, channel filters, and
+                    throttled catch-ups.
+                  </p>
+                </div>
+              </div>
+              <div class="card bg-base-200 rounded-xl">
+                <div class="card-body p-3">
+                  <span class="font-semibold text-info">Process</span>
+                  <p class="text-sm opacity-70">
+                    Sequential or parallel processing, JavaScript eventing
+                    handlers (OnUpdate / OnDelete), schema mapping with 58
+                    built-in transforms, and automatic data validation.
+                  </p>
+                </div>
+              </div>
+              <div class="card bg-base-200 rounded-xl">
+                <div class="card-body p-3">
+                  <span class="font-semibold text-warning">Output</span>
+                  <p class="text-sm opacity-70">
+                    HTTP endpoints (PUT/POST/PATCH/DELETE), RDBMS
+                    (PostgreSQL, MySQL, MS SQL, Oracle), and cloud blob storage
+                    (AWS S3, GCS, Azure Blob). Attachment processing with
+                    upload and post-processing.
+                  </p>
+                </div>
+              </div>
+              <div class="card bg-base-200 rounded-xl">
+                <div class="card-body p-3">
+                  <span class="font-semibold text-primary">Reliability</span>
+                  <p class="text-sm opacity-70">
+                    Checkpoint-based resumption, exponential backoff retries,
+                    dead letter queue, output health monitoring, and
+                    at-least-once delivery semantics.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div class="alert alert-info mt-4 text-sm">
+              <span
+                ><strong>Quick start:</strong> Run
+                <code>python main.py --test</code> to verify your source and
+                output are reachable before deploying. Use the
+                <a href="/settings" class="link link-primary">Settings</a> page
+                to configure, and the
+                <a href="/" class="link link-primary">Dashboard</a> to
+                monitor.</span
+              >
+            </div>
+          </div>
+        </div>
+
+        <!-- Source Types -->
+        <div id="source-types" class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-6">
+            <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+              <span class="badge badge-success">Source</span> Source Types
+            </h2>
+            <p class="opacity-80 mb-3">
+              Set <code class="bg-base-200 px-1 rounded">gateway.src</code> to
+              tell PouchPipes which product it's talking to. The
+              <code>_changes</code> APIs are very similar across Couchbase
+              products and CouchDB but not identical.
+            </p>
+            <h3 class="font-semibold mt-4 mb-2">Compatibility Matrix</h3>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-52">Capability</th>
+                    <th>Sync Gateway</th>
+                    <th>App Services</th>
+                    <th>Edge Server</th>
+                    <th>CouchDB</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-semibold">Default port</td>
+                    <td><code>4984</code></td>
+                    <td><code>4984</code></td>
+                    <td><code>59840</code></td>
+                    <td><code>5984</code></td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Feed types</td>
+                    <td>longpoll, continuous, websocket</td>
+                    <td>longpoll, continuous, websocket</td>
+                    <td>longpoll, continuous, sse</td>
+                    <td>longpoll, continuous, eventsource</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Bearer token auth</td>
+                    <td>✅</td>
+                    <td>✅</td>
+                    <td>❌</td>
+                    <td>✅</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Session cookie auth</td>
+                    <td>✅</td>
+                    <td>✅</td>
+                    <td>✅</td>
+                    <td>❌</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Channels filter</td>
+                    <td>✅</td>
+                    <td>✅</td>
+                    <td>✅</td>
+                    <td>❌</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold"><code>_bulk_get</code></td>
+                    <td>✅</td>
+                    <td>✅</td>
+                    <td>❌</td>
+                    <td>✅ (JSON)</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Scoped keyspace</td>
+                    <td>✅</td>
+                    <td>✅</td>
+                    <td>✅</td>
+                    <td>❌</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold"><code>active_only</code></td>
+                    <td>✅</td>
+                    <td>✅</td>
+                    <td>✅</td>
+                    <td>❌</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Attachment API</td>
+                    <td>✅ Full</td>
+                    <td>✅ Full</td>
+                    <td>❌</td>
+                    <td>✅ Full</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <h3 class="font-semibold mt-4 mb-2">Automatic Adjustments</h3>
+            <p class="opacity-80 mb-3">
+              PouchPipes validates your config at startup and auto-corrects
+              incompatible settings where possible:
+            </p>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-64">Situation</th>
+                    <th>Automatic Behavior</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-semibold">Edge Server + websocket</td>
+                    <td>Falls back to <code>longpoll</code> with a warning</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">CouchDB + websocket</td>
+                    <td>Falls back to <code>longpoll</code> with a warning</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">CouchDB + sse</td>
+                    <td>
+                      Switches to <code>eventsource</code> (CouchDB equivalent)
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Edge Server + bearer auth</td>
+                    <td class="text-error font-semibold">
+                      Blocks startup with an error
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">CouchDB + session auth</td>
+                    <td class="text-error font-semibold">
+                      Blocks startup with an error
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">
+                      Edge Server + timeout &gt; 900s
+                    </td>
+                    <td>Clamps to <code>900000 ms</code> with a warning</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
         <!-- Tabbed Section: Architecture & Configuration -->
-        <div class="card bg-base-100 shadow rounded-2xl">
+        <div id="architecture" class="card bg-base-100 shadow rounded-2xl">
           <div class="card-body p-6">
             <h2 class="text-xl font-bold mb-6">
-              Architecture &amp; Configuration
+              <a href="#architecture" class="hover:opacity-70">Architecture &amp; Configuration</a>
             </h2>
 
             <div role="tablist" class="tabs tabs-lifted">
@@ -451,15 +680,430 @@
                   </div>
                 </div>
               </div>
+
+              <!-- Tab 5: Advanced Job Settings -->
+              <input
+                type="radio"
+                name="arch_tabs"
+                role="tab"
+                class="tab"
+                aria-label="Advanced Job Settings"
+              />
+              <div
+                role="tabpanel"
+                class="tab-content bg-base-100 border-base-300 rounded-box p-6"
+              >
+                <div id="advanced-settings">
+                  <h3 class="text-lg font-semibold mb-4">
+                    Advanced Job Settings Reference
+                  </h3>
+                  <p class="opacity-80 mb-3">
+                    The Advanced panel in the Job Builder exposes fine-grained
+                    control over how the pipeline consumes, processes, and
+                    delivers documents. Settings are grouped by pipeline stage.
+                  </p>
+
+                  <h3 class="font-semibold mt-4 mb-2">Source</h3>
+                  <p class="opacity-70 mb-3 text-sm">
+                    Controls how the <code>_changes</code> feed is consumed from
+                    the source database.
+                  </p>
+                  <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                      <thead>
+                        <tr>
+                          <th class="w-52">Setting</th>
+                          <th class="w-28">Default</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">feed_type</td>
+                          <td><code>longpoll</code></td>
+                          <td>
+                            How the <code>_changes</code> feed is consumed.
+                            <code>longpoll</code> / <code>normal</code> use
+                            polling; <code>continuous</code> /
+                            <code>websocket</code> / <code>sse</code> /
+                            <code>eventsource</code> keep a persistent
+                            connection.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">poll_interval_seconds</td>
+                          <td><code>10</code></td>
+                          <td>
+                            Seconds between poll requests when using
+                            <code>longpoll</code> or <code>normal</code> feed
+                            types.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">heartbeat_ms</td>
+                          <td><code>30000</code></td>
+                          <td>
+                            Server sends a heartbeat every N milliseconds to
+                            keep the connection alive during continuous /
+                            longpoll feeds.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">timeout_ms</td>
+                          <td><code>60000</code></td>
+                          <td>
+                            Maximum time in milliseconds to wait for a
+                            <code>_changes</code> response before timing out.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">http_timeout_seconds</td>
+                          <td><code>300</code></td>
+                          <td>
+                            Timeout in seconds for HTTP requests made during
+                            document fetching (e.g. <code>_bulk_get</code>,
+                            individual doc GETs).
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">throttle_feed</td>
+                          <td><code>5000</code></td>
+                          <td>
+                            Minimum delay in milliseconds between processing
+                            consecutive batches. Helps avoid overwhelming the
+                            source or output.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">limit</td>
+                          <td><code>0</code></td>
+                          <td>
+                            Maximum number of changes to fetch per request.
+                            <code>0</code> = no limit (server default).
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">flood_threshold</td>
+                          <td><code>10000</code></td>
+                          <td>
+                            If a single poll returns more than this many
+                            changes, apply back-pressure to avoid memory issues.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">continuous_catchup_limit</td>
+                          <td><code>5000</code></td>
+                          <td>
+                            In continuous mode, the max batch size used during
+                            initial catch-up before switching to real-time
+                            streaming.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">since</td>
+                          <td><code>"0"</code></td>
+                          <td>
+                            Starting sequence ID for the <code>_changes</code>
+                            feed. Use <code>"0"</code> to start from the
+                            beginning, or a specific sequence to resume from a
+                            known point.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">active_only</td>
+                          <td><code>true</code></td>
+                          <td>
+                            Only return changes for non-deleted, active document
+                            revisions.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">include_docs</td>
+                          <td><code>false</code></td>
+                          <td>
+                            Include the full document body in each
+                            <code>_changes</code> entry. Reduces round-trips but
+                            increases payload size.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">optimize_initial_sync</td>
+                          <td><code>false</code></td>
+                          <td>
+                            Controls the initial sync for
+                            <code>_changes</code> feeds with hundreds of
+                            thousands to millions of entries. Batches and chunks
+                            the feed to prevent timeouts and memory issues
+                            during the first catch-up.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">channels</td>
+                          <td><code>[]</code></td>
+                          <td>
+                            Server-side channel filter. Only documents belonging
+                            to the listed channels are returned. Leave empty to
+                            receive all changes. Supported by Sync Gateway, App
+                            Services, and CouchDB.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <h3 class="font-semibold mt-6 mb-2">Processing</h3>
+                  <p class="opacity-70 mb-3 text-sm">
+                    Controls how documents are processed after being received
+                    from the changes feed.
+                  </p>
+                  <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                      <thead>
+                        <tr>
+                          <th class="w-52">Setting</th>
+                          <th class="w-28">Default</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">sequential</td>
+                          <td><code>false</code></td>
+                          <td>
+                            Process documents one at a time in order. Slower
+                            but guarantees ordering. Required for strict
+                            consistency.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">max_concurrent</td>
+                          <td><code>20</code></td>
+                          <td>
+                            Maximum number of documents processed in parallel.
+                            Lower values reduce memory usage; higher values
+                            increase throughput. Only applies when
+                            <code>sequential</code> is <code>false</code>.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">get_batch_number</td>
+                          <td><code>100</code></td>
+                          <td>
+                            Number of documents to fetch per batch from the
+                            <code>_changes</code> feed. Shown as "Batch Size"
+                            in the UI.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">ignore_delete</td>
+                          <td><code>false</code></td>
+                          <td>
+                            Skip processing deleted documents
+                            (<code>_deleted=true</code>). They will not be
+                            forwarded to the output.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">ignore_remove</td>
+                          <td><code>false</code></td>
+                          <td>
+                            Skip processing removed documents (channel-removed
+                            events). They will not be forwarded to the output.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">halt_on_failure</td>
+                          <td><code>true</code></td>
+                          <td>
+                            Stop the pipeline on infrastructure errors. If
+                            disabled, failed documents are sent to the Dead
+                            Letter Queue instead.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">dry_run</td>
+                          <td><code>false</code></td>
+                          <td>
+                            Process documents without writing to the output.
+                            Useful for testing mappings and pipeline behavior
+                            before going live.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <h3 class="font-semibold mt-6 mb-2">Retry</h3>
+                  <p class="opacity-70 mb-3 text-sm">
+                    Controls exponential backoff retry behavior for failed
+                    output operations.
+                  </p>
+                  <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                      <thead>
+                        <tr>
+                          <th class="w-52">Setting</th>
+                          <th class="w-28">Default</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">max_retries</td>
+                          <td><code>5</code></td>
+                          <td>
+                            Maximum number of retry attempts for failed output
+                            operations before giving up or sending to the DLQ.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">backoff_base_seconds</td>
+                          <td><code>1</code></td>
+                          <td>
+                            Base delay in seconds for exponential backoff
+                            between retries. Each subsequent retry doubles the
+                            delay.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">backoff_max_seconds</td>
+                          <td><code>60</code></td>
+                          <td>
+                            Maximum delay in seconds for exponential backoff.
+                            Retries will never wait longer than this.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <h3 class="font-semibold mt-6 mb-2">Checkpoint</h3>
+                  <p class="opacity-70 mb-3 text-sm">
+                    Controls checkpoint persistence for resumable processing.
+                  </p>
+                  <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                      <thead>
+                        <tr>
+                          <th class="w-52">Setting</th>
+                          <th class="w-28">Default</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">enabled</td>
+                          <td><code>true</code></td>
+                          <td>
+                            Enable checkpointing to track the last processed
+                            sequence. Allows the job to resume from where it
+                            left off after a restart.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">every_n_docs</td>
+                          <td><code>0</code></td>
+                          <td>
+                            Save a checkpoint every N documents processed.
+                            <code>0</code> = checkpoint only at the end of each
+                            batch. Sequential mode only.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <h3 class="font-semibold mt-6 mb-2">Output</h3>
+                  <p class="opacity-70 mb-3 text-sm">
+                    Output-level error handling and dead letter queue settings.
+                  </p>
+
+                  <h4 class="text-sm font-semibold mt-4 mb-2">
+                    Dead Letter Queue (DLQ)
+                  </h4>
+                  <p class="opacity-70 mb-3 text-sm">
+                    When <code>halt_on_failure</code> is <code>false</code>,
+                    documents that fail delivery are routed to the DLQ for
+                    later replay. The DLQ supports both Couchbase Lite (CBL)
+                    and JSONL file storage backends.
+                  </p>
+                  <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                      <thead>
+                        <tr>
+                          <th class="w-52">Setting</th>
+                          <th class="w-28">Default</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">data_error_action</td>
+                          <td><code>"dlq"</code></td>
+                          <td>
+                            Action for permanent data errors (e.g. mapping
+                            failures). <code>"dlq"</code> stores the failed
+                            document for later replay;
+                            <code>"skip"</code> drops it entirely.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">dead_letter_path</td>
+                          <td><code>"failed_docs.jsonl"</code></td>
+                          <td>
+                            File path for the JSONL fallback DLQ storage. Used
+                            when CBL-based DLQ is not available.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">retention_seconds</td>
+                          <td><code>86400</code></td>
+                          <td>
+                            TTL for DLQ entries in seconds. Entries older than
+                            this are purged automatically. <code>0</code> =
+                            keep forever. Default is 24 hours.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">max_replay_attempts</td>
+                          <td><code>10</code></td>
+                          <td>
+                            Maximum times to retry replaying a DLQ entry before
+                            marking it as a poison pill and skipping it.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="font-mono text-xs font-semibold">dlq_inflight_on_shutdown</td>
+                          <td><code>false</code></td>
+                          <td>
+                            Route all in-flight documents to the DLQ during a
+                            graceful shutdown (SIGTERM). Prevents data loss at
+                            the cost of replaying those documents on the next
+                            startup.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div class="alert alert-info mt-4 text-sm">
+                    <span>
+                      <strong>Tip:</strong> All Advanced settings have inline
+                      tooltips (?) in the Job Builder UI. Hover over any setting
+                      label for a quick description.
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- Tabbed Section: Reliability & Error Handling -->
-        <div class="card bg-base-100 shadow rounded-2xl">
+        <div id="reliability" class="card bg-base-100 shadow rounded-2xl">
           <div class="card-body p-6">
             <h2 class="text-xl font-bold mb-6">
-              Reliability &amp; Error Handling
+              <a href="#reliability" class="hover:opacity-70">Reliability &amp; Error Handling</a>
             </h2>
 
             <div role="tablist" class="tabs tabs-lifted">
@@ -3059,6 +3703,589 @@
           </div>
         </div>
 
+        <!-- Eventing (JS) -->
+        <div id="eventing" class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-6">
+            <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+              <span class="badge badge-accent">JS</span> Eventing (JavaScript Handlers)
+            </h2>
+            <p class="opacity-80 mb-3">
+              Eventing adds a user-programmable JavaScript stage to the
+              pipeline. Write <code>OnUpdate</code> and
+              <code>OnDelete</code> handler functions that execute inline —
+              after the <code>_changes</code> feed and before the Schema
+              Mapper. Inspired by Couchbase Eventing.
+            </p>
+            <div class="overflow-x-auto mb-4">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-44">Mode</th>
+                    <th>Pipeline Flow</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-semibold">Eventing disabled (default)</td>
+                    <td>
+                      <code>_changes</code> → Schema Mapper → Output
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Eventing enabled</td>
+                    <td>
+                      <code>_changes</code> →
+                      <strong>JS OnUpdate / OnDelete</strong> → Schema Mapper →
+                      Output
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <h3 class="font-semibold mt-4 mb-2">Handler Signatures</h3>
+            <p class="opacity-80 mb-3">
+              Documents are split into two objects before being passed to the
+              handler: <code>doc</code> (body without
+              <code>_id</code>/<code>_rev</code>) and <code>meta</code>
+              (<code>_id</code> and <code>_rev</code> only).
+            </p>
+            <div class="overflow-x-auto mb-4">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-52">Handler</th>
+                    <th>Parameters</th>
+                    <th>Called When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-mono font-semibold">OnUpdate(doc, meta)</td>
+                    <td>
+                      <code>doc</code> = body,
+                      <code>meta</code> = {_id, _rev}
+                    </td>
+                    <td>Document create or update (non-delete)</td>
+                  </tr>
+                  <tr>
+                    <td class="font-mono font-semibold">OnDelete(meta)</td>
+                    <td><code>meta</code> = {_id, _rev}</td>
+                    <td>Document deletion (tombstone)</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <h3 class="font-semibold mt-4 mb-2">Return Values</h3>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-52">Return</th>
+                    <th>Effect</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-mono text-xs">return doc;</td>
+                    <td>
+                      Pass the (possibly modified) document to the Schema Mapper
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-mono text-xs">return true;</td>
+                    <td>Pass the original document as-is</td>
+                  </tr>
+                  <tr>
+                    <td class="font-mono text-xs">return false;</td>
+                    <td>
+                      <strong>Reject</strong> — document stops here, does not
+                      reach the Schema Mapper
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-mono text-xs">return; / (no return)</td>
+                    <td>
+                      <strong>Reject</strong> — undefined is falsy
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="alert alert-info mt-4 text-sm">
+              <span
+                ><strong>Tip:</strong> Each eventing function is tied to a Job.
+                Use the
+                <a href="/eventing" class="link link-primary"
+                  >Function Editor</a
+                >
+                to write and test handlers with syntax highlighting and live
+                validation.</span
+              >
+            </div>
+          </div>
+        </div>
+
+        <!-- Data Validation -->
+        <div id="validation" class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-6">
+            <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+              <span class="badge badge-info">Validate</span> Data Validation
+              &amp; Coercion
+            </h2>
+            <p class="opacity-80 mb-3">
+              Automatically validates and transforms incoming change documents
+              against your RDBMS table schemas. When enabled, it extracts column
+              definitions from your schema mappings, validates incoming data,
+              coerces values to match expected types, and tracks
+              transformations for audit and debugging.
+            </p>
+            <h3 class="font-semibold mt-4 mb-2">Configuration</h3>
+            <div class="overflow-x-auto mb-4">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-52">Setting</th>
+                    <th>Description</th>
+                    <th class="w-24">Default</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-semibold">Enabled</td>
+                    <td>Turn on automatic validation</td>
+                    <td><code>false</code></td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Strict Mode</td>
+                    <td>
+                      Reject documents with unknown columns not in schema
+                    </td>
+                    <td><code>false</code></td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Track Original Values</td>
+                    <td>Log original values when coerced (debug logs)</td>
+                    <td><code>true</code></td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Send invalid docs to DLQ</td>
+                    <td>Route docs with errors to the Dead Letter Queue</td>
+                    <td><code>true</code></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <h3 class="font-semibold mt-4 mb-2">Type Coercion Examples</h3>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-32">Incoming</th>
+                    <th class="w-36">Column Type</th>
+                    <th class="w-32">Coerced To</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>"42"</code></td>
+                    <td>INT</td>
+                    <td><code>42</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>123</code></td>
+                    <td>VARCHAR(10)</td>
+                    <td><code>"123"</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>"99.999"</code></td>
+                    <td>DECIMAL(10,2)</td>
+                    <td><code>100.00</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>"true"</code></td>
+                    <td>BOOLEAN</td>
+                    <td><code>true</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>"2024-01-15"</code></td>
+                    <td>DATE</td>
+                    <td><code>2024-01-15</code></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="alert mt-3 text-sm">
+              <span
+                ><strong>Supported types:</strong> INT, BIGINT, DECIMAL, FLOAT,
+                VARCHAR, TEXT, DATE, DATETIME, TIMESTAMP, BOOLEAN, JSON, JSONB,
+                UUID, and more. Configure via
+                <a href="/settings" class="link link-primary"
+                  >Settings → RDBMS → Auto-Validate</a
+                >.</span
+              >
+            </div>
+          </div>
+        </div>
+
+        <!-- Attachments -->
+        <div id="attachments" class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-6">
+            <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+              <span class="badge badge-warning">📎</span> Attachments Processing
+            </h2>
+            <p class="opacity-80 mb-3">
+              When <code>attachments.enabled</code> is <code>true</code>, an
+              attachment processing stage is inserted into the pipeline. The
+              worker detects documents with
+              <code>_attachments</code> stubs, fetches the binary data from the
+              source, uploads them to the configured destination (S3, HTTP,
+              filesystem), and optionally performs post-processing on the source
+              document.
+            </p>
+            <h3 class="font-semibold mt-4 mb-2">Pipeline Modes</h3>
+            <div class="overflow-x-auto mb-4">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-52">Mode</th>
+                    <th>Pipeline Flow</th>
+                    <th>Dashboard</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-semibold">Data Only (default)</td>
+                    <td>Source → Worker → Output</td>
+                    <td>Attachments node hidden</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Attachments + Data</td>
+                    <td>
+                      Source → Worker → <strong>Attachments</strong> → Output
+                    </td>
+                    <td>Attachments node visible with live metrics</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <h3 class="font-semibold mt-4 mb-2">Post-Processing Actions</h3>
+            <p class="opacity-80 mb-3">
+              After uploading attachments, a secondary operation can be
+              performed on the source document:
+            </p>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-44">Action</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-semibold">Update document</td>
+                    <td>
+                      PUT the document back with external URLs added to the body
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Set TTL</td>
+                    <td>
+                      Expire the document after a time-to-live period
+                      (Couchbase only)
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Delete document</td>
+                    <td>Remove the source document entirely</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Delete attachments</td>
+                    <td>
+                      Remove individual attachments while keeping the document
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <h3 class="font-semibold mt-4 mb-2">Source Platform Support</h3>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-52">Platform</th>
+                    <th>Attachment API</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-semibold">Sync Gateway / App Services</td>
+                    <td>✅ Full API (GET/PUT/DELETE attachments, bulk_get)</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">CouchDB</td>
+                    <td>✅ Full API (GET/PUT/DELETE attachments, bulk_get)</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Edge Server</td>
+                    <td>❌ No attachment API</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="alert alert-info mt-4 text-sm">
+              <span
+                ><strong>Tip:</strong> Toggle
+                <code>attachments.enabled</code> in
+                <a href="/settings" class="link link-primary"
+                  >Settings → Attachments</a
+                >. No restart required with hot config reload.</span
+              >
+            </div>
+          </div>
+        </div>
+
+        <!-- Cloud Storage -->
+        <div id="cloud" class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-6">
+            <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+              <span class="badge badge-success">Cloud</span> Cloud Blob
+              Storage Output
+            </h2>
+            <p class="opacity-80 mb-3">
+              Forward <code>_changes</code> feed documents directly to cloud
+              object stores as an alternative output mode alongside HTTP and
+              RDBMS. Each document (or batch) is written as a JSON object in
+              the target bucket.
+            </p>
+            <h3 class="font-semibold mt-4 mb-2">Supported Providers</h3>
+            <div class="overflow-x-auto mb-4">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-44">Provider</th>
+                    <th class="w-36">output.mode</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-semibold">AWS S3</td>
+                    <td><code>"s3"</code></td>
+                    <td>
+                      <span class="badge badge-success badge-sm">Available</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Google Cloud Storage</td>
+                    <td><code>"gcs"</code></td>
+                    <td>
+                      <span class="badge badge-ghost badge-sm">Planned</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Azure Blob Storage</td>
+                    <td><code>"azure"</code></td>
+                    <td>
+                      <span class="badge badge-ghost badge-sm">Planned</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <h3 class="font-semibold mt-4 mb-2">Use Cases</h3>
+            <div class="overflow-x-auto mb-4">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-52">Use Case</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-semibold">Data lake ingestion</td>
+                    <td>
+                      Land every change as a JSON object for downstream Spark,
+                      Athena, BigQuery, or Synapse queries
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Archival / compliance</td>
+                    <td>
+                      Write an immutable copy of every document version for
+                      audit trails
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Cross-region replication</td>
+                    <td>
+                      Use cloud-native replication (S3 CRR, GCS dual-region)
+                      for disaster recovery
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Decoupled consumers</td>
+                    <td>
+                      Multiple downstream systems read from the bucket at their
+                      own pace — no backpressure on the worker
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <h3 class="font-semibold mt-4 mb-2">Object Key Template</h3>
+            <p class="opacity-80 mb-3">
+              Each document gets a unique, deterministic object key.
+              Configurable via <code>key_template</code>:
+            </p>
+            <div class="mockup-code bg-success text-success-content">
+              <pre data-prefix="#"><code>Default template</code></pre>
+              <pre
+                data-prefix="▸"
+              ><code>{prefix}/{doc_id}.json</code></pre>
+              <pre data-prefix="#"><code>Date-partitioned</code></pre>
+              <pre
+                data-prefix="▸"
+              ><code>{prefix}/{year}/{month}/{day}/{doc_id}.json</code></pre>
+              <pre data-prefix="#"><code>Scoped with revision</code></pre>
+              <pre
+                data-prefix="▸"
+              ><code>{prefix}/{scope}/{collection}/{doc_id}/{rev}.json</code></pre>
+            </div>
+            <p class="text-sm opacity-60 mt-3">
+              Available variables: <code>{doc_id}</code>,
+              <code>{rev}</code>, <code>{seq}</code>,
+              <code>{timestamp}</code>, <code>{iso_date}</code>,
+              <code>{year}</code>, <code>{month}</code>,
+              <code>{day}</code>, <code>{scope}</code>,
+              <code>{collection}</code>, <code>{database}</code>,
+              <code>{prefix}</code>.
+            </p>
+          </div>
+        </div>
+
+        <!-- Logging -->
+        <div id="logging" class="card bg-base-100 shadow rounded-2xl">
+          <div class="card-body p-6">
+            <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+              <span class="badge badge-ghost">Logs</span> Logging
+            </h2>
+            <p class="opacity-80 mb-3">
+              All logging follows the Couchbase Sync Gateway–inspired pipeline:
+              <strong>level check → log_key filter → redaction → output</strong>.
+              Logs are written to both console and rotating log files.
+            </p>
+            <h3 class="font-semibold mt-4 mb-2">Log Levels</h3>
+            <div class="overflow-x-auto mb-4">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-32">Level</th>
+                    <th>When To Use</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-semibold">TRACE</td>
+                    <td>
+                      Developer breadcrumbs via <code>ic()</code>. Extremely
+                      verbose — code paths, variable values, control flow.
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">DEBUG</td>
+                    <td>
+                      Detailed diagnostic info — request/response details,
+                      internal state.
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">INFO</td>
+                    <td>
+                      Normal operational events — startup, checkpoint saves,
+                      batch completions, skip events.
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">WARN</td>
+                    <td>
+                      Recoverable issues — DLQ writes, auth fallbacks, config
+                      auto-corrections.
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">ERROR</td>
+                    <td>
+                      Failures requiring attention — output errors, connection
+                      failures, startup aborts.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <h3 class="font-semibold mt-4 mb-2">Configuration</h3>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th class="w-52">Setting</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-semibold">
+                      <code>console.log_level</code>
+                    </td>
+                    <td>
+                      Minimum level for console output (default:
+                      <code>info</code>)
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">
+                      <code>file.log_level</code>
+                    </td>
+                    <td>
+                      Minimum level for file output (default:
+                      <code>debug</code>)
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">
+                      <code>redaction_level</code>
+                    </td>
+                    <td>
+                      Redact sensitive data in logs (none / partial / full)
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">
+                      <code>file.rotation</code>
+                    </td>
+                    <td>
+                      Log rotation settings:
+                      <code>max_size</code> (MB) and
+                      <code>max_age</code> (days)
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="alert alert-info mt-4 text-sm">
+              <span
+                ><strong>Tip:</strong> Use the
+                <a href="/logs" class="link link-primary">Logs</a> page in the
+                admin UI to search and filter logs by level, log_key
+                (<code>MAPPING</code>, <code>OUTPUT</code>, <code>DLQ</code>,
+                etc.), and doc_id. Structured log entries include
+                machine-readable fields for easy aggregation.</span
+              >
+            </div>
+          </div>
+        </div>
+
         <!-- Schema Mapping -->
         <div id="mapping" class="card bg-base-100 shadow rounded-2xl">
           <div class="card-body p-6">
@@ -3155,6 +4382,38 @@
   </div><!-- /sidebar-main -->
 
   <script src="/static/js/sidebar.js"></script>
+  <script>
+    (function () {
+      function activateTabForHash() {
+        var hash = location.hash.replace('#', '');
+        if (!hash) return;
+        var target = document.getElementById(hash);
+        if (!target) return;
+        // Walk up to find the tab-content panel this anchor lives in
+        var panel = target.closest('[role="tabpanel"]');
+        if (!panel) {
+          // Target is not inside a tab — just scroll
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          return;
+        }
+        // The radio input for this tab is the previous sibling of the panel
+        var radio = panel.previousElementSibling;
+        while (radio && radio.tagName !== 'INPUT') {
+          radio = radio.previousElementSibling;
+        }
+        if (radio) {
+          radio.checked = true;
+        }
+        // Small delay to let the tab render, then scroll
+        setTimeout(function () {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 50);
+      }
+      // Run on page load and on hash change (badge click)
+      activateTabForHash();
+      window.addEventListener('hashchange', activateTabForHash);
+    })();
+  </script>
 
 </body>
 </html>

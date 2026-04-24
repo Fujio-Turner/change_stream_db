@@ -583,6 +583,7 @@ async def dlq_meta(request):
                 "last_drained_at": None,
                 "last_inserted_job": None,
                 "last_drained_job": None,
+                "jobs": {},
             }
         )
     return json_response(CBLStore().get_dlq_meta())

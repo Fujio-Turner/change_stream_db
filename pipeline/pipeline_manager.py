@@ -494,7 +494,36 @@ class PipelineManager:
                         if not pipeline.is_running():
                             state = pipeline.get_state()
                             if state and state["status"] == "error":
+                                if state.get("auth_failure"):
+                                    if self._crash_backoff.get(job_id) != "auth":
+                                        log_event(
+                                            self.logger,
+                                            "error",
+                                            "AUTH_FAILURE",
+                                            "Job stopped due to authentication failure "
+                                            "(401/403). Will not auto-restart. "
+                                            "Fix credentials and restart manually.",
+                                            job_id=job_id,
+                                        )
+                                        self._crash_backoff[job_id] = "auth"
+                                    continue
                                 self._handle_job_crash(job_id)
+                        else:
+                            # Pipeline is running — reset backoff after
+                            # sustained uptime (60s) to prove output is
+                            # reachable again.
+                            if job_id in self._crash_backoff:
+                                attempt, restart_time = self._crash_backoff[job_id]
+                                if attempt > 0 and time.time() - restart_time >= 60:
+                                    log_event(
+                                        self.logger,
+                                        "info",
+                                        "OUTPUT_RECOVERED",
+                                        f"Output recovered after {attempt} retries, "
+                                        f"resetting backoff",
+                                        job_id=job_id,
+                                    )
+                                    self._crash_backoff[job_id] = (0, 0)
 
                     except Exception as e:
                         log_event(
@@ -522,12 +551,18 @@ class PipelineManager:
         )
 
     def _handle_job_crash(self, job_id: str) -> None:
-        """Handle a crashed job with exponential backoff restart."""
+        """Handle a crashed job with exponential backoff restart.
+
+        Backoff grows: 2s, 4s, 8s, 16s, 32s, 64s, 128s, 256s, 300s (cap).
+        Retries forever until the output comes back.
+        Backoff resets only after the pipeline has been running successfully
+        for at least 60 seconds (checked by _monitor_threads).
+        """
         attempt, last_time = self._crash_backoff.get(job_id, (0, 0))
         attempt += 1
 
-        # Exponential backoff: 1s, 2s, 4s, 8s, ... up to 60s
-        backoff_seconds = min(2 ** (attempt - 1), 60)
+        # Exponential backoff: 2s, 4s, 8s, ... up to 300s (5 minutes)
+        backoff_seconds = min(2**attempt, 300)
         now = time.time()
 
         if now - last_time < backoff_seconds:
@@ -535,9 +570,10 @@ class PipelineManager:
             remaining = backoff_seconds - (now - last_time)
             log_event(
                 self.logger,
-                "info",
-                "CHANGES",
-                f"Job in backoff (attempt {attempt}, {remaining:.1f}s remaining)",
+                "warn",
+                "OUTPUT_RETRY",
+                f"Output down – waiting to retry (attempt {attempt}, "
+                f"backoff {backoff_seconds}s, {remaining:.0f}s remaining)",
                 job_id=job_id,
             )
             self._crash_backoff[job_id] = (attempt, last_time)
@@ -545,15 +581,17 @@ class PipelineManager:
 
         log_event(
             self.logger,
-            "info",
-            "CHANGES",
-            f"Restarting crashed job (attempt {attempt})",
+            "warn",
+            "OUTPUT_RETRY",
+            f"Restarting crashed job (attempt {attempt}, "
+            f"next backoff {backoff_seconds}s)",
             job_id=job_id,
         )
 
-        # Try to restart
+        # Try to restart — do NOT reset backoff here.
+        # Backoff is only reset by _monitor_threads after sustained uptime.
         if self.start_job(job_id):
-            self._crash_backoff[job_id] = (0, 0)  # Reset backoff on success
+            self._crash_backoff[job_id] = (attempt, now)
         else:
             self._crash_backoff[job_id] = (attempt, now)
 

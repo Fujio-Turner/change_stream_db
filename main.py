@@ -248,6 +248,9 @@ class MetricsCollector:
         )
         self.eventing_v8_heap_total_bytes: int = 0  # V8 heap total (gauge)
 
+        # Recursion guard (write-back echo suppression)
+        self.recursion_guard_suppressed_total: int = 0
+
         # Flood / backpressure detection
         self.largest_batch_received: int = 0
         self.flood_batches_total: int = 0  # batches exceeding flood threshold
@@ -1155,6 +1158,13 @@ class MetricsCollector:
             evt_sorted,
             evt_count,
             evt_sum,
+        )
+
+        # -- Recursion Guard --
+        _counter(
+            "changes_worker_recursion_guard_suppressed_total",
+            "Changes suppressed by the recursion guard (write-back echo detected).",
+            self.recursion_guard_suppressed_total,
         )
 
         # ── SYSTEM metrics (psutil / gc / threading) ────────────────────
@@ -2732,6 +2742,50 @@ async def poll_changes(
         if since == "0" and cfg.get("checkpoint", {}).get("enabled", True):
             since = await checkpoint.load(http, base_url, basic_auth, auth_headers)
 
+        # ── Helper: replay DLQ on recovery (called from feed outer loops) ──
+        async def _replay_dlq_on_recovery(
+            dlq, output, metrics, shutdown_event, out_cfg
+        ):
+            """Replay pending DLQ entries after output recovery, before
+            resuming the changes feed.  Only runs if the output is
+            actually reachable (pool is alive)."""
+            if stop_event.is_set():
+                return
+            # Only replay if the output pool is alive
+            if hasattr(output, "_pool") and output._pool is None:
+                return
+            pending_count = (
+                dlq._store.dlq_count() if dlq._store else len(dlq.list_pending())
+            )
+            if pending_count == 0:
+                return
+            log_event(
+                logger,
+                "info",
+                "DLQ",
+                "output recovered — replaying %d DLQ entries before resuming feed"
+                % pending_count,
+            )
+            dlq_summary = await _replay_dead_letter_queue(
+                dlq,
+                output,
+                metrics,
+                shutdown_event,
+                current_target_url=out_cfg.get("target_url", ""),
+            )
+            if dlq_summary["total"] > 0:
+                log_event(
+                    logger,
+                    "info",
+                    "DLQ",
+                    "recovery replay summary: %s" % dlq_summary,
+                )
+            if metrics:
+                count = (
+                    dlq._store.dlq_count() if dlq._store else len(dlq.list_pending())
+                )
+                metrics.set("dlq_pending_count", count)
+
         # ── Replay dead-letter queue before processing new changes ────
         if dlq.enabled and not stop_event.is_set():
             dlq_summary = await _replay_dead_letter_queue(
@@ -2750,6 +2804,11 @@ async def poll_changes(
                     dlq._store.dlq_count() if dlq._store else len(dlq.list_pending())
                 )
                 metrics.set("dlq_pending_count", count)
+
+        # DLQ replay-on-recovery: when the output recovers after a failure,
+        # replay pending DLQ entries before resuming the changes feed.
+        dlq_cfg = out_cfg.get("dlq") or {}
+        replay_on_recovery = dlq_cfg.get("replay_on_recovery", False)
 
         throttle = feed_cfg.get("throttle_feed", 0)
 
@@ -2834,6 +2893,23 @@ async def poll_changes(
                 "eventing enabled — JS handlers loaded",
             )
 
+        # ── Recursion guard (write-back echo suppression) ────────────
+        from eventing.recursion_guard import create_recursion_guard
+
+        recursion_guard_cfg = cfg.get("recursion_guard", {})
+        recursion_guard = create_recursion_guard(recursion_guard_cfg)
+        if recursion_guard:
+            log_event(
+                logger,
+                "info",
+                "RECURSION_GUARD",
+                "recursion guard enabled — max_tracked=%d ttl=%ds"
+                % (
+                    recursion_guard_cfg.get("max_tracked_docs", 50000),
+                    recursion_guard_cfg.get("ttl_seconds", 300),
+                ),
+            )
+
         # Shared kwargs for _process_changes_batch / catch-up / continuous
         shutdown_cfg = cfg.get("shutdown", {})
         batch_kwargs = dict(
@@ -2854,6 +2930,7 @@ async def poll_changes(
             shutdown_cfg=shutdown_cfg,
             attachment_processor=att_processor,
             eventing_handler=eventing_handler,
+            recursion_guard=recursion_guard,
         )
 
         # Log replication settings at startup
@@ -2885,6 +2962,11 @@ async def poll_changes(
                     "feed mode: continuous (catch-up → stream)",
                 )
                 while not stop_event.is_set():
+                    # Replay DLQ before resuming changes feed (on recovery)
+                    if dlq.enabled and replay_on_recovery and not initial_sync:
+                        await _replay_dlq_on_recovery(
+                            dlq, output, metrics, shutdown_event, out_cfg
+                        )
                     since = await _catch_up_normal(
                         since=since,
                         changes_url=changes_url,
@@ -2917,19 +2999,26 @@ async def poll_changes(
                     "CHANGES",
                     "feed mode: websocket (catch-up → ws stream)",
                 )
-                # Phase 1: catch up using normal HTTP requests
-                since = await _catch_up_normal(
-                    since=since,
-                    changes_url=changes_url,
-                    retry_cfg=retry_cfg,
-                    shutdown_event=stop_event,
-                    timeout_ms=timeout_ms,
-                    changes_http_timeout=changes_http_timeout,
-                    initial_sync=initial_sync,
-                    **batch_kwargs,
-                )
-                initial_sync = False
-                if not stop_event.is_set():
+                while not stop_event.is_set():
+                    # Replay DLQ before resuming changes feed (on recovery)
+                    if dlq.enabled and replay_on_recovery and not initial_sync:
+                        await _replay_dlq_on_recovery(
+                            dlq, output, metrics, shutdown_event, out_cfg
+                        )
+                    # Phase 1: catch up using normal HTTP requests
+                    since = await _catch_up_normal(
+                        since=since,
+                        changes_url=changes_url,
+                        retry_cfg=retry_cfg,
+                        shutdown_event=stop_event,
+                        timeout_ms=timeout_ms,
+                        changes_http_timeout=changes_http_timeout,
+                        initial_sync=initial_sync,
+                        **batch_kwargs,
+                    )
+                    initial_sync = False
+                    if stop_event.is_set():
+                        break
                     # Phase 2: switch to WebSocket stream
                     since = await _consume_websocket_stream(
                         since=since,

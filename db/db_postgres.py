@@ -29,14 +29,29 @@ except ImportError:
 # Permanent errors should go straight to the DLQ (constraint violations, bad types).
 _TRANSIENT_SQLSTATES = frozenset(
     {
+        # Serialization / deadlock
         "40001",  # serialization_failure
         "40P01",  # deadlock_detected
+        # Connection
         "08000",  # connection_exception
+        "08001",  # sqlclient_unable_to_establish_sqlconnection
         "08003",  # connection_does_not_exist
+        "08004",  # sqlserver_rejected_establishment_of_sqlconnection
         "08006",  # connection_failure
+        # Resource exhaustion
+        "53000",  # insufficient_resources
+        "53100",  # disk_full
+        "53200",  # out_of_memory
+        "53300",  # too_many_connections
+        "53400",  # configuration_limit_exceeded
+        # Lock contention
+        "55P03",  # lock_not_available
+        # Server lifecycle
         "57P01",  # admin_shutdown
         "57P02",  # crash_shutdown
         "57P03",  # cannot_connect_now
+        # Schema (may be recreated)
+        "42P01",  # undefined_table — table may be recreated
     }
 )
 
@@ -142,12 +157,6 @@ class PostgresOutputForwarder(BaseOutputForwarder):
                 operation="DISCONNECT",
             )
 
-    async def _reconnect_pool(self) -> None:
-        ic("_reconnect_pool", self._host, self._port)
-        async with self._pool_lock:
-            await self._close_pool()
-            await self._connect_pool()
-
     # ── SQL execution ───────────────────────────────────────────────────
 
     async def _execute_ops(self, ops: list) -> None:
@@ -240,10 +249,24 @@ class PostgresOutputForwarder(BaseOutputForwarder):
                 return "deadlock"
             if state.startswith("08") or state.startswith("57"):
                 return "connection"
+            if state.startswith("53"):
+                return "resource_exhaustion"
+            if state == "55P03":
+                return "lock_contention"
+            if state == "42P01":
+                return "table_not_found"
+            if state == "42501":
+                return "permission_denied"
             if state.startswith("42"):
                 return "syntax_or_schema"
             if state.startswith("22"):
                 return "data_type"
+            if state.startswith("28"):
+                return "auth_failure"
+            if state == "3D000":
+                return "invalid_database"
+            if state == "3F000":
+                return "invalid_schema"
             return f"pg_{state}" if state else "unknown_pg"
         return "unknown"
 

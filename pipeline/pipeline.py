@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from storage.cbl_store import CBLStore
 from pipeline.pipeline_logging import log_event
+from rest.changes_http import ClientHTTPError
 
 
 class Pipeline:
@@ -58,6 +59,7 @@ class Pipeline:
         self._running = False
         self._error: Optional[str] = None
         self._error_count = 0
+        self._auth_failure = False
         self._start_time: Optional[float] = None
         self._lock = threading.Lock()
 
@@ -78,6 +80,7 @@ class Pipeline:
             self._running = True
             self._start_time = time.time()
             self._error = None
+            self._auth_failure = False
 
             if not self.poll_changes_func:
                 raise RuntimeError(
@@ -133,6 +136,8 @@ class Pipeline:
         except Exception as e:
             self._error = str(e)
             self._error_count += 1
+            if isinstance(e, ClientHTTPError) and e.status in (401, 403):
+                self._auth_failure = True
             log_event(
                 self.logger,
                 "error",
@@ -270,6 +275,7 @@ class Pipeline:
                 "uptime_seconds": uptime,
                 "error_count": self._error_count,
                 "last_error": self._error,
+                "auth_failure": self._auth_failure,
             }
 
     def _build_job_config(self) -> Dict[str, Any]:
@@ -321,6 +327,10 @@ class Pipeline:
         # Extract eventing
         if self.job_doc.get("eventing"):
             cfg["eventing"] = self.job_doc["eventing"]
+
+        # Extract recursion guard
+        if self.job_doc.get("recursion_guard"):
+            cfg["recursion_guard"] = self.job_doc["recursion_guard"]
 
         return cfg
 

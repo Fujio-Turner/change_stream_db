@@ -156,6 +156,32 @@
       },
       "additionalProperties": false
     },
+    "recursion_guard": {
+      "type": ["object", "null"],
+      "description": "Write-back recursion protection — suppresses echoes when the pipeline PUTs documents back to the source",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether recursion guard is active for this job"
+        },
+        "max_tracked_docs": {
+          "type": "integer",
+          "default": 50000,
+          "minimum": 100,
+          "maximum": 1000000,
+          "description": "Maximum number of doc IDs to track in the LRU cache"
+        },
+        "ttl_seconds": {
+          "type": "integer",
+          "default": 300,
+          "minimum": 10,
+          "maximum": 86400,
+          "description": "Time-to-live in seconds for tracked entries"
+        }
+      },
+      "additionalProperties": false
+    },
     "state": {
       "type": "object",
       "description": "Current job execution state",

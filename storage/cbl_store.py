@@ -1370,22 +1370,35 @@ class CBLStore:
                 "filtered": filtered_count,
             }
         except Exception as e:
+            err_msg = f"{type(e).__name__}: {str(e)[:200]}"
             log_event(
                 logger,
                 "error",
                 "DLQ",
-                f"Failed to list DLQ page: {type(e).__name__}: {str(e)[:200]}",
+                f"Failed to list DLQ page: {err_msg}",
                 operation="SELECT",
                 doc_type="dlq",
                 offset=offset,
                 limit=limit,
             )
-            # Return empty page on error
-            return {
-                "entries": [],
-                "total": 0,
-                "filtered": 0,
-            }
+            # Fall back to unpaginated list_dlq
+            try:
+                all_entries = self.list_dlq()
+                total = len(all_entries)
+                page = all_entries[offset : offset + limit]
+                return {
+                    "entries": page,
+                    "total": total,
+                    "filtered": total,
+                    "query_error": err_msg,
+                }
+            except Exception:
+                return {
+                    "entries": [],
+                    "total": 0,
+                    "filtered": 0,
+                    "query_error": err_msg,
+                }
 
     def dlq_stats(self) -> dict:
         """Return lightweight aggregation data for DLQ charts and summary cards.
@@ -1667,7 +1680,12 @@ class CBLStore:
         return purged
 
     def get_dlq_meta(self) -> dict:
-        """Return DLQ metadata (last_inserted_at, last_drained_at as epoch)."""
+        """Return DLQ metadata (last_inserted_at, last_drained_at as epoch).
+
+        The response includes global "latest" timestamps plus a ``jobs``
+        dict keyed by job_id so each pipeline's DLQ history is preserved
+        independently.
+        """
         doc = _coll_get_doc(self.db, COLL_DLQ, "dlq:meta")
         if not doc:
             return {
@@ -1675,6 +1693,7 @@ class CBLStore:
                 "last_drained_at": None,
                 "last_inserted_job": None,
                 "last_drained_job": None,
+                "jobs": {},
             }
         props = doc.properties
         return {
@@ -1682,6 +1701,7 @@ class CBLStore:
             "last_drained_at": props.get("last_drained_at", None),
             "last_inserted_job": props.get("last_inserted_job", None),
             "last_drained_job": props.get("last_drained_job", None),
+            "jobs": props.get("jobs", {}),
         }
 
     def update_dlq_meta(self, field: str, job_id: str = "") -> None:
@@ -1689,22 +1709,37 @@ class CBLStore:
 
         Call once per batch — not per document — to avoid excessive writes.
 
+        Updates **both** the global ``last_inserted_at`` / ``last_drained_at``
+        timestamps and the per-job entry inside ``jobs.<job_id>`` so that
+        multi-pipeline deployments preserve each job's DLQ history
+        independently.
+
         Args:
             field: ``"last_inserted_at"`` or ``"last_drained_at"``.
             job_id: checkpoint client_id or other job identifier.
         """
         now = int(time.time())
         doc = _coll_get_mutable_doc(self.db, COLL_DLQ, "dlq:meta")
-        if doc:
-            doc[field] = now
-            if job_id:
-                doc[field.replace("_at", "_job")] = job_id
-        else:
+        if not doc:
             doc = MutableDocument("dlq:meta")
             doc["type"] = "dlq_meta"
-            doc[field] = now
-            if job_id:
-                doc[field.replace("_at", "_job")] = job_id
+            doc["jobs"] = {}
+
+        # Global latest (backward-compatible)
+        doc[field] = now
+        if job_id:
+            doc[field.replace("_at", "_job")] = job_id
+
+        # Per-job tracking
+        if job_id:
+            jobs = doc.get("jobs") or {}
+            if not isinstance(jobs, dict):
+                jobs = {}
+            job_entry = jobs.get(job_id, {})
+            job_entry[field] = now
+            jobs[job_id] = job_entry
+            doc["jobs"] = jobs
+
         _coll_save_doc(self.db, COLL_DLQ, doc)
         log_event(
             logger,

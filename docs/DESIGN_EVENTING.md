@@ -9,9 +9,11 @@ This document describes the design of the Eventing subsystem — a lightweight, 
 - [`CHANGES_PROCESSING.md`](CHANGES_PROCESSING.md) -- `_changes` feed processing, checkpoints
 - [`SCHEMA_MAPPING.md`](SCHEMA_MAPPING.md) -- Schema mapping definitions and transforms
 - [`ATTACHMENTS.md`](ATTACHMENTS.md) -- Attachment processing (detect, fetch, upload, post-process)
+- [`FAILURE_OPTION_OUTPUT_RDBMS.md`](FAILURE_OPTION_OUTPUT_RDBMS.md) -- Failure analysis: eventing error handling (§2.4, §2.5, §2.6)
 
 **Implementation files:**
 - [`eventing/eventing.py`](../eventing/eventing.py) -- Core module: `EventingHandler`, `EventingHalt`, `create_eventing_handler`
+- [`eventing/recursion_guard.py`](../eventing/recursion_guard.py) -- Write-back echo suppression: `RecursionGuard`, `create_recursion_guard`
 - [`eventing/__init__.py`](../eventing/__init__.py) -- Package exports
 - [`rest/api_v2.py`](../rest/api_v2.py) -- REST API: `GET/PUT /api/v2/jobs/{id}/eventing`
 - [`rest/changes_http.py`](../rest/changes_http.py) -- Pipeline integration in `_process_one_inner`
@@ -217,10 +219,13 @@ For each change from the `_changes` feed:
                    │
                    ▼
                5. On error/timeout → apply policy:
-                   ├── "reject"  ──► REJECT, log, continue
-                   ├── "pass"   ──► forward original doc, log, continue
-                   └── "halt"   ──► raise EventingHalt, stop job
-                   │
+                    ├── "reject"  ──► REJECT, log, continue
+                    ├── "pass"   ──► forward original doc, log, continue
+                    └── "halt"   ──► raise EventingHalt, stop job (no auto-restart)
+               
+               5b. On unexpected exception (non-policy):
+                    └── catch, log ERROR, route to DLQ (error_class: "eventing"), continue
+                    │
                    ▼
                6. Schema Mapper ──► Output
 ```
@@ -347,8 +352,9 @@ The eventing handler is a **pure transform/filter** — it can modify or reject 
 
 ```
 eventing/
-├── __init__.py        # Package exports: EventingHandler, EventingHalt, create_eventing_handler
-└── eventing.py        # Core module: EventingHandler class, V8 lifecycle, metrics
+├── __init__.py           # Package exports: EventingHandler, EventingHalt, create_eventing_handler, RecursionGuard, create_recursion_guard
+├── eventing.py           # Core module: EventingHandler class, V8 lifecycle, metrics
+└── recursion_guard.py    # Write-back echo suppression: RecursionGuard (TTL-bounded LRU)
 ```
 
 ### Key Classes & Functions
@@ -356,20 +362,22 @@ eventing/
 | Symbol | Purpose |
 |---|---|
 | `EventingHandler` | Wraps a `MiniRacer` V8 isolate. Handles doc/meta split, handler invocation, return-value interpretation, error/timeout policies, metrics collection. Supports context manager (`with`) for clean teardown. |
-| `EventingHalt` | Exception raised when `on_error="halt"` or `on_timeout="halt"` is triggered. Caught by the pipeline to stop the job. |
+| `EventingHalt` | Exception raised when `on_error="halt"` or `on_timeout="halt"` is triggered. Caught by the pipeline to stop the job. `Pipeline` sets `_eventing_halt = True`, and `PipelineManager` **skips auto-restart** — the job stays in error state until manually restarted (see [FAILURE_OPTION_OUTPUT_RDBMS.md §2.4](FAILURE_OPTION_OUTPUT_RDBMS.md)). |
 | `create_eventing_handler(cfg, metrics)` | Factory function. Reads a job's `eventing` config dict, returns an `EventingHandler` if `enabled=True`, else `None`. |
+| `RecursionGuard` | TTL-bounded LRU cache (`OrderedDict`) that tracks `_id → _rev` for documents the pipeline has written back. Detects and suppresses echoes to prevent infinite recursion loops. |
+| `create_recursion_guard(cfg)` | Factory function. Reads a job's `recursion_guard` config dict, returns a `RecursionGuard` if `enabled=True`, else `None`. |
 
 ### Pipeline Integration
 
-The eventing handler is wired into the pipeline at these points:
+The eventing handler and recursion guard are wired into the pipeline at these points:
 
 | File | What happens |
 |---|---|
-| `pipeline/pipeline.py` → `_build_job_config()` | Extracts `eventing` from the job document into the pipeline config dict. |
-| `main.py` → `poll_changes()` | Calls `create_eventing_handler(cfg["eventing"], metrics)` and passes the handler into `batch_kwargs`. |
-| `rest/changes_http.py` → `_process_one_inner()` | After `_resolve_doc` and before the attachment stage, calls `eventing_handler.process_change()`. If `None` is returned, the doc is rejected. If `EventingHalt` is raised, the pipeline stops. |
-| `rest/changes_http.py` → `_process_changes_batch()` | Accepts `eventing_handler=` kwarg, passes it to `_process_one_inner`. |
-| `rest/changes_http.py` → `_catch_up_normal()`, `_consume_continuous_stream()`, `_consume_websocket_stream()` | All accept and forward `eventing_handler=` to `_process_changes_batch`. |
+| `pipeline/pipeline.py` → `_build_job_config()` | Extracts `eventing` and `recursion_guard` from the job document into the pipeline config dict. |
+| `main.py` → `poll_changes()` | Calls `create_eventing_handler(cfg["eventing"], metrics)` and `create_recursion_guard(cfg["recursion_guard"])`, passes both into `batch_kwargs`. |
+| `rest/changes_http.py` → `_process_one_inner()` | After `_resolve_doc`: (1) checks `recursion_guard.is_echo(doc_id, rev)` — if true, skips the doc; (2) then runs eventing handler before the attachment stage. |
+| `rest/changes_http.py` → `_process_changes_batch()` | Accepts `eventing_handler=` and `recursion_guard=` kwargs, passes them to `_process_one_inner`. |
+| `rest/changes_http.py` → `_catch_up_normal()`, `_consume_continuous_stream()`, `_consume_websocket_stream()` | All accept and forward `eventing_handler=` and `recursion_guard=` to `_process_changes_batch`. |
 
 ---
 
@@ -460,7 +468,7 @@ The following best practices are applied based on [PyMiniRacer architecture docs
 | **Context manager** | `EventingHandler` supports `with handler:` for explicit V8 teardown. Ensures the V8 isolate is released even on exceptions. |
 | **Periodic heap monitoring** | V8 heap stats sampled every 100 invocations and pushed to Prometheus gauges. Allows alerting before hitting the hard limit. |
 | **Sandboxed by default** | V8 has no filesystem, network, or Python access. User JS is a pure function — cannot perform side effects. |
-| **`EventingHalt` exception** | When `on_error=halt` or `on_timeout=halt`, a typed exception is raised and caught by the pipeline to stop the job cleanly (checkpoint not advanced). |
+| **`EventingHalt` exception** | When `on_error=halt` or `on_timeout=halt`, a typed exception is raised and caught by the pipeline to stop the job cleanly (checkpoint not advanced). PipelineManager skips auto-restart for this failure type — manual restart required after fixing the issue. |
 | **No global module-level V8** | No `MiniRacer()` at import time. V8 is only instantiated when a job with `eventing.enabled=true` starts. Zero overhead for jobs without eventing. |
 
 ---
@@ -482,6 +490,74 @@ The following best practices are applied based on [PyMiniRacer architecture docs
 | **128 MB max_memory** | Large enough for realistic transforms (JSON manipulation, string ops). Small enough to prevent a single handler from killing the process. Configurable if needed. |
 | **Local CodeMirror** | All JS/CSS assets bundled in `web/static/` — no CDN dependencies. Works fully offline / air-gapped. |
 | **Dev Preview gating** | Exposed via `?dev=true` query param in sidebar. Not shown to users by default until stable. |
+
+---
+
+## Recursion Guard (Write-back Echo Suppression)
+
+When the pipeline supports HTTP PUT write-backs (e.g. cURL from JS, bucket aliases), a document that is processed and PUT back to the same source will appear again on the `_changes` feed, creating an infinite recursion loop. The **Recursion Guard** detects and suppresses these echoes.
+
+### How It Works
+
+```
+1. Pipeline processes doc "hotel::123" → eventing handler modifies it
+2. Handler PUTs modified doc back to source → source returns new _rev "3-abc"
+3. recursion_guard.record("hotel::123", "3-abc")     ← track the write-back
+4. _changes feed delivers {"id":"hotel::123", "_rev":"3-abc"}
+5. recursion_guard.is_echo("hotel::123", "3-abc")    ← returns True → SKIP
+6. Document is suppressed, no infinite loop
+```
+
+### Pipeline Position
+
+```
+_changes feed ──► _resolve_doc ──► RECURSION GUARD ──► Eventing (JS) ──► Schema Mapper ──► Output
+                                        │
+                                        └─► echo detected ──► SUPPRESSED (doc stops here)
+```
+
+The guard sits **before** the eventing handler — echoes are suppressed before any JS execution overhead.
+
+### Configuration
+
+The recursion guard is configured per job via the `recursion_guard` property:
+
+```jsonc
+{
+  "recursion_guard": {
+    "enabled": true,
+    "max_tracked_docs": 50000,
+    "ttl_seconds": 300
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Whether the recursion guard is active for this job. |
+| `max_tracked_docs` | integer | `50000` | Maximum number of doc IDs to track in the in-memory LRU cache. When exceeded, the oldest entries are evicted. Range: 100–1,000,000. |
+| `ttl_seconds` | integer | `300` | Time-to-live in seconds for tracked entries. Entries older than this are lazily expired. Range: 10–86,400. |
+
+### Implementation
+
+- **Data structure:** `OrderedDict` used as an LRU cache with per-entry TTL. Pure stdlib — no external dependencies.
+- **`record(doc_id, rev)`** — called after a successful write-back PUT. Stores `{doc_id: (rev, timestamp)}`. Evicts oldest when `max_tracked_docs` exceeded.
+- **`is_echo(doc_id, rev)`** — called in `_process_one_inner` right after `_resolve_doc`. If `doc_id` is tracked and `rev` matches, returns `True` (echo), consumes the entry, and the doc is skipped. Also lazily evicts expired entries.
+- **Memory:** Each entry ≈ 200 bytes. At 50,000 entries ≈ 10 MB — negligible.
+- **Loss on restart:** The cache is in-memory only. On restart, the guard is empty — worst case is one re-process of recently written-back docs. This is acceptable because the pipeline is idempotent.
+
+### Prometheus Metric
+
+| Metric | Type | Description |
+|---|---|---|
+| `changes_worker_recursion_guard_suppressed_total` | **counter** | Changes suppressed by the recursion guard (write-back echo detected). |
+
+### UI
+
+The recursion guard settings appear in the **Advanced** section of the Job Builder (`web/templates/jobs.html`):
+- **Enabled** toggle
+- **Max Tracked Docs** input (default 50,000)
+- **TTL (seconds)** input (default 300)
 
 ---
 
