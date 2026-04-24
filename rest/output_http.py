@@ -525,7 +525,7 @@ class OutputForwarder:
             if self._ssl_ctx is not None:
                 request_kwargs["ssl"] = self._ssl_ctx
             if method == "DELETE" and not self._send_delete_body:
-                pass
+                body_len = 0
             else:
                 request_kwargs["data"] = body
                 merged_headers["Content-Type"] = content_type

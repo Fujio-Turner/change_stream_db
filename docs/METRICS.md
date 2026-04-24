@@ -60,7 +60,7 @@ All metrics use the `changes_worker_` prefix and carry two default labels:
 | # | Metric | Type | Description |
 |---|--------|------|-------------|
 | 14 | `changes_worker_bytes_received_total` | **counter** | Bytes from `_changes`, `_bulk_get`, and individual doc GETs. |
-| 15 | `changes_worker_bytes_output_total` | **counter** | Bytes sent to the output endpoint. |
+| 15 | `changes_worker_bytes_output_total` | **counter** | Bytes sent to the output. For HTTP/Cloud outputs this is the request body size; for RDBMS outputs this is the generated SQL statement + parameter size (including DELETE operations). |
 
 ---
 

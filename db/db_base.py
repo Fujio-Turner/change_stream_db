@@ -1048,9 +1048,16 @@ class BaseOutputForwarder(abc.ABC):
                     self._metrics.inc("output_success_total")
                     self._metrics.inc("mapper_ops_total", len(ops))
                     self._metrics.record_output_response_time(elapsed_ms / 1000)
-                    # Estimate bytes sent — use op count as a lightweight proxy
-                    # instead of re-serializing every op (which already ran in
-                    # _execute_ops).  Avoids duplicate to_sql() calls on the hot path.
+                    # Measure bytes from generated SQL + params for accurate
+                    # bytes_output_total tracking (applies to all op types
+                    # including DELETE).
+                    sql_bytes = 0
+                    for op in ops:
+                        sql, params = op.to_sql()
+                        sql_bytes += len(sql.encode("utf-8"))
+                        for p in params:
+                            sql_bytes += len(str(p).encode("utf-8"))
+                    self._metrics.inc("bytes_output_total", sql_bytes)
                     if self._metrics_global:
                         self._metrics_global.inc("output_ops_total", len(ops))
 

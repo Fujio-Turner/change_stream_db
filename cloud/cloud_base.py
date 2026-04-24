@@ -529,6 +529,7 @@ class BaseCloudForwarder(abc.ABC):
         if self._metrics:
             self._metrics.inc("output_requests_total")
             self._metrics.inc("bytes_uploaded_total", body_len)
+            self._metrics.inc("bytes_output_total", body_len)
 
         if flush_needed:
             await self._flush_batch()
@@ -731,8 +732,10 @@ class BaseCloudForwarder(abc.ABC):
                         self._metrics.inc("output_delete_total")
                         self._metrics.inc("deletes_forwarded_total")
                     else:
+                        body_len = len(body)
                         self._metrics.inc("uploads_total")
-                        self._metrics.inc("bytes_uploaded_total", len(body))
+                        self._metrics.inc("bytes_uploaded_total", body_len)
+                        self._metrics.inc("bytes_output_total", body_len)
                     self._metrics.record_output_response_time(elapsed_ms / 1000)
 
                 ic("send: OK", doc_id, action, key, round(elapsed_ms, 1))
