@@ -138,6 +138,32 @@ class Pipeline:
             self._error_count += 1
             if isinstance(e, ClientHTTPError) and e.status in (401, 403):
                 self._auth_failure = True
+            # §3.3: Cloud auth failure detection (NoCredentialsError, InvalidAccessKeyId, etc.)
+            try:
+                from botocore.exceptions import NoCredentialsError, ClientError
+
+                if isinstance(e, NoCredentialsError):
+                    self._auth_failure = True
+                elif isinstance(e, ClientError):
+                    code = e.response.get("Error", {}).get("Code", "")
+                    if code in (
+                        "InvalidAccessKeyId",
+                        "SignatureDoesNotMatch",
+                        "ExpiredToken",
+                    ):
+                        self._auth_failure = True
+                if self._auth_failure and not (
+                    isinstance(e, ClientHTTPError) and e.status in (401, 403)
+                ):
+                    log_event(
+                        self.logger,
+                        "error",
+                        "CHANGES",
+                        "Cloud authentication failed — fix credentials and restart the job manually.",
+                        job_id=self.job_id,
+                    )
+            except ImportError:
+                pass
             log_event(
                 self.logger,
                 "error",

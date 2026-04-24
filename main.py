@@ -2679,11 +2679,51 @@ async def poll_changes(
             from cloud import create_cloud_output
 
             output = create_cloud_output(out_cfg, dry_run, metrics=metrics)
-            await output.connect()
             cloud_output = output
-            log_event(
-                logger, "info", "OUTPUT", f"cloud output ready (provider={output_mode})"
-            )
+            # §3.1: Connect-with-retry for cloud outputs (consistent with HTTP pattern)
+            cloud_connect_failure_count = 0
+            backoff_base = retry_cfg.get("backoff_base_seconds", 1)
+            backoff_max = min(retry_cfg.get("backoff_max_seconds", 60), 300)
+            while not stop_event.is_set():
+                try:
+                    await output.connect()
+                    log_event(
+                        logger,
+                        "info",
+                        "OUTPUT",
+                        f"cloud output ready (provider={output_mode})",
+                    )
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    cloud_connect_failure_count += 1
+                    if cloud_connect_failure_count == 1:
+                        log_event(
+                            logger,
+                            "warn",
+                            "OUTPUT",
+                            "Cloud output unreachable — waiting for cloud store to become available (will retry with backoff)",
+                        )
+                    else:
+                        logger.debug(
+                            "Cloud output connect failed (attempt #%d): %s",
+                            cloud_connect_failure_count,
+                            exc,
+                        )
+                    if cloud_connect_failure_count >= 100:
+                        log_event(
+                            logger,
+                            "error",
+                            "OUTPUT",
+                            "cloud output unreachable after 100 retries – aborting",
+                        )
+                        return
+                    delay = min(
+                        backoff_base * (2 ** (cloud_connect_failure_count - 1)),
+                        backoff_max,
+                    )
+                    await _sleep_or_shutdown(delay, stop_event)
         else:
             output = OutputForwarder(
                 session,
