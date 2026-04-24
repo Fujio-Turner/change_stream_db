@@ -47,6 +47,8 @@ Key standards:
 - [`WIZARD.md`](WIZARD.md) – Source wizard UI
 - [`SOURCE_TYPES.md`](SOURCE_TYPES.md) – Source type details (SG, App Services, Edge Server, CouchDB, BLIP)
 - [`FAILURE_OPTION_OUTPUT_RDBMS.md`](FAILURE_OPTION_OUTPUT_RDBMS.md) – Failure analysis & resolutions for SOURCE → PROCESS → OUTPUT (RDBMS)
+- [`FAILURE_OPTION_OUTPUT_HTTP.md`](FAILURE_OPTION_OUTPUT_HTTP.md) – Failure analysis & resolutions for SOURCE → PROCESS → OUTPUT (HTTP)
+- [`FAILURE_OPTION_OUTPUT_CLOUD.md`](FAILURE_OPTION_OUTPUT_CLOUD.md) – Failure analysis & resolutions for SOURCE → PROCESS → OUTPUT (Cloud Blob Storage)
 
 ---
 

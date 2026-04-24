@@ -2716,24 +2716,59 @@ async def poll_changes(
                 "Enable the DLQ or switch to sequential mode.",
             )
 
-        # If output is HTTP, verify the endpoint is reachable before starting
+        # Warn if parallel mode + POST method
+        if not is_seq and proc_cfg.get("write_method", "PUT").upper() == "POST":
+            log_event(
+                logger,
+                "warn",
+                "PROCESSING",
+                "Parallel mode with POST method may produce duplicate requests on retry. "
+                "Consider using PUT (idempotent) or sequential mode for POST endpoints.",
+            )
+
+        # §3.1: If output is HTTP, startup retry loop until endpoint is reachable
         if output_mode == "http":
-            if not await output.test_reachable():
-                if out_cfg.get("halt_on_failure", True):
+            output_failure_count = 0
+            backoff_base = retry_cfg.get("backoff_base_seconds", 1)
+            backoff_max = min(
+                retry_cfg.get("backoff_max_seconds", 60), 300
+            )  # cap at 300s
+            while not stop_event.is_set():
+                if await output.test_reachable():
                     log_event(
                         logger,
-                        "error",
+                        "info",
                         "OUTPUT",
-                        "output endpoint unreachable at startup – aborting",
+                        "output endpoint is reachable",
                     )
-                    return
-                else:
+                    break
+                output_failure_count += 1
+                if output_failure_count == 1:
                     log_event(
                         logger,
                         "warn",
                         "OUTPUT",
-                        "output endpoint unreachable at startup – continuing (halt_on_failure=false)",
+                        "HTTP output endpoint unreachable — waiting for endpoint to become available (will retry with backoff)",
                     )
+                else:
+                    logger.debug(
+                        "Output endpoint reachability check failed (attempt #%d)",
+                        output_failure_count,
+                    )
+                if output_failure_count < 100:  # Safety limit to prevent infinite loop
+                    delay = min(
+                        backoff_base * (2 ** (output_failure_count - 1)), backoff_max
+                    )
+                    await _sleep_or_shutdown(delay, stop_event)
+                else:
+                    # If we've retried 100 times, something is seriously wrong
+                    log_event(
+                        logger,
+                        "error",
+                        "OUTPUT",
+                        "output endpoint unreachable after 100 retries – aborting",
+                    )
+                    return
             # Start periodic heartbeat if configured
             await output.start_heartbeat(stop_event)
 

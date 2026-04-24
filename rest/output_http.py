@@ -366,6 +366,15 @@ class OutputForwarder:
         self._request_timeout = out_cfg.get("request_timeout_seconds", 30)
         self._follow_redirects = out_cfg.get("follow_redirects", False)
 
+        # §3.14: retry_on_conflict config
+        self._retry_on_conflict = out_cfg.get("retry_on_conflict", False)
+
+        # Flags for first-occurrence logging of permanent errors
+        self._output_auth_failure_warned = False
+        self._media_type_warned = False
+        self._permanent_5xx_warned: dict[int, bool] = {}  # Track per-status
+        self._ssl_failure_logged = False
+
         self._ssl_ctx = None
         if out_cfg.get("accept_self_signed_certs", False):
             import ssl as _ssl
@@ -563,7 +572,13 @@ class OutputForwarder:
 
         except _ClientHTTPError as exc:
             elapsed_ms = (time.monotonic() - t_start) * 1000
-            error_class, _ = classify_http_status(exc.status)
+            error_class, is_transient = classify_http_status(exc.status)
+
+            # §3.14: Support retry_on_conflict — 409 becomes transient if enabled
+            if self._retry_on_conflict and exc.status == 409:
+                is_transient = True
+                error_class = "conflict_retryable"
+
             ic(
                 "send: client HTTP error",
                 doc_id,
@@ -583,11 +598,61 @@ class OutputForwarder:
                 self._metrics.inc(f"output_{mk}_errors_total")
                 self._metrics.inc("bytes_output_total", body_len)
                 self._metrics.record_output_response_time(elapsed_ms / 1000)
+
+            # §3.6: Handle auth failures (401/403) — first failure logs CRITICAL,
+            # upgrade to halt when halt_on_failure=false
+            if exc.status in (401, 403) and not self._output_auth_failure_warned:
+                log_event(
+                    logger,
+                    "critical",
+                    "OUTPUT",
+                    "Output endpoint authentication failed (HTTP %d) — every document will fail with the same credentials. "
+                    "Fix 'target_auth' in output config and restart the job."
+                    % exc.status,
+                    doc_id=doc_id,
+                    status=exc.status,
+                )
+                self._output_auth_failure_warned = True
+                # §3.6: Upgrade to halt when halt_on_failure=false + auth failure
+                if not self._halt_on_failure:
+                    if self._metrics:
+                        self._metrics.set("output_endpoint_up", 0)
+                    raise OutputEndpointDown(
+                        f"Output auth failure (HTTP {exc.status}) — halting to prevent DLQ flood. "
+                        f"Fix credentials and restart."
+                    )
+            elif exc.status in (401, 403):
+                # Subsequent auth failures logged at DEBUG
+                logger.debug(
+                    "Output auth failure (HTTP %d) for doc %s",
+                    exc.status,
+                    doc_id,
+                )
+            # §3.13: Handle 415 (Unsupported Media Type)
+            elif exc.status == 415 and not self._media_type_warned:
+                log_event(
+                    logger,
+                    "critical",
+                    "OUTPUT",
+                    "Output endpoint rejected Content-Type '%s' (HTTP 415 Unsupported Media Type). "
+                    "Check 'output_format' in output config — the endpoint does not accept '%s' format."
+                    % (content_type, self._output_format),
+                    doc_id=doc_id,
+                    status=415,
+                    content_type=content_type,
+                )
+                self._media_type_warned = True
+            elif exc.status == 415:
+                logger.debug(
+                    "Output 415 for doc %s (content type %s)", doc_id, content_type
+                )
+
             log_event(
                 logger,
                 "error",
                 "OUTPUT",
-                "client error (4xx permanent)",
+                "client error (4xx %s)"
+                % ("retryable" if is_transient else "permanent"),
                 operation=infer_operation(doc=doc, method=method),
                 doc_id=doc_id,
                 http_method=method,
@@ -605,6 +670,7 @@ class OutputForwarder:
                 "error": exc.body[:500],
                 "error_class": error_class,
                 "data_error_action": self._data_error_action,
+                "retryable": is_transient,
             }
 
         except _RedirectHTTPError as exc:
@@ -661,6 +727,39 @@ class OutputForwarder:
                 self._metrics.inc(f"output_{mk}_errors_total")
                 self._metrics.inc("bytes_output_total", body_len)
                 self._metrics.record_output_response_time(elapsed_ms / 1000)
+
+            # §3.4: Log permanent 5xx (501, 505, 506, 508, 510, 511) with special messages
+            if exc.status == 501 and not self._permanent_5xx_warned.get(501):
+                log_event(
+                    logger,
+                    "critical",
+                    "OUTPUT",
+                    "Output endpoint returned 501 Not Implemented for %s — the endpoint does not support this HTTP method. "
+                    "Check 'write_method' / 'delete_method' in output config." % method,
+                    status=exc.status,
+                    method=method,
+                )
+                self._permanent_5xx_warned[501] = True
+            elif exc.status in (
+                505,
+                506,
+                508,
+                510,
+                511,
+            ) and not self._permanent_5xx_warned.get(exc.status):
+                log_event(
+                    logger,
+                    "warn",
+                    "OUTPUT",
+                    "Output endpoint returned permanent %d — server configuration issue. "
+                    "All docs using this method will fail." % exc.status,
+                    status=exc.status,
+                )
+                self._permanent_5xx_warned[exc.status] = True
+            elif exc.status in (501, 505, 506, 508, 510, 511):
+                # Subsequent occurrences logged at DEBUG
+                logger.debug("Output permanent 5xx %d for doc %s", exc.status, doc_id)
+
             log_event(
                 logger,
                 "error",

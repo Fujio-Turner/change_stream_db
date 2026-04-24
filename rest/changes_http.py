@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+from email.utils import parsedate_to_datetime
 
 import json
 
@@ -68,6 +69,28 @@ class RetryableHTTP:
     def set_shutdown_event(self, event: asyncio.Event) -> None:
         self._shutdown_event = event
 
+    @staticmethod
+    def _parse_retry_after(value: str | None) -> float | None:
+        """Parse a Retry-After header value (integer seconds or HTTP-date)."""
+        if not value:
+            return None
+        try:
+            return float(value)
+        except ValueError:
+            pass
+        try:
+            dt = parsedate_to_datetime(value)
+            delta = (dt - dt.now(dt.tzinfo)).total_seconds()
+            return max(delta, 0)
+        except Exception:
+            log_event(
+                logger,
+                "debug",
+                "RETRY",
+                "could not parse Retry-After header: %s" % value,
+            )
+            return None
+
     async def request(self, method: str, url: str, **kwargs) -> aiohttp.ClientResponse:
         shutdown = kwargs.pop("shutdown_event", None) or self._shutdown_event
         last_exc: Exception | None = None
@@ -109,9 +132,46 @@ class RetryableHTTP:
                         error_class=error_class,
                         attempt=attempt,
                     )
+                    # §3.7: Respect Retry-After header on 429 responses
+                    if resp.status == 429:
+                        retry_after_delay = self._parse_retry_after(
+                            resp.headers.get("Retry-After")
+                        )
+                        if retry_after_delay is not None and self._metrics:
+                            self._metrics.inc("rate_limit_retry_after_total")
+                    else:
+                        retry_after_delay = None
                     resp.release()
                     if self._metrics:
                         self._metrics.inc("retries_total")
+                    # Apply Retry-After delay if present (overrides normal backoff)
+                    if retry_after_delay is not None and attempt < self._max_retries:
+                        delay = max(
+                            retry_after_delay,
+                            min(
+                                self._backoff_base * (2 ** (attempt - 1)),
+                                self._backoff_max,
+                            ),
+                        )
+                        log_event(
+                            logger,
+                            "info",
+                            "RETRY",
+                            "respecting Retry-After header",
+                            delay_seconds=delay,
+                            attempt=attempt,
+                        )
+                        if shutdown:
+                            try:
+                                await asyncio.wait_for(shutdown.wait(), timeout=delay)
+                                raise ShutdownRequested(
+                                    f"Shutdown during Retry-After backoff for {method} {url}"
+                                )
+                            except asyncio.TimeoutError:
+                                pass
+                        else:
+                            await asyncio.sleep(delay)
+                        continue
                 elif 300 <= resp.status < 400:
                     log_event(
                         logger,
@@ -1195,6 +1255,27 @@ async def _process_changes_batch(
                         doc_id=doc_id,
                     )
                     raise
+                except Exception as ev_exc:
+                    log_event(
+                        logger,
+                        "error",
+                        "EVENTING",
+                        "unexpected handler error: %s: %s"
+                        % (type(ev_exc).__name__, ev_exc),
+                        doc_id=doc_id,
+                    )
+                    if metrics:
+                        metrics.inc("eventing_errors_total")
+                    return {
+                        "ok": False,
+                        "doc_id": doc_id,
+                        "status": 0,
+                        "error": "eventing: %s" % ev_exc,
+                        "error_class": "eventing",
+                        "retryable": False,
+                        "_change": change,
+                        "_doc": doc,
+                    }
                 if eventing_result is None:
                     log_event(
                         logger,
@@ -1225,10 +1306,22 @@ async def _process_changes_batch(
                         logger,
                         "error",
                         "PROCESSING",
-                        "attachment processing failed: %s" % att_exc,
+                        "attachment processing failed: %s: %s"
+                        % (type(att_exc).__name__, att_exc),
                         doc_id=doc_id,
                     )
-                    raise
+                    if metrics:
+                        metrics.inc("attachment_errors_total")
+                    return {
+                        "ok": False,
+                        "doc_id": doc_id,
+                        "status": 0,
+                        "error": "attachment: %s" % att_exc,
+                        "error_class": "attachment",
+                        "retryable": False,
+                        "_change": change,
+                        "_doc": doc,
+                    }
 
             method = (
                 delete_method
