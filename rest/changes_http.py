@@ -2366,7 +2366,7 @@ async def _consume_websocket_stream(
                 ws_url,
                 headers=ws_headers,
                 heartbeat=None,  # SG does not respond to WS ping/pong
-                timeout=aiohttp.ClientWSTimeout(ws_close=timeout_ms / 1000.0),
+                timeout=aiohttp.ClientWSTimeout(ws_close=5.0),
             )
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
             # Detect auth failure on WebSocket handshake (HTTP 401/403)
@@ -2634,7 +2634,25 @@ async def _consume_websocket_stream(
                 metrics.inc("poll_errors_total")
         finally:
             if not ws.closed:
-                await ws.close()
+                try:
+                    await asyncio.wait_for(ws.close(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    log_event(
+                        logger,
+                        "warn",
+                        "CHANGES",
+                        "websocket close timed out – forcing reconnect",
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as close_exc:
+                    log_event(
+                        logger,
+                        "warn",
+                        "CHANGES",
+                        "websocket close failed – forcing reconnect",
+                        error_detail=str(close_exc),
+                    )
 
         # Output failure uses its own escalating counter so backoff grows
         # to 5 min even though the *source* reconnects fine each time.
